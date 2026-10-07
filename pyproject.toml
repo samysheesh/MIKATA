@@ -7,8 +7,14 @@ requires-python = ">=3.11,<3.12"
 # Dépendances ajoutées phase par phase (docs/ARCHITECTURE.md §9 et §11).
 # Les versions exactes sont épinglées dans uv.lock.
 dependencies = [
+    # CTranslate2 (moteur de faster-whisper) embarque cudnn64_9.dll en 9.10.2.21 : les
+    # sous-bibliothèques cuDNN (paquet nvidia-cudnn-cu12, Windows) doivent avoir la même
+    # version, sinon erreur au premier calcul. Changer ces deux versions ensemble.
+    "ctranslate2==4.8.2",
+    "faster-whisper>=1.1",
     "loguru>=0.7.2",
     "numpy>=2.1",
+    "nvidia-ml-py>=12.535",
     "onnxruntime>=1.19",
     "openwakeword>=0.6",
     "pillow>=11.0",
@@ -20,6 +26,9 @@ dependencies = [
     "sounddevice>=0.5.1",
     "soxr>=0.5",
     # Windows uniquement : importées paresseusement, mockées dans les tests.
+    # DLL CUDA 12 (cuBLAS, cuDNN 9) pour faster-whisper / CTranslate2 sur la RTX 3080.
+    "nvidia-cublas-cu12>=12.4,<13; sys_platform == 'win32'",
+    "nvidia-cudnn-cu12==9.10.2.21; sys_platform == 'win32'",
     "pynput>=1.7.7; sys_platform == 'win32'",
     "pystray>=0.19.5; sys_platform == 'win32'",
 ]

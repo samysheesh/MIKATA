@@ -12,13 +12,21 @@ from loguru import logger
 
 from mikata import __version__
 from mikata.app import App
-from mikata.config import Config, ConfigError, LoggingConfig, load_config, resolve_config_path
+from mikata.config import (
+    Config,
+    ConfigError,
+    LoggingConfig,
+    StartupError,
+    load_config,
+    resolve_config_path,
+)
 from mikata.logging_setup import setup_logging, shutdown_logging
 from mikata.ui.tray import TrayIcon
 
 EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_CONFIG = 2
+EXIT_STARTUP = 3  # matériel indisponible (GPU, DLL CUDA...)
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -67,6 +75,9 @@ def log_config_summary(config: Config) -> None:
         logger.info("{} : {}", name, "définie" if value is not None else "absente (.env)")
 
 
+WHISPER_DIR = "models/whisper"  # cache des modèles faster-whisper (scripts/download_models.py)
+
+
 def build_app(config: Config, *, tray: bool, audio: bool) -> App:
     """Assemble l'orchestrateur avec les composants réels (imports lourds paresseux)."""
     icon = TrayIcon() if tray else None
@@ -78,7 +89,9 @@ def build_app(config: Config, *, tray: bool, audio: bool) -> App:
     from mikata.audio.earcons import Earcons
     from mikata.audio.player import AudioPlayer
     from mikata.governor import CpuMonitor, lower_priority
+    from mikata.stt.whisper_local import WhisperSTT
     from mikata.ui.hotkeys import HotkeyListener
+    from mikata.vad.silero import SileroVAD
     from mikata.wake.oww import OpenWakeWordDetector
 
     lower_priority()
@@ -105,6 +118,7 @@ def build_app(config: Config, *, tray: bool, audio: bool) -> App:
     verifier = config.resolve(config.wake.verifier) if config.wake.verifier else None
     detector = OpenWakeWordDetector(config.resolve(config.wake.model), verifier)
     logger.info("Mot d'activation chargé : {}", detector.name)
+    vad = SileroVAD(config.resolve(config.vad.model), config.vad.threshold)
     return App(
         config,
         tray=icon,
@@ -116,6 +130,8 @@ def build_app(config: Config, *, tray: bool, audio: bool) -> App:
         ),
         hotkeys=HotkeyListener(config.wake.hotkey) if config.wake.hotkey else None,
         cpu=CpuMonitor(),
+        vad=vad,
+        stt=WhisperSTT(config.stt, download_root=config.resolve(WHISPER_DIR)),
     )
 
 
@@ -149,6 +165,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             asyncio.run(app.run())
         except KeyboardInterrupt:
             logger.info("Interruption clavier (Ctrl+C).")
+        except StartupError as exc:
+            logger.error("{}", exc)
+            return EXIT_STARTUP
         return EXIT_OK
     except Exception:
         logger.exception("Erreur fatale.")

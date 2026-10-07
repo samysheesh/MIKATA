@@ -21,12 +21,16 @@ vad:
   speculative_ms: 250
   max_utterance_s: 15
   no_speech_timeout_s: 4
+  model: models/silero_vad.onnx    # scripts/download_models.py
+  threshold: 0.5                   # probabilité de voix (0 à 1)
 stt:
   model: large-v3-turbo
   device: cuda
   compute_type: float16
   beam_size: 1
   initial_prompt: "MIKATA, Spotify, Discord, Steam, Chrome, VS Code"
+  # Formes du mot d'activation retirées du texte (tout ce qui précède part aussi).
+  wake_words: ["mikata", "mi kata", "micata", "mikado", "jarvis"]
 llm:
   base_url: "https://..."          # endpoint CommandCode
   model: "..."                     # nom du modèle flash exposé par CommandCode

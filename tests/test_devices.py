@@ -29,8 +29,8 @@ def devices() -> list[DeviceInfo]:
 
 
 def test_prefers_wasapi(devices: list[DeviceInfo]) -> None:
-    mic = find_device(devices, "focusrite", "input")
-    assert mic.index == 1
+    mic = find_device(devices, "nt-usb", "input")  # aussi présent en MME (index 0)
+    assert mic.index == 5
     assert mic.host_api == "Windows WASAPI"
     assert mic.default_samplerate == 48_000
 
@@ -53,7 +53,7 @@ def test_not_found_lists_candidates(devices: list[DeviceInfo]) -> None:
         find_device(devices, "Rode", "input")
     message = str(info.value)
     assert "audio.input_device" in message
-    assert "Analogue 1 + 2" in message
+    assert "RØDE NT-USB+" in message
     assert "Haut-parleurs" not in message  # sortie seulement
     assert "list_audio_devices" in message
     assert isinstance(info.value, ConfigError)
