@@ -60,6 +60,11 @@ class WakeConfig(_Section):
     hotkey: str = "<ctrl>+<alt>+m"
     collect_negatives: bool = False
     log_days: int = Field(default=7, ge=1)  # ajout phase 1 : purge de data/wake_logs/
+    # Ajouts phase 7. Vérificateur de ta voix (§4) : consulté quand le modèle atteint
+    # `threshold` ; sous ce seuil de probabilité, la détection est refusée.
+    verifier_threshold: float = Field(default=0.5, ge=0, le=1)
+    # Collecte de la vie courante (collect_negatives) : arrêt après N heures (~115 Mo / h).
+    negatives_max_hours: float = Field(default=12, gt=0)
 
 
 class VadConfig(_Section):

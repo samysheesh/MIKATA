@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pickle
 import sys
 import types
 from pathlib import Path
@@ -13,6 +14,11 @@ from mikata.wake.base import WakeWordDetector
 from mikata.wake.oww import FEATURE_MODELS, OpenWakeWordDetector, WakeModelMissingError
 
 
+class FakePreprocessor:
+    def get_features(self, n: int) -> np.ndarray:
+        return np.ones((1, n, 96), dtype=np.float32)
+
+
 class FakeModel:
     instances: ClassVar[list[FakeModel]] = []
 
@@ -20,6 +26,8 @@ class FakeModel:
         self.kwargs = kwargs
         self.frames: list[np.ndarray] = []
         self.resets = 0
+        self.preprocessor = FakePreprocessor()
+        self.model_inputs = {"hey_jarvis": 16}
         FakeModel.instances.append(self)
 
     def predict(self, frame: np.ndarray) -> dict[str, float]:
@@ -28,6 +36,17 @@ class FakeModel:
 
     def reset(self) -> None:
         self.resets += 1
+
+
+class FakeVerifier:
+    """Vérificateur picklable : probabilité « ta voix » fixe."""
+
+    def __init__(self, probability: float) -> None:
+        self.probability = probability
+
+    def predict_proba(self, features: np.ndarray) -> np.ndarray:
+        assert features.shape == (1, 16, 96)
+        return np.array([[1 - self.probability, self.probability]])
 
 
 @pytest.fixture
@@ -74,13 +93,47 @@ def test_loads_onnx_with_local_feature_models(models_dir: Path, fake_oww: None) 
     assert FakeModel.instances[-1].resets == 1
 
 
-def test_verifier(models_dir: Path, fake_oww: None) -> None:
-    verifier = models_dir / "mikata_verifier.pkl"
+def _verifier(models_dir: Path, probability: float) -> Path:
+    path = models_dir / "mikata_verifier.pkl"
+    path.write_bytes(pickle.dumps(FakeVerifier(probability)))
+    return path
+
+
+def test_verifier_missing(models_dir: Path, fake_oww: None) -> None:
     with pytest.raises(WakeModelMissingError, match="mikata_verifier"):
-        OpenWakeWordDetector(models_dir / "hey_jarvis.onnx", verifier)
-    verifier.write_bytes(b"pkl")
-    OpenWakeWordDetector(models_dir / "hey_jarvis.onnx", verifier)
-    assert FakeModel.instances[-1].kwargs["custom_verifier_models"] == {"hey_jarvis": str(verifier)}
+        OpenWakeWordDetector(models_dir / "hey_jarvis.onnx", models_dir / "mikata_verifier.pkl")
+
+
+def test_verifier_accepts_your_voice(models_dir: Path, fake_oww: None) -> None:
+    """Phase 7, étage 2 : le modèle atteint le seuil, le vérificateur reconnaît ta voix."""
+    detector = OpenWakeWordDetector(
+        models_dir / "hey_jarvis.onnx", _verifier(models_dir, 0.9), verifier_threshold=0.5
+    )
+    assert "custom_verifier_models" not in FakeModel.instances[-1].kwargs  # appelé par nous
+    assert detector.has_verifier
+    assert detector.process(np.zeros(1280, dtype=np.int16)) == 0.75
+    assert detector.last_verifier_score == pytest.approx(0.9)
+    assert detector.rejections == 0
+
+
+def test_verifier_rejects_another_voice(models_dir: Path, fake_oww: None) -> None:
+    detector = OpenWakeWordDetector(
+        models_dir / "hey_jarvis.onnx", _verifier(models_dir, 0.1), verifier_threshold=0.5
+    )
+    frame = np.zeros(1280, dtype=np.int16)
+    assert detector.process(frame) == 0.0  # refusé : pas de déclenchement
+    assert detector.process(frame) == 0.0
+    assert detector.rejections == 2 and detector.last_verifier_score == pytest.approx(0.1)
+
+
+def test_verifier_only_runs_above_the_threshold(models_dir: Path, fake_oww: None) -> None:
+    detector = OpenWakeWordDetector(
+        models_dir / "hey_jarvis.onnx", _verifier(models_dir, 0.1), threshold=0.8
+    )
+    frame = np.zeros(1280, dtype=np.int16)
+    assert detector.process(frame) == 0.75  # sous le seuil : étage 2 pas consulté
+    assert detector.last_verifier_score is None
+    assert detector.scores(frame, gate=0.5) == (0.75, pytest.approx(0.1))  # eval_wakeword.py
 
 
 REAL_MODEL = PROJECT_ROOT / "models" / "hey_jarvis.onnx"
