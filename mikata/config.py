@@ -41,16 +41,21 @@ class AudioConfig(_Section):
     input_device: str = "NT-USB"
     output_device: str = "default"
     pre_roll_s: float = Field(default=2.0, gt=0, le=10)
+    # Ajouts phase 1 : canal du micro (1 = entrée 1 de l'interface ; null = moyenne des canaux)
+    # et volume des sons d'interface.
+    input_channel: int | None = Field(default=None, ge=1)
+    earcon_volume: float = Field(default=0.5, ge=0, le=1)
 
 
 class WakeConfig(_Section):
     model: Path = Path("models/hey_jarvis.onnx")
     verifier: Path | None = None
     threshold: float = Field(default=0.5, ge=0, le=1)
-    consecutive_frames: int = Field(default=2, ge=1)
+    consecutive_frames: int = Field(default=1, ge=1)
     refractory_s: float = Field(default=2.0, ge=0)
     hotkey: str = "<ctrl>+<alt>+m"
     collect_negatives: bool = False
+    log_days: int = Field(default=7, ge=1)  # ajout phase 1 : purge de data/wake_logs/
 
 
 class VadConfig(_Section):
@@ -117,6 +122,7 @@ class LoggingConfig(_Section):
     file: Path = Path("data/logs/mikata.log")
     rotation_mb: float = Field(default=5, gt=0)
     retention_files: int = Field(default=5, ge=1)
+    stats_interval_s: float = Field(default=60, ge=0)  # ajout phase 1 : ligne CPU (0 = jamais)
 
     @field_validator("level", mode="before")
     @classmethod

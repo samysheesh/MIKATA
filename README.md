@@ -5,16 +5,18 @@ interroge un LLM cloud, agit sur le PC et répond à voix haute dans le casque.
 
 - Architecture (fait foi) : [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 - Instructions pour Claude Code : [`CLAUDE.md`](CLAUDE.md)
-- Lancement : `uv run python -m mikata` (options : `--check-config`, `--config CHEMIN`, `--no-tray`)
+- Lancement : `uv run python -m mikata` (options : `--check-config`, `--config CHEMIN`, `--no-tray`, `--no-audio`)
 - Réglages : `config.yaml` ; secrets : `.env` (copier `.env.example`, jamais commité)
-- Logs : `data/logs/mikata.log` (rotation 5 Mo × 5)
+- Logs : `data/logs/mikata.log` (rotation 5 Mo × 5, anciennes archives à la corbeille)
+- Modèles : `uv run python scripts/download_models.py` (dans `models/`, non commités)
 
 ## Avancement
 
 | Phase | Contenu | État |
 | --- | --- | --- |
-| 0 | Squelette : config, logs, événements, icône, CI | livrée, à valider sur le PC |
-| 1 à 7 | Voir `docs/ARCHITECTURE.md` §11 | à faire |
+| 0 | Squelette : config, logs, événements, icône, CI | fusionnée |
+| 1 | Audio + mot d'activation (`hey_jarvis`), bip, raccourci, priorité basse | livrée, à valider sur le PC |
+| 2 à 7 | Voir `docs/ARCHITECTURE.md` §11 | à faire |
 
 ## Développement
 
@@ -127,3 +129,112 @@ $p.WaitForExit(); $p.ExitCode                        # 0
 Get-Process pythonw -ErrorAction SilentlyContinue    # rien : aucun processus restant
 Get-Content data\logs\mikata.log -Tail 3             # se termine par « MIKATA arrêté proprement. »
 ```
+
+## Phase 1 — vérification sur le PC Windows
+
+Critères d'acceptation : bip < 150 ms après « hey jarvis », CPU du processus < 3 % au
+repos, 0 déclenchement sur 30 min de vidéo en fond.
+
+### 1. Récupérer la branche, installer, télécharger les modèles
+
+```powershell
+git fetch origin
+git checkout phase-1
+git pull
+uv sync
+uv run python scripts\download_models.py      # 3 lignes [OK] dans models\
+```
+
+### 2. Lint et tests
+
+```powershell
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
+```
+
+Attendu : tout en `passed` (le test sur le vrai modèle `hey_jarvis` tourne maintenant que
+les modèles sont téléchargés).
+
+### 3. Micro et casque
+
+```powershell
+uv run python scripts\list_audio_devices.py   # deux lignes [OK]
+```
+
+Si ton micro n'est branché que sur l'entrée 1 de l'interface, mets `input_channel: 1` dans la
+section `audio` de `config.yaml` (sinon les deux canaux sont moyennés et le niveau baisse
+de moitié).
+
+### 4. Lancer MIKATA
+
+```powershell
+uv run python -m mikata
+```
+
+Attendu dans la console : `Priorité du processus : inférieure à la normale.`,
+`Mot d'activation chargé : hey_jarvis`, `Sortie : « ... » (Windows WASAPI, ...)`,
+`Micro : « ... »`, `Raccourci clavier actif : <ctrl>+<alt>+m`, `MIKATA démarré, en attente.`
+
+### 5. Critère « bip < 150 ms »
+
+Dis « hey jarvis » 10 fois, en laissant au moins 3 s entre deux essais. Chaque fois : un bip
+court dans le casque et une ligne :
+
+```
+Mot d'activation détecté (score 0.97) : bip ≈ 130 ms après la fin du mot (détection 110 + traitement 5 + sortie 12 ms).
+```
+
+Dans un autre PowerShell, pendant que MIKATA tourne :
+
+```powershell
+Select-String -Path data\logs\mikata.log -Pattern "bip ≈" | Select-Object -Last 10
+```
+
+La fin du mot est estimée sur les 2 s d'audio enregistrées dans `data\wake_logs\` (un `.wav`
+par détection, que tu peux écouter ou ouvrir dans Audacity). `traitement` + `sortie` est la
+part de MIKATA (≈ 20 ms) ; `détection` est le temps que met le modèle à réagir après la fin du
+mot. Si la médiane dépasse 150 ms, essaie `consecutive_frames: 1` dans la section `wake` de
+`config.yaml` (gain de 80 ms), puis refais ce test et le test des 30 min (étape 7).
+
+`Ctrl+Alt+M` doit aussi faire biper (ligne `Raccourci clavier : bip lancé`).
+
+### 6. Critère « CPU < 3 % au repos »
+
+Laisse MIKATA tourner 5 min sans parler, puis :
+
+```powershell
+Select-String -Path data\logs\mikata.log -Pattern "CPU du processus" | Select-Object -Last 5
+Get-Process python | Select-Object Id, PriorityClass, CPU
+```
+
+Attendu : des lignes `CPU du processus : x % d'un cœur (y % du PC)` avec `y` < 3 (c'est la
+valeur que montre le Gestionnaire des tâches ; `x` est la même mesure rapportée à un seul
+cœur), `trames perdues : 0`, et `PriorityClass` = `BelowNormal`.
+
+### 7. Critère « 0 déclenchement sur 30 min de vidéo »
+
+```powershell
+$debut = Get-Date
+```
+
+Lance 30 min de vidéo parlée (podcast, YouTube) sur les **haut-parleurs** (pas le casque, pour
+que le micro l'entende), sans dire « hey jarvis ». Puis :
+
+```powershell
+(Get-ChildItem data\wake_logs -Filter *.wav | Where-Object LastWriteTime -gt $debut).Count   # 0
+Select-String -Path data\logs\mikata.log -Pattern "Mot d'activation détecté" | Where-Object { $_.Line -ge $debut.ToString("yyyy-MM-dd HH:mm") }
+```
+
+Attendu : `0` et aucune ligne. Arrête MIKATA avec « Quitter » dans l'icône.
+
+### 8. (Facultatif) Mode `collect_negatives`
+
+Mets `collect_negatives: true` dans la section `wake` de `config.yaml`, lance MIKATA 1 min,
+quitte, puis :
+
+```powershell
+Get-ChildItem data\negatives -Recurse -Filter *.wav | Select-Object -Last 5 FullName, Length
+```
+
+Attendu : des fichiers d'environ 320 Ko (10 s à 16 kHz). Remets `collect_negatives: false`.

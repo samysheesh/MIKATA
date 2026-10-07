@@ -15,8 +15,11 @@ MODULES = [
     "mikata.events",
     "mikata.governor",
     "mikata.logging_setup",
-    *(f"mikata.audio.{m}" for m in ("base", "capture", "player", "ringbuffer", "earcons")),
-    *(f"mikata.wake.{m}" for m in ("base", "oww")),
+    *(
+        f"mikata.audio.{m}"
+        for m in ("base", "capture", "player", "ringbuffer", "earcons", "devices", "wavfile")
+    ),
+    *(f"mikata.wake.{m}" for m in ("base", "oww", "trigger", "recordings")),
     *(f"mikata.vad.{m}" for m in ("base", "silero")),
     *(f"mikata.stt.{m}" for m in ("base", "whisper_local", "speculative")),
     *(f"mikata.llm.{m}" for m in ("base", "client", "prompts")),
@@ -54,6 +57,8 @@ PATHS = [
     "scripts/eval_wakeword.py",
     "scripts/eval_stt.py",
     "scripts/list_audio_devices.py",
+    "scripts/download_models.py",
+    *(f"assets/sounds/{n}.wav" for n in ("wake", "end", "thinking", "error")),
     "scripts/user",
     "tests",
     "docs/ARCHITECTURE.md",

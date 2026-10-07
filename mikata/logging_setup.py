@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from loguru import logger
+from send2trash import send2trash
 
 from mikata.config import LoggingConfig
 
@@ -24,6 +27,20 @@ class _InterceptHandler(logging.Handler):
         except ValueError:
             level = record.levelno
         logger.opt(depth=6, exception=record.exc_info).log(level, record.getMessage())
+
+
+def trash_old_logs(keep: int) -> Callable[[list[str]], None]:
+    """Rétention loguru : garde les `keep` archives les plus récentes, envoie les autres à la
+    corbeille (jamais de suppression définitive, cf. CLAUDE.md)."""
+
+    def retention(files: list[str]) -> None:
+        for path in sorted(files, key=lambda f: (-os.stat(f).st_mtime, f))[keep:]:
+            try:
+                send2trash(path)
+            except OSError as exc:
+                print(f"Impossible d'envoyer {path} à la corbeille : {exc}", file=sys.stderr)
+
+    return retention
 
 
 def setup_logging(cfg: LoggingConfig, base_dir: Path) -> Path:
@@ -45,7 +62,7 @@ def setup_logging(cfg: LoggingConfig, base_dir: Path) -> Path:
         level=cfg.level,
         format=LOG_FORMAT,
         rotation=int(cfg.rotation_mb * 1024 * 1024),
-        retention=cfg.retention_files,
+        retention=trash_old_logs(cfg.retention_files),
         encoding="utf-8",
         enqueue=True,  # écriture depuis plusieurs threads (tray, executors) sans contention
         backtrace=False,

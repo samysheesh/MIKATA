@@ -5,14 +5,17 @@ audio:
   input_device: "NT-USB"           # sous-chaîne du nom, voir scripts/list_audio_devices.py
   output_device: "default"         # "default" = sortie par défaut de Windows
   pre_roll_s: 2.0
+  input_channel: null              # 1, 2... = canal du micro ; null = moyenne des canaux
+  earcon_volume: 0.5               # volume des sons d'interface (0 à 1)
 wake:
   model: models/hey_jarvis.onnx    # -> models/mikata.onnx en phase 7
   verifier: null                   # -> models/mikata_verifier.pkl
   threshold: 0.5                   # fixé ensuite par eval_wakeword.py
-  consecutive_frames: 2
+  consecutive_frames: 1
   refractory_s: 2.0
   hotkey: "<ctrl>+<alt>+m"
-  collect_negatives: false
+  collect_negatives: false         # true : enregistre data/negatives/ par extraits de 10 s
+  log_days: 7                      # purge (corbeille) de data/wake_logs/ après N jours
 vad:
   end_silence_ms: 500
   speculative_ms: 250
@@ -47,3 +50,4 @@ logging:                           # ajout phase 0 (§10 « Logs »)
   file: data/logs/mikata.log
   rotation_mb: 5
   retention_files: 5
+  stats_interval_s: 60             # ligne « CPU du processus » toutes les N s (0 = jamais)

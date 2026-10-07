@@ -30,7 +30,7 @@ def test_repo_config_is_valid_and_matches_section_10(config_file: Path) -> None:
     assert config.wake.model == Path("models/hey_jarvis.onnx")
     assert config.wake.verifier is None
     assert config.wake.threshold == 0.5
-    assert config.wake.consecutive_frames == 2
+    assert config.wake.consecutive_frames == 1
     assert config.wake.hotkey == "<ctrl>+<alt>+m"
     assert config.vad.end_silence_ms == 500
     assert config.vad.speculative_ms == 250
@@ -43,6 +43,11 @@ def test_repo_config_is_valid_and_matches_section_10(config_file: Path) -> None:
     assert config.guard.confirm_after_web is False
     assert config.logging.rotation_mb == 5
     assert config.logging.retention_files == 5
+    # ajouts phase 1
+    assert config.audio.input_channel is None
+    assert config.audio.earcon_volume == 0.5
+    assert config.wake.log_days == 7
+    assert config.logging.stats_interval_s == 60
 
 
 def test_repo_config_keys_are_exactly_the_model_fields() -> None:
@@ -102,6 +107,8 @@ def test_not_a_mapping(tmp_path: Path) -> None:
         ("vad", "speculative_ms", 600, "vad"),
         ("audio", "pre_roll_s", -1, "audio.pre_roll_s"),
         ("logging", "level", "BAVARD", "logging.level"),
+        ("audio", "input_channel", 0, "audio.input_channel"),
+        ("audio", "earcon_volume", 1.5, "audio.earcon_volume"),
     ],
 )
 def test_invalid_values(tmp_path: Path, section: str, key: str, value: object, loc: str) -> None:

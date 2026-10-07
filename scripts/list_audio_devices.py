@@ -13,55 +13,18 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
 
-PREFERRED_HOST_API = "Windows WASAPI"
+from mikata.audio.devices import (
+    PREFERRED_HOST_API,
+    DeviceInfo,
+    collect_devices,
+    default_device_index,
+    filter_host_api,
+    match_devices,
+)
 
-Kind = Literal["input", "output"]
-
-
-@dataclass(frozen=True)
-class DeviceInfo:
-    index: int
-    name: str
-    host_api: str
-    max_input_channels: int
-    max_output_channels: int
-    default_samplerate: float
-
-    def supports(self, kind: Kind) -> bool:
-        channels = self.max_input_channels if kind == "input" else self.max_output_channels
-        return channels > 0
-
-
-def collect_devices(sd: Any) -> list[DeviceInfo]:
-    """Lit les périphériques via le module `sounddevice` (ou un substitut en test)."""
-    host_apis = [api["name"] for api in sd.query_hostapis()]
-    return [
-        DeviceInfo(
-            index=index,
-            name=dev["name"],
-            host_api=host_apis[dev["hostapi"]],
-            max_input_channels=int(dev["max_input_channels"]),
-            max_output_channels=int(dev["max_output_channels"]),
-            default_samplerate=float(dev["default_samplerate"]),
-        )
-        for index, dev in enumerate(sd.query_devices())
-    ]
-
-
-def filter_host_api(devices: list[DeviceInfo], host_api: str | None) -> list[DeviceInfo]:
-    """Garde l'API hôte demandée si elle existe, sinon tout."""
-    if host_api is None or not any(d.host_api == host_api for d in devices):
-        return devices
-    return [d for d in devices if d.host_api == host_api]
-
-
-def match_devices(devices: list[DeviceInfo], substring: str, kind: Kind) -> list[DeviceInfo]:
-    needle = substring.casefold()
-    return [d for d in devices if d.supports(kind) and needle in d.name.casefold()]
+__all__ = ["PREFERRED_HOST_API", "collect_devices", "filter_host_api", "main", "match_devices"]
 
 
 def format_table(devices: list[DeviceInfo]) -> str:
@@ -120,7 +83,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         ("audio.output_device", config.audio.output_device, "output"),
     ):
         if substring.casefold() == "default":
-            print(f"[OK] {key} = 'default' -> périphérique par défaut de Windows")
+            index = default_device_index(sd, kind)
+            default = next((d for d in candidates if d.index == index), None)
+            if default is None:
+                print(f"[!!] {key} = 'default' -> aucun périphérique par défaut dans Windows")
+                all_ok = False
+            else:
+                print(f"[OK] {key} = 'default' -> #{default.index} {default.name}")
             continue
         ok, line = describe_match(key, substring, match_devices(candidates, substring, kind))
         all_ok &= ok
