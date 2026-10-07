@@ -52,10 +52,16 @@ MAX_ATTEMPTS = 2  # un retry immédiat (§6)
 HISTORY_TOOL_CHARS = 400  # résultat d'outil gardé dans l'historique de conversation
 FOLLOW_UP_MARKER = "[IGNORER]"
 FOLLOW_UP_NOTE = (
-    "Fenêtre de suivi : cette phrase a été entendue sans mot d'activation, elle peut venir "
-    "d'une conversation à côté, d'une vidéo ou du bruit. Si ce n'est pas clairement une "
-    "suite adressée à toi (question, demande, réponse à ce que tu viens de dire), réponds "
-    f"exactement {FOLLOW_UP_MARKER}, sans rien d'autre et sans outil. Ne demande jamais de "
+    "Fenêtre de suivi : l'utilisateur vient d'avoir un échange avec toi et a la parole "
+    "quelques secondes sans dire le mot d'activation. Cette phrase est donc, le plus souvent, "
+    "la suite de l'échange précédent, même courte ou elliptique (« et à Tokyo ? », « et "
+    "demain ? », « pourquoi ? », « plus fort », « merci ») : réponds-y normalement en "
+    "t'appuyant sur les messages précédents. Réponds "
+    f"exactement {FOLLOW_UP_MARKER}, sans rien d'autre et sans outil, si la phrase n'est pas "
+    "une demande ou une question qui prolonge l'échange précédent : propos adressé à une autre "
+    "personne (un prénom, « tu as vu... », « on devrait... »), avis ou remarque en passant, "
+    "sujet sans lien avec ce qui vient d'être dit, vidéo ou bruit. Une phrase qui parle d'un "
+    "sujet nouveau sans te le demander explicitement est à ignorer. Ne demande jamais de "
     "répéter."
 )
 # « J'ai pas bien entendu », « tu peux répéter ? » : jamais dit dans la fenêtre de suivi.
