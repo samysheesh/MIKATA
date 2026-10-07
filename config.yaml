@@ -71,7 +71,7 @@ tts:
   cpu_threads: 4                   # threads CPU de la synthèse (§10 : 4 max)
 agent:
   follow_up_s: 6                   # fenêtre de suivi sans mot d'activation (0 = désactivée)
-  follow_up_min_confidence: 0.4    # suivi : transcription moins fiable (0 à 1) -> ignorée, bip
+  follow_up_min_confidence: 0.2    # suivi : transcription moins fiable (0 à 1) -> ignorée, bip
   follow_up_use_llm_gate: true     # suivi : le LLM dit si la phrase s'adresse à MIKATA
   session_reset_min: 10
   thinking_sound_after_s: 1.2

@@ -187,7 +187,7 @@ class AgentConfig(_Section):
     history_summarize: bool = True
     # Fenêtre de suivi dans le bruit : une phrase dont la transcription est moins fiable que
     # ce seuil (0 à 1) est ignorée sans réponse ; puis le LLM juge si elle s'adresse à MIKATA.
-    follow_up_min_confidence: float = Field(default=0.4, ge=0, le=1)
+    follow_up_min_confidence: float = Field(default=0.2, ge=0, le=1)
     follow_up_use_llm_gate: bool = True
     # Commande entière qui annule (dite après « MIKATA » pendant une réponse ou pendant la
     # fenêtre de suivi) : jamais envoyée au LLM.
