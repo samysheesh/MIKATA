@@ -249,3 +249,102 @@ def test_reasoning_content_is_kept_and_timed() -> None:
     assert done.reasoning_s is not None and done.reasoning_s >= 0
     plain = _stream_with(Server(_sse([_chunk({"content": "ok"}), _chunk({}, "stop")])))[-1]
     assert plain.reasoning == "" and plain.reasoning_s is None and plain.usage is None
+
+
+def test_silent_server_fails_fast_on_a_new_connection() -> None:
+    """Phase 6 : rien reçu en `first_chunk_timeout_s` -> échec tout de suite (la boucle agent
+    relance) et nouvelle connexion pour la relance."""
+    cfg = CFG.model_copy(update={"first_chunk_timeout_s": 0.05})
+    calls = 0
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            await asyncio.sleep(5)  # serveur muet (connexion morte)
+        return _sse([_chunk({"content": "Ok."}), _chunk({}, "stop")])
+
+    async def run() -> tuple[float, list[Any], int]:
+        client = OpenAICompatClient(cfg, SecretStr("k"), httpx2.MockTransport(handler))
+        first_http = client._http
+        start = asyncio.get_running_loop().time()
+        with pytest.raises(LlmError, match="pas de réponse en 0 s"):
+            [e async for e in client.stream([{"role": "user", "content": "x"}], [])]
+        elapsed = asyncio.get_running_loop().time() - start
+        assert client._http is not first_http and client.renewals == 1
+        events = [e async for e in client.stream([{"role": "user", "content": "x"}], [])]
+        await client.aclose()
+        return elapsed, events, calls
+
+    elapsed, events, count = asyncio.run(run())
+    assert elapsed < 1.0 and count == 2
+    assert events == [TextDelta("Ok."), Done("stop")]
+
+
+def test_slow_but_alive_stream_is_not_cut() -> None:
+    """Le délai ne vaut que pour le premier morceau : une longue réponse continue."""
+    cfg = CFG.model_copy(update={"first_chunk_timeout_s": 0.05})
+
+    async def body() -> Any:
+        yield f"data: {json.dumps(_chunk({'content': 'Un.'}))}\n\n".encode()
+        await asyncio.sleep(0.15)  # plus long que first_chunk_timeout_s
+        yield f"data: {json.dumps(_chunk({'content': ' Deux.'}, 'stop'))}\n\n".encode()
+        yield b"data: [DONE]\n\n"
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=body(), headers={"content-type": "text/event-stream"})
+
+    client_events: list[Any] = []
+
+    async def run() -> int:
+        client = OpenAICompatClient(cfg, SecretStr("k"), httpx2.MockTransport(handler))
+        client_events.extend(
+            [e async for e in client.stream([{"role": "user", "content": "x"}], [])]
+        )
+        await client.aclose()
+        return client.renewals
+
+    assert asyncio.run(run()) == 0
+    assert client_events == [TextDelta("Un."), TextDelta(" Deux."), Done("stop")]
+
+
+def test_connection_error_renews_the_connection() -> None:
+    def refuse(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectError("refusée", request=request)
+
+    async def run() -> int:
+        client = OpenAICompatClient(CFG, SecretStr("k"), httpx2.MockTransport(refuse))
+        for _ in range(5):  # les anciennes connexions sont fermées au-delà de MAX_RETIRED
+            with pytest.raises(LlmError):
+                [e async for e in client.stream([{"role": "user", "content": "x"}], [])]
+        assert len(client._retired) == 3
+        await client.aclose()
+        assert client._retired == []
+        return client.renewals
+
+    assert asyncio.run(run()) == 5
+
+
+def test_long_reasoning_keeps_the_full_timeout() -> None:
+    """Réflexion medium / high : pas de délai court sur le premier morceau."""
+    cfg = CFG.model_copy(update={"first_chunk_timeout_s": 0.05})
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        await asyncio.sleep(0.15)  # le modèle réfléchit sans rien envoyer
+        return _sse([_chunk({"content": "Réfléchi."}), _chunk({}, "stop")])
+
+    async def run(effort: str) -> list[Any]:
+        client = OpenAICompatClient(cfg, SecretStr("k"), httpx2.MockTransport(handler))
+        try:
+            return [
+                e
+                async for e in client.stream(
+                    [{"role": "user", "content": "x"}], [], reasoning_effort=effort
+                )
+            ]
+        finally:
+            await client.aclose()
+
+    assert asyncio.run(run("high"))[0] == TextDelta("Réfléchi.")
+    with pytest.raises(LlmError, match="pas de réponse"):
+        asyncio.run(run("low"))

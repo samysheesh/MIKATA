@@ -148,6 +148,63 @@ def _run_powershell(command: str, timeout: float = 10.0) -> str:
     return completed.stdout.decode("utf-8", errors="replace")
 
 
+APP_FRAME_HOST = "applicationframehost"
+
+
+def _process_name(pid: int) -> str:
+    """Nom du programme d'un processus, sans « .exe » (« Notepad ») ; "" si inconnu.
+
+    psutil d'abord ; à défaut (ajout phase 6), `QueryFullProcessImageNameW` avec le droit
+    minimal PROCESS_QUERY_LIMITED_INFORMATION, qui marche aussi pour les applis empaquetées
+    (Bloc-notes de Windows 11).
+    """
+    import psutil
+
+    try:
+        return Path(psutil.Process(pid).name()).stem
+    except (psutil.Error, OSError):
+        pass
+    if sys.platform != "win32":
+        return ""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined,unused-ignore]
+    handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return ""
+    try:
+        size = wintypes.DWORD(1024)
+        buffer = ctypes.create_unicode_buffer(size.value)
+        if not kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)):
+            return ""
+        return Path(buffer.value).stem
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _hosted_process(hwnd: int, host_pid: int) -> str:
+    """Appli UWP affichée dans un cadre ApplicationFrameHost : processus de la fenêtre
+    enfant qui n'appartient pas au cadre (« CalculatorApp »...) ; "" si introuvable."""
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32  # type: ignore[attr-defined,unused-ignore]
+    found: list[str] = []
+
+    def visit(child: int, _: Any) -> bool:
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(child, ctypes.byref(pid))
+        if pid.value and pid.value != host_pid:
+            found.append(_process_name(pid.value))
+            return False  # arrête l'énumération
+        return True
+
+    callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(visit)
+    user32.EnumChildWindows(hwnd, callback, 0)
+    return next((name for name in found if name), "")
+
+
 class WindowsDesktop:
     """Implémentation Windows de `tools.base.Desktop` (API Win32 via ctypes, pyperclip)."""
 
@@ -197,8 +254,6 @@ class WindowsDesktop:
         import ctypes
         from ctypes import wintypes
 
-        import psutil
-
         user32 = ctypes.windll.user32  # type: ignore[attr-defined,unused-ignore]
         dwmapi = ctypes.windll.dwmapi  # type: ignore[attr-defined,unused-ignore]
         gwl_exstyle, ws_ex_toolwindow, gw_owner, dwmwa_cloaked = -20, 0x80, 4, 14
@@ -222,10 +277,9 @@ class WindowsDesktop:
             user32.GetWindowTextW(hwnd, buffer, length + 1)
             pid = wintypes.DWORD()
             user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-            try:
-                process = Path(psutil.Process(pid.value).name()).stem
-            except (psutil.Error, OSError):
-                process = ""
+            process = _process_name(pid.value)
+            if process.casefold() == APP_FRAME_HOST:  # Calculatrice, Paramètres... (UWP)
+                process = _hosted_process(int(hwnd), pid.value) or process
             found.append(WindowInfo(int(hwnd), buffer.value, process))
             return True
 

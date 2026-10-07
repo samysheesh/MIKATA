@@ -11,6 +11,11 @@ Le callback ne fait que recopier et additionner des échantillons déjà prêts.
 `Speaker` : file de phrases (§8). Chaque commande ouvre un `SpeechStream` ; la phrase N+1 est
 synthétisée pendant que N est jouée. Les flux sont joués dans l'ordre d'ouverture : deux voix
 ne se superposent jamais, mais une commande n'attend jamais l'autre pour réfléchir.
+
+Ajouts phase 6 : `Speaker.hold()` / `release()` : pendant que l'utilisateur parle (écoute
+d'une commande, d'une réponse ou fenêtre de suivi), aucune nouvelle phrase ne commence ; la
+phrase en cours n'est pas coupée (c'est le rôle du barge-in, `SpeechStream.cancel`).
+`Speaker.busy` : une réponse est en cours ou en attente.
 """
 
 from __future__ import annotations
@@ -244,6 +249,34 @@ class Speaker:
         self.current: SpeechStream | None = None
         self._streams: asyncio.Queue[SpeechStream] = asyncio.Queue()
         self._task: asyncio.Task[None] | None = None
+        self._open: asyncio.Event | None = None  # créé dans la boucle, au premier besoin
+        self._holds = 0
+
+    def _gate(self) -> asyncio.Event:
+        if self._open is None:
+            self._open = asyncio.Event()
+            if not self._holds:
+                self._open.set()
+        return self._open
+
+    def hold(self) -> None:
+        """Aucune nouvelle phrase ne commence jusqu'au `release()` correspondant."""
+        self._holds += 1
+        self._gate().clear()
+
+    def release(self) -> None:
+        self._holds = max(0, self._holds - 1)
+        if not self._holds:
+            self._gate().set()
+
+    @property
+    def held(self) -> bool:
+        return self._holds > 0
+
+    @property
+    def busy(self) -> bool:
+        """Une réponse est jouée, ou attend son tour."""
+        return self.current is not None or not self._streams.empty()
 
     def load(self) -> None:
         """Charge le moteur TTS et le cache de phrases (bloquant, au démarrage)."""
@@ -294,6 +327,10 @@ class Speaker:
             except Exception:
                 logger.exception("Synthèse vocale impossible pour un fragment.")
                 continue
+            if self.held:  # l'utilisateur parle : la phrase attend qu'il ait fini
+                await self._gate().wait()
+                if stream.cancelled:
+                    continue
             if stream.first_sound_at is None:
                 stream.first_sound_at = time.monotonic() + self.player.output_latency_s
                 if stream.on_first_sound is not None:

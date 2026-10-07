@@ -26,6 +26,9 @@ def write_test_config(path: Path, **sections: dict[str, Any]) -> Path:
     """config.yaml de test : valeurs par défaut du code (LLM en placeholder « ... »),
     indépendantes du config.yaml réel ; `sections` en surcharge (ex. llm={"model": "x"})."""
     data = Config().model_dump(mode="json", exclude={"secrets"})
+    # Fenêtre de suivi (phase 6) coupée par défaut : sans trames de micro, elle resterait
+    # ouverte ; les tests de la phase 6 l'activent.
+    data["agent"]["follow_up_s"] = 0
     for section, values in sections.items():
         data[section].update(values)
     path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")

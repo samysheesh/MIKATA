@@ -97,11 +97,13 @@ class _FakeSTT:
     def __init__(self, answers: dict[int, str]) -> None:
         self.answers = answers
         self.loaded = self.closed = False
+        self.prompts: list[str | None] = []
 
     def load(self) -> None:
         self.loaded = True
 
-    def transcribe_sync(self, audio: np.ndarray) -> Transcript:
+    def transcribe_sync(self, audio: np.ndarray, prompt: str | None = None) -> Transcript:
+        self.prompts.append(prompt)
         return Transcript(self.answers[int(audio[0])], len(audio) / 16_000, 0.1 * int(audio[0]))
 
     def close(self) -> None:
@@ -129,3 +131,27 @@ def test_run_without_dataset(tmp_path: Path, capsys: pytest.CaptureFixture[str])
         ev.main(["--dir", str(tmp_path), "--config", str(PROJECT_ROOT / "config.yaml"), "run"]) == 1
     )
     assert "record" in capsys.readouterr().out
+
+
+def test_prompt_modes() -> None:
+    """Phase 6 : sans prompt, prompt de la config, ou + noms des applis installées."""
+    from mikata.config import SttConfig
+
+    cfg = SttConfig(initial_prompt="MIKATA, Spotify")
+    assert ev.prompt_for("none", cfg) == ""
+    assert ev.prompt_for("config", cfg) is None
+    apps = ev.prompt_for("apps", cfg, apps=lambda: ["Spotify", "Hades", "Balatro"])
+    assert apps == "MIKATA, Spotify. Applications : Balatro, Hades."
+    args = ev.parse_args(["run", "--prompt", "none", "apps"])
+    assert args.prompt == ["none", "apps"]
+    assert ev.parse_args(["run"]).prompt == ["config"]
+
+
+def test_evaluate_passes_the_prompt() -> None:
+    dataset = [(np.full(1600, 1, dtype=np.int16), "ouvre Spotify")]
+    stt = _FakeSTT({1: "Ouvre Spotify."})
+    result = ev.evaluate(stt, dataset, "float16", 1, "", "none")
+    assert stt.prompts == [""] and result.prompt == "none"
+    ev.evaluate(stt, dataset, "float16", 1)  # prompt de la config : rien d'imposé
+    assert stt.prompts[-1] is None
+    assert " none " in ev.format_results([result], 1)

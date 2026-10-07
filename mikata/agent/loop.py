@@ -8,6 +8,8 @@
    Sinon les résultats (tronqués) repartent au LLM, au plus `llm.max_tool_rounds` étapes.
 4. Erreur réseau / API avant le premier mot : un retry immédiat, puis « Je n'arrive pas à
    joindre le serveur » (en cache, fonctionne hors ligne). `llm.turn_timeout_s` par requête.
+   Phase 6 : un serveur muet échoue après `llm.first_chunk_timeout_s` (et non plus
+   `request_timeout_s`), sur une connexion neuve pour la relance (llm/client.py).
 5. Niveau de réflexion (ajout phase 4) : `llm.reasoning_effort` par défaut, ou celui d'un
    mot-clé dit en début / fin de commande (`llm.reasoning_keywords`, détecté par le code).
    Filet : un outil en échec, ou plus de `llm.reasoning_fallback_steps` étapes -> au moins
@@ -128,6 +130,21 @@ def _with_reasoning(messages: list[dict[str, Any]], effort: str | None) -> list[
     return out
 
 
+HISTORY_FILE = "data/history.json"
+
+
+def short_term_memory(config: Config) -> ShortTermMemory:
+    """Historique de conversation : en mémoire, ou sur disque si `agent.history_persist`."""
+    agent = config.agent
+    if agent.history_persist:
+        return ShortTermMemory(
+            agent.history_max_tokens,
+            agent.history_persist_h * 3600,
+            path=config.resolve(HISTORY_FILE),
+        )
+    return ShortTermMemory(agent.history_max_tokens, agent.session_reset_min * 60)
+
+
 @dataclass
 class _Reply:
     text: str
@@ -153,9 +170,7 @@ class Agent:
     ) -> None:
         self.llm = llm
         self.config = config
-        self.memory = memory or ShortTermMemory(
-            config.agent.history_max_tokens, config.agent.session_reset_min * 60
-        )
+        self.memory = memory or short_term_memory(config)
         self.phrases = phrases
         self.tools = tools
         self.long_memory = long_memory
@@ -390,6 +405,8 @@ class Agent:
                             speech.say(fragment)
                     elif isinstance(event, ToolCallReq):
                         calls.append(event)
+                if attempt > 1:
+                    logger.info("Appel LLM réussi à la tentative {}/{}.", attempt, MAX_ATTEMPTS)
                 break
             except asyncio.CancelledError:
                 raise

@@ -28,7 +28,10 @@ stt:
   device: cuda
   compute_type: int8_float16
   beam_size: 1
-  initial_prompt: "MIKATA, Spotify, Discord, Steam, Chrome, VS Code"
+  # Vocabulaire donné à Whisper (noms propres, mots de MIKATA) ; voir eval_stt.py --prompt.
+  initial_prompt: "MIKATA, Bloc-notes, Spotify, Discord, Steam, Chrome, VS Code, PowerShell"
+  prompt_apps: true                # + noms des applications installées (menu Démarrer)
+  prompt_max_chars: 500            # taille max du prompt (Whisper en garde ~220 tokens)
   # Formes du mot d'activation retirées du texte (tout ce qui précède part aussi).
   wake_words: ["mikata", "mi kata", "micata", "mikado", "jarvis"]
 llm:
@@ -37,6 +40,7 @@ llm:
   max_tool_rounds: 8
   request_timeout_s: 20
   turn_timeout_s: 60               # durée max d'une requête complète
+  first_chunk_timeout_s: 8         # rien reçu en N s -> nouvelle connexion et relance
   reasoning_effort: none           # réflexion par défaut : none | low | medium | high
   reasoning_keywords:              # dit en début ou fin de commande -> niveau de réflexion
     low: ["réfléchis"]
@@ -70,6 +74,12 @@ agent:
   session_reset_min: 10
   thinking_sound_after_s: 1.2
   history_max_tokens: 6000         # historique de conversation envoyé au LLM
+  history_persist: false           # true : historique gardé dans data/history.json (redémarrages)
+  history_persist_h: 24            # ... et pendant N heures sans interaction (au lieu de 10 min)
+  # Commande entière qui annule la réponse en cours ou ferme la fenêtre de suivi.
+  cancel_phrases: ["stop", "arrête", "arrête-toi", "annule", "annule ça", "annule tout",
+    "laisse tomber", "oublie", "oublie ça", "tais-toi", "chut", "silence", "c'est bon",
+    "ça ira", "ça suffit", "c'est tout", "non", "non rien", "rien", "non merci", "pas grave"]
 guard:
   allowed_dirs: ["~"]              # dossiers où les outils fichiers ont le droit d'agir
   backup_days: 14                  # sauvegardes avant écrasement (data/backups), puis corbeille

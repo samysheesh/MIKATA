@@ -165,3 +165,53 @@ def test_real_ctranslate2_without_gpu(tmp_path: Path) -> None:
         pytest.skip("cette machine a un GPU")
     with pytest.raises(SttUnavailableError, match="Aucun GPU NVIDIA"):
         _stt(tmp_path).load()
+
+
+def test_build_prompt_adds_short_app_names_first() -> None:
+    from mikata.stt.whisper_local import build_prompt
+
+    base = "MIKATA, Bloc-notes, Spotify"
+    names = [
+        "Spotify",  # déjà dans le prompt
+        "Counter-Strike 2",
+        "Microsoft Flight Simulator 2024 Édition Premium",  # trop long pour être dit
+        "Discord",
+        "C:\\Program Files\\truc.exe",
+        "Steam",
+    ]
+    prompt = build_prompt(base, names, max_chars=500)
+    assert prompt == "MIKATA, Bloc-notes, Spotify. Applications : Counter-Strike 2, Discord, Steam."
+    short = build_prompt(base, names, max_chars=len(base) + 30)
+    assert short == "MIKATA, Bloc-notes, Spotify. Applications : Steam."  # les plus courts
+    assert build_prompt(base, [], 500) == base
+    assert build_prompt("", ["Steam"], 500) == "Applications : Steam."
+
+
+def test_prompt_follows_installed_apps(fake_whisper: types.SimpleNamespace, tmp_path: Path) -> None:
+    apps = ["Discord", "Hades"]  # Discord est déjà dans stt.initial_prompt
+    stt = WhisperSTT(SttConfig(), download_root=tmp_path, vocabulary=lambda: apps)
+    assert stt.prompt.endswith("PowerShell. Applications : Hades.")
+    apps.append("Balatro")
+    assert stt.prompt.endswith("Applications : Balatro, Hades.")  # recalculé
+    stt.load()
+    asyncio.run(stt.transcribe(np.zeros(1600, dtype=np.int16)))
+    _, kwargs = FakeWhisperModel.instances[-1].calls[-1]
+    assert kwargs["initial_prompt"] == stt.prompt
+    off = WhisperSTT(SttConfig(prompt_apps=False), download_root=tmp_path, vocabulary=lambda: apps)
+    assert off.prompt == SttConfig().initial_prompt
+
+    def broken() -> list[str]:
+        raise RuntimeError("index pas prêt")
+
+    assert WhisperSTT(SttConfig(), tmp_path, vocabulary=broken).prompt == stt.cfg.initial_prompt
+    stt.close()
+
+
+def test_explicit_prompt_overrides_config(
+    fake_whisper: types.SimpleNamespace, tmp_path: Path
+) -> None:
+    stt = _stt(tmp_path)
+    stt.load()
+    stt.transcribe_sync(np.zeros(1600, dtype=np.int16), "")  # eval_stt --prompt none
+    assert FakeWhisperModel.instances[-1].calls[-1][1]["initial_prompt"] is None
+    stt.close()

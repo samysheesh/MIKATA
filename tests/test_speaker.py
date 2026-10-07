@@ -215,3 +215,49 @@ def test_drain_of_a_cancelled_stream_returns() -> None:
         await speaker.aclose()
 
     asyncio.run(scenario())
+
+
+def test_hold_delays_new_phrases_until_release() -> None:
+    """Phase 6 : pendant que l'utilisateur parle, aucune phrase ne commence."""
+    tts, player = SlowTTS(delay=0.0), RecordingPlayer(duration=0.01)
+
+    async def scenario() -> tuple[int, int, bool, bool]:
+        speaker = Speaker(tts, player)
+        assert not speaker.busy
+        speaker.hold()
+        speaker.hold()  # deux écoutes imbriquées : il faut deux release
+        stream = speaker.open("#1")
+        stream.say("Réponse.")
+        stream.close()
+        await asyncio.sleep(0.05)
+        during = len(player.played)
+        busy = speaker.busy
+        speaker.release()
+        await asyncio.sleep(0.05)
+        still = len(player.played)
+        speaker.release()
+        await asyncio.wait_for(stream.wait(), 1)
+        await speaker.aclose()
+        return during, still, busy, speaker.busy
+
+    during, still, busy, busy_after = asyncio.run(scenario())
+    assert (during, still) == (0, 0) and busy and not busy_after
+    assert len(player.played) == 1
+
+
+def test_cancel_while_held_drops_the_phrase() -> None:
+    tts, player = SlowTTS(delay=0.0), RecordingPlayer(duration=0.01)
+
+    async def scenario() -> None:
+        speaker = Speaker(tts, player)
+        speaker.hold()
+        stream = speaker.open("#1")
+        stream.say("Jamais dite.")
+        await asyncio.sleep(0.02)
+        stream.cancel()
+        speaker.release()
+        await asyncio.wait_for(stream.wait(), 1)
+        await speaker.aclose()
+
+    asyncio.run(scenario())
+    assert player.played == []

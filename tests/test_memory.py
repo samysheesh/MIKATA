@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from mikata.agent.memory import ShortTermMemory, estimate_tokens, is_reset_command
@@ -81,3 +83,55 @@ def test_exchange_keeps_tool_steps() -> None:
     assert [m["role"] for m in memory.messages()] == ["user", "assistant", "tool", "assistant"]
     assert memory.messages()[1]["tool_calls"][0]["id"] == "a"
     assert memory.tokens > ShortTermMemory().tokens + 20  # les étapes comptent dans le plafond
+
+
+def test_history_persists_across_restarts(tmp_path: Path) -> None:
+    """Phase 6 (agent.history_persist) : l'historique survit au redémarrage."""
+    path = tmp_path / "data" / "history.json"
+    clock = Clock()
+    memory = ShortTermMemory(reset_after_s=24 * 3600, clock=clock, path=path)
+    steps = [{"role": "tool", "tool_call_id": "a", "content": "ok"}]
+    memory.add("ouvre Spotify", "C'est fait.", steps)
+    memory.add("quelle heure est-il", "Il est midi.")
+    clock.t += 3 * 3600  # trois heures plus tard, après un redémarrage
+    reloaded = ShortTermMemory(reset_after_s=24 * 3600, clock=clock, path=path)
+    assert reloaded.messages() == memory.messages() and len(reloaded) == 2
+    reloaded.clear()  # « nouvelle conversation » : le fichier est vidé (pas supprimé)
+    assert path.is_file()
+    assert len(ShortTermMemory(reset_after_s=24 * 3600, clock=clock, path=path)) == 0
+
+
+def test_persisted_history_expires(tmp_path: Path) -> None:
+    path = tmp_path / "history.json"
+    clock = Clock()
+    ShortTermMemory(reset_after_s=3600, clock=clock, path=path).add("bonjour", "Salut.")
+    clock.t += 2 * 3600
+    assert len(ShortTermMemory(reset_after_s=3600, clock=clock, path=path)) == 0
+
+
+def test_unreadable_history_starts_empty(tmp_path: Path) -> None:
+    path = tmp_path / "history.json"
+    path.write_text("{pas du json", encoding="utf-8")
+    memory = ShortTermMemory(path=path)
+    assert len(memory) == 0
+    memory.add("bonjour", "Salut.")  # réécrit proprement
+    assert len(ShortTermMemory(path=path)) == 1
+
+
+def test_agent_memory_follows_config(tmp_path: Path) -> None:
+    from conftest import write_test_config
+
+    from mikata.agent.loop import short_term_memory
+    from mikata.config import load_config
+
+    plain = load_config(write_test_config(tmp_path / "a.yaml"))
+    assert short_term_memory(plain).path is None
+    assert short_term_memory(plain).reset_after_s == 600
+    persistent = load_config(
+        write_test_config(
+            tmp_path / "b.yaml", agent={"history_persist": True, "history_persist_h": 48}
+        )
+    )
+    memory = short_term_memory(persistent)
+    assert memory.path == tmp_path / "data" / "history.json"
+    assert memory.reset_after_s == 48 * 3600

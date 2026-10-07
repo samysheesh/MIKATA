@@ -108,12 +108,15 @@ def test_history_is_sent_on_next_turn() -> None:
     assert llm.calls[1][1]["content"] == "quelle heure"
 
 
-def test_one_immediate_retry_then_success() -> None:
-    llm = ScriptedLLM([LlmError("serveur injoignable")], [TextDelta("Me revoilà."), Done("stop")])
+def test_one_immediate_retry_then_success(caplog_loguru: list[str]) -> None:
+    llm = ScriptedLLM([LlmError("pas de réponse en 8 s")], [TextDelta("Me revoilà."), Done("stop")])
     sink = Sink()
     result = _run(_agent(llm), "salut", sink)
     assert result.attempts == 2 and result.outcome == "ok"
     assert sink.said == ["Me revoilà."]
+    logs = "\n".join(caplog_loguru)
+    assert "Appel LLM en échec (1/2) : pas de réponse en 8 s" in logs
+    assert "Appel LLM réussi à la tentative 2/2." in logs  # la relance se voit dans le log
 
 
 def test_server_unreachable_plays_cached_phrase() -> None:

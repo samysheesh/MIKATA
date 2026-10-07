@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -201,6 +201,20 @@ def build_agent(config: Config, phrases: Any = None, *, tools: bool = True) -> A
     )
 
 
+def app_vocabulary(agent: Agent | None) -> Callable[[], list[str]] | None:
+    """Noms des applications installées pour le prompt de Whisper (ajout phase 6) : l'index
+    du menu Démarrer déjà en mémoire, construit au préchauffage."""
+    desktop = agent.tools.ctx.desktop if agent is not None and agent.tools is not None else None
+    if desktop is None:
+        return None
+    from mikata.tools.apps import installed_app_names
+
+    def names() -> list[str]:
+        return installed_app_names(desktop.cached_apps())
+
+    return names
+
+
 def find_output_device(config: Config) -> Any:
     from mikata.audio.devices import collect_devices, default_device_index, find_device
 
@@ -265,6 +279,9 @@ def build_app(config: Config, *, tray: bool, audio: bool, llm: bool = True) -> A
     agent = build_agent(config, speaker.cache if speaker else None) if llm else None
     if not llm:
         logger.warning("Mode --no-llm : les commandes sont transcrites et journalisées seulement.")
+    stt = WhisperSTT(
+        config.stt, download_root=config.resolve(WHISPER_DIR), vocabulary=app_vocabulary(agent)
+    )
     app = App(
         config,
         tray=icon,
@@ -277,7 +294,7 @@ def build_app(config: Config, *, tray: bool, audio: bool, llm: bool = True) -> A
         hotkeys=HotkeyListener(config.wake.hotkey) if config.wake.hotkey else None,
         cpu=CpuMonitor(),
         vad=vad,
-        stt=WhisperSTT(config.stt, download_root=config.resolve(WHISPER_DIR)),
+        stt=stt,
         agent=agent,
         speaker=speaker,
     )

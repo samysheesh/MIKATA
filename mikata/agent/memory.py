@@ -10,6 +10,11 @@ Long terme (ajout phase 4, outils `remember` / `forget`) : `data/memory.json`, a
 
 Plusieurs commandes peuvent tourner en parallèle : chacune lit un instantané de l'historique
 au départ et y ajoute son échange à la fin.
+
+Ajout phase 6 (option `agent.history_persist`, désactivée par défaut) : l'historique est
+aussi écrit dans `data/history.json` à chaque échange et relu au démarrage ; il est alors
+gardé `agent.history_persist_h` heures sans interaction au lieu de `session_reset_min`
+minutes. Même plafond de tokens ; « nouvelle conversation » le vide (fichier compris).
 """
 
 from __future__ import annotations
@@ -57,16 +62,59 @@ class ShortTermMemory:
         self,
         max_tokens: int = 6000,
         reset_after_s: float = 600.0,
-        clock: Callable[[], float] = time.monotonic,
+        clock: Callable[[], float] = time.time,
+        path: Path | None = None,
     ) -> None:
+        """`path` (ajout phase 6) : fichier où l'historique est gardé entre deux démarrages ;
+        None = en mémoire seulement. `clock` : heure murale (comparée à celle du fichier)."""
         self.max_tokens = max_tokens
         self.reset_after_s = reset_after_s
+        self.path = path
         self._clock = clock
         self._exchanges: list[_Exchange] = []
         self._last_activity = clock()
+        if path is not None:
+            self._load(path)
+
+    def _load(self, path: Path) -> None:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            last = float(data["last_activity"])
+            exchanges = [
+                _Exchange(str(item["user"]), str(item["assistant"]), list(item.get("steps", [])))
+                for item in data["exchanges"]
+            ]
+        except FileNotFoundError:
+            return
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            logger.warning("Historique illisible ({}) : {}", path, exc)
+            return
+        if self._clock() - last > self.reset_after_s:
+            logger.info("Historique de conversation trop ancien : nouvelle conversation.")
+            return
+        self._exchanges, self._last_activity = exchanges, last
+        logger.info("Historique de conversation repris : {} échange(s).", len(exchanges))
+
+    def _save(self) -> None:
+        if self.path is None:
+            return
+        payload = {
+            "last_activity": self._last_activity,
+            "exchanges": [
+                {"user": e.user, "assistant": e.assistant, "steps": e.steps}
+                for e in self._exchanges
+            ],
+        }
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_name(self.path.name + ".part")
+            tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(self.path)  # écriture atomique ; aucun fichier supprimé
+        except OSError as exc:
+            logger.warning("Historique non enregistré ({}) : {}", self.path, exc)
 
     def _expire(self) -> None:
-        if self._clock() - self._last_activity > self.reset_after_s:
+        if self._exchanges and self._clock() - self._last_activity > self.reset_after_s:
             self._exchanges.clear()
 
     def messages(self) -> list[dict[str, Any]]:
@@ -86,6 +134,7 @@ class ShortTermMemory:
         self._last_activity = self._clock()
         while self._exchanges and self.tokens > self.max_tokens:
             self._exchanges.pop(0)
+        self._save()
 
     def touch(self) -> None:
         self._expire()
@@ -94,6 +143,7 @@ class ShortTermMemory:
     def clear(self) -> None:
         self._exchanges.clear()
         self._last_activity = self._clock()
+        self._save()
 
     @property
     def tokens(self) -> int:

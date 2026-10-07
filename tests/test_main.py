@@ -259,6 +259,24 @@ def test_build_app_with_llm_and_voice(
     assert app._agent.usage.path == config_file.parent / "data" / "llm_usage.json"
     assert app._agent.long_memory is tools.ctx.memory
     assert app._agent.long_memory.path == config_file.parent / "data" / "memory.json"
+    # Phase 6 : noms des applications installées dans le prompt de Whisper (sous Windows).
+    assert (app._stt.vocabulary is not None) == on_windows  # type: ignore[union-attr]
+
+
+def test_app_vocabulary_reads_the_start_menu_index() -> None:
+    from tool_fakes import FakeDesktop
+
+    assert entry.app_vocabulary(None) is None
+    desktop = FakeDesktop()
+    agent = types.SimpleNamespace(
+        tools=types.SimpleNamespace(ctx=types.SimpleNamespace(desktop=desktop))
+    )
+    names = entry.app_vocabulary(agent)  # type: ignore[arg-type]
+    assert names is not None and "Spotify" in names()
+    no_desktop = types.SimpleNamespace(
+        tools=types.SimpleNamespace(ctx=types.SimpleNamespace(desktop=None))
+    )
+    assert entry.app_vocabulary(no_desktop) is None  # type: ignore[arg-type]
 
 
 def test_tool_context_on_windows(config_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:

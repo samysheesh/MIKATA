@@ -11,6 +11,12 @@ retenu que si :
 - ou l'inverse : chaque mot du nom est dans la demande (« Spotify Music » -> Spotify) ;
 - ou les deux textes sont presque identiques (ratio ≥ 90).
 Sinon : aucun candidat, « application introuvable : X ».
+
+Ajout phase 6 : noms français des applis Windows et noms de leurs processus
+(`APP_ALIASES`) : « notepad » trouve le Bloc-notes (fenêtre ou menu Démarrer), « Bloc-notes »
+trouve le processus Notepad de Windows 11, et ainsi de suite. Si aucune fenêtre ne
+correspond, le message d'erreur liste les fenêtres ouvertes : le LLM peut réessayer avec le
+bon nom au lieu de conclure « processus introuvable ».
 """
 
 from __future__ import annotations
@@ -39,6 +45,30 @@ WORD_TYPO_MIN_LEN = 5
 WORD_TYPO_RATIO = 85.0
 WHOLE_RATIO = 90.0
 TITLE_SCORE = 80.0
+ALIAS_PENALTY = 1.0  # à score égal, le nom demandé passe devant son alias
+OPEN_WINDOWS_IN_ERROR = 12
+
+# Nom affiché (français) -> noms de processus ou noms anglais de la même appli. Utilisé dans
+# les deux sens ; comparé avec `fold` (sans casse, accents ni ponctuation).
+APP_ALIASES: dict[str, tuple[str, ...]] = {
+    "Bloc-notes": ("notepad",),
+    "Calculatrice": ("calculator", "calculatorapp", "calc"),
+    "Paint": ("mspaint",),
+    "Microsoft Edge": ("msedge", "edge"),
+    "Word": ("winword",),
+    "PowerPoint": ("powerpnt",),
+    "Microsoft Teams": ("ms-teams", "teams"),
+    "Visual Studio Code": ("code",),
+    "Paramètres": ("systemsettings", "settings", "parametres windows"),
+    "Terminal": ("windowsterminal", "windows terminal"),
+    "Invite de commandes": ("cmd", "command prompt"),
+    "Gestionnaire des tâches": ("taskmgr", "task manager"),
+    "Explorateur de fichiers": ("explorer", "file explorer"),
+    "Lecteur multimédia": ("media player",),
+    "Outil Capture d'écran": ("snippingtool", "snipping tool", "capture d ecran"),
+    "Horloge": ("clock", "alarmes"),
+    "Pense-bête": ("stickynotes", "sticky notes"),
+}
 
 
 def fold(text: str) -> str:
@@ -116,32 +146,69 @@ def name_score(query: str, name: str) -> float | None:
     return ratio - 10.0 if ratio >= WHOLE_RATIO else None
 
 
+def query_variants(query: str) -> list[str]:
+    """`query`, puis ses alias (APP_ALIASES) : « notepad » -> [notepad, Bloc-notes]."""
+    variants = [query]
+    folded = fold(query)
+    words = [w for w in folded.split() if w not in FILLERS]
+    if not words:
+        return variants
+    asked = " ".join(words)
+    for name, aliases in APP_ALIASES.items():
+        group = [name, *aliases]
+        if any(asked in (fold(item), fold(item).replace(" ", "")) for item in group):
+            variants.extend(item for item in group if fold(item) != asked)
+    return variants
+
+
+def _best_score(query: str, name: str) -> float | None:
+    """Meilleur score de `name` pour `query` ou l'un de ses alias (alias un peu pénalisé)."""
+    scores = [
+        score - (ALIAS_PENALTY if i else 0.0)
+        for i, variant in enumerate(query_variants(query))
+        if (score := name_score(variant, name)) is not None
+    ]
+    return max(scores) if scores else None
+
+
 def find_app(query: str, apps: Sequence[AppEntry]) -> AppEntry | None:
-    """Application qui correspond à `query` ; à score égal, le nom le plus court."""
+    """Application qui correspond à `query` (ou à un alias : « notepad » -> Bloc-notes) ;
+    à score égal, le nom le plus court."""
     scored = [
         (score, -len(app.name), -i, app)
         for i, app in enumerate(apps)
-        if (score := name_score(query, app.name)) is not None
+        if (score := _best_score(query, app.name)) is not None
     ]
     return max(scored, key=lambda item: item[:3])[3] if scored else None
 
 
 def find_windows(query: str, windows: Sequence[WindowInfo]) -> list[WindowInfo]:
-    """Fenêtres de l'appli qui correspond à `query` : par nom de processus, sinon les
-    fenêtres dont le titre contient tous les mots demandés (« Bloc-notes » pour notepad)."""
+    """Fenêtres de l'appli qui correspond à `query` (ou à un alias) : par nom de processus,
+    sinon par le nom d'appli en fin de titre (« Bloc-notes » pour notepad)."""
     best: tuple[float, list[WindowInfo]] | None = None
     by_process: dict[str, list[WindowInfo]] = {}
     for window in windows:
         by_process.setdefault(window.process, []).append(window)
     for process, group in by_process.items():
-        score = name_score(query, process) if process else None
+        score = _best_score(query, process) if process else None
         if score is not None and (best is None or score > best[0]):
             best = (score, group)
     if best is None or best[0] < TITLE_SCORE:
-        titled = _title_matches(query, windows)
-        if titled:
-            best = (TITLE_SCORE, titled)
+        for variant in query_variants(query):
+            titled = _title_matches(variant, windows)
+            if titled:
+                best = (TITLE_SCORE, titled)
+                break
     return best[1] if best is not None else []
+
+
+def no_window_error(name: str, windows: Sequence[WindowInfo]) -> ToolError:
+    """« aucune fenêtre ouverte pour X », avec la liste des fenêtres pour que le LLM
+    réessaie avec le bon nom."""
+    if not windows:
+        return ToolError(f"aucune fenêtre ouverte pour « {name} » (aucune fenêtre ouverte)")
+    listed = "; ".join(f"{w.process or '?'} : {w.title}" for w in windows[:OPEN_WINDOWS_IN_ERROR])
+    return ToolError(f"aucune fenêtre ouverte pour « {name} ». Fenêtres ouvertes : {listed}")
 
 
 def _title_app(title: str) -> str:
@@ -219,9 +286,10 @@ class CloseApp(BaseTool[AppName]):
 
     async def run(self, args: AppName) -> str:
         desktop = self.ctx.require_desktop()
-        windows = find_windows(args.name, await self.ctx.run_blocking(desktop.windows))
+        opened = await self.ctx.run_blocking(desktop.windows)
+        windows = find_windows(args.name, opened)
         if not windows:
-            raise ToolError(f"aucune fenêtre ouverte pour « {args.name} »")
+            raise no_window_error(args.name, opened)
         for window in windows:
             await self.ctx.run_blocking(desktop.close_window, window)
         label = windows[0].process or windows[0].title
@@ -248,9 +316,10 @@ class CloseWindow(BaseTool[WindowParams]):
     async def run(self, args: WindowParams) -> str:
         desktop = self.ctx.require_desktop()
         if args.name:
-            found = find_windows(args.name, await self.ctx.run_blocking(desktop.windows))
+            opened = await self.ctx.run_blocking(desktop.windows)
+            found = find_windows(args.name, opened)
             if not found:
-                raise ToolError(f"aucune fenêtre ouverte pour « {args.name} »")
+                raise no_window_error(args.name, opened)
             window = found[0]
         else:
             active = await self.ctx.run_blocking(desktop.foreground_window)
@@ -270,9 +339,10 @@ class FocusWindow(BaseTool[AppName]):
 
     async def run(self, args: AppName) -> str:
         desktop = self.ctx.require_desktop()
-        windows = find_windows(args.name, await self.ctx.run_blocking(desktop.windows))
+        opened = await self.ctx.run_blocking(desktop.windows)
+        windows = find_windows(args.name, opened)
         if not windows:
-            raise ToolError(f"aucune fenêtre ouverte pour « {args.name} »")
+            raise no_window_error(args.name, opened)
         await self.ctx.run_blocking(desktop.focus_window, windows[0])
         return f"« {windows[0].title} » au premier plan."
 

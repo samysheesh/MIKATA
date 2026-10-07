@@ -13,6 +13,14 @@
 
    Pour chaque combinaison : WER (taux d'erreur sur les mots, après normalisation : casse,
    ponctuation), latence médiane et p95 par commande, pires phrases.
+
+3. Effet du prompt initial (ajout phase 6) :
+
+       uv run python scripts/eval_stt.py run --prompt none config apps
+
+   none : sans prompt ; config : `stt.initial_prompt` seul ; apps : `stt.initial_prompt` +
+   noms des applications installées (menu Démarrer), comme MIKATA le fait quand
+   `stt.prompt_apps` vaut true. Le prompt utilisé est affiché.
 """
 
 from __future__ import annotations
@@ -183,6 +191,9 @@ async def _record(args: argparse.Namespace) -> int:
 # -- mesure --------------------------------------------------------------------------------
 
 
+PROMPT_MODES = ("none", "config", "apps")
+
+
 @dataclass
 class RunResult:
     compute_type: str
@@ -192,17 +203,24 @@ class RunResult:
     latency_p95_s: float
     load_s: float
     worst: list[tuple[float, str, str]]  # (erreurs / mots, référence, hypothèse)
+    prompt: str = "config"  # none | config | apps
 
 
 class _SyncSTT(Protocol):
     def load(self) -> None: ...
-    def transcribe_sync(self, audio: np.ndarray) -> Any: ...
+    def transcribe_sync(self, audio: np.ndarray, prompt: str | None = None) -> Any: ...
     def close(self) -> None: ...
 
 
 def evaluate(
-    stt: _SyncSTT, dataset: Sequence[tuple[np.ndarray, str]], compute_type: str, beam_size: int
+    stt: _SyncSTT,
+    dataset: Sequence[tuple[np.ndarray, str]],
+    compute_type: str,
+    beam_size: int,
+    prompt: str | None = None,
+    prompt_mode: str = "config",
 ) -> RunResult:
+    """`prompt` : prompt initial imposé ("" = aucun) ; None = celui de la config."""
     from mikata.stt.text import clean_transcript
 
     start = time.perf_counter()
@@ -211,7 +229,9 @@ def evaluate(
     pairs, latencies, worst = [], [], []
     try:
         for audio, reference in dataset:
-            result = stt.transcribe_sync(audio)
+            result = (
+                stt.transcribe_sync(audio) if prompt is None else stt.transcribe_sync(audio, prompt)
+            )
             hypothesis = clean_transcript(result.text)
             pairs.append((reference, hypothesis))
             latencies.append(result.latency_s)
@@ -229,27 +249,52 @@ def evaluate(
         latency_p95_s=percentile(latencies, 95),
         load_s=load_s,
         worst=worst[:5],
+        prompt=prompt_mode,
     )
 
 
 def format_results(results: Sequence[RunResult], count: int) -> str:
     lines = [
         f"{count} commandes",
-        f"{'compute_type':<14} {'beam':>4} {'WER':>7} {'méd. (ms)':>10} {'p95 (ms)':>9}",
+        f"{'compute_type':<14} {'beam':>4} {'prompt':>7} {'WER':>7} {'méd. (ms)':>10} "
+        f"{'p95 (ms)':>9}",
     ]
     for r in results:
         lines.append(
-            f"{r.compute_type:<14} {r.beam_size:>4} {r.wer * 100:>6.1f}% "
+            f"{r.compute_type:<14} {r.beam_size:>4} {r.prompt:>7} {r.wer * 100:>6.1f}% "
             f"{r.latency_median_s * 1000:>10.0f} {r.latency_p95_s * 1000:>9.0f}"
         )
     for r in results:
         if r.worst:
-            lines.append(f"\nPires phrases ({r.compute_type}, beam {r.beam_size}) :")
+            lines.append(
+                f"\nPires phrases ({r.compute_type}, beam {r.beam_size}, prompt {r.prompt}) :"
+            )
             lines += [
                 f"  {e * 100:4.0f}%  « {ref} » -> " + (f"« {hyp} »" if hyp else "(rien)")
                 for e, ref, hyp in r.worst
             ]
     return "\n".join(lines)
+
+
+def installed_apps() -> list[str]:
+    """Noms des applications installées (Windows), comme MIKATA les donne à Whisper."""
+    if sys.platform != "win32":
+        return []
+    from mikata.tools.apps import installed_app_names
+    from mikata.tools.desktop import WindowsDesktop
+
+    return installed_app_names(WindowsDesktop().list_apps())
+
+
+def prompt_for(mode: str, stt_cfg: Any, apps: Any = installed_apps) -> str | None:
+    """Prompt du mode : "" (aucun), None (stt.initial_prompt), ou + noms d'applications."""
+    if mode == "none":
+        return ""
+    if mode == "config":
+        return None
+    from mikata.stt.whisper_local import build_prompt
+
+    return build_prompt(stt_cfg.initial_prompt, apps(), stt_cfg.prompt_max_chars)
 
 
 def _run(args: argparse.Namespace) -> int:
@@ -270,8 +315,14 @@ def _run(args: argparse.Namespace) -> int:
         dataset.append((float_to_int16(pcm), reference))
 
     config = load_config(args.config)
+    prompts = {mode: prompt_for(mode, config.stt) for mode in args.prompt}
+    for mode, prompt in prompts.items():
+        shown = config.stt.initial_prompt if prompt is None else prompt
+        print(f"Prompt {mode} ({len(shown)} caractères) : « {shown} »")
     results = []
-    for compute_type, beam_size in itertools.product(args.compute_type, args.beam_size):
+    for compute_type, beam_size, mode in itertools.product(
+        args.compute_type, args.beam_size, args.prompt
+    ):
         stt_cfg = config.stt.model_copy(
             update={
                 "model": args.model or config.stt.model,
@@ -279,9 +330,9 @@ def _run(args: argparse.Namespace) -> int:
                 "beam_size": beam_size,
             }
         )
-        print(f"{stt_cfg.model} {compute_type} beam {beam_size}...")
+        print(f"{stt_cfg.model} {compute_type} beam {beam_size} prompt {mode}...")
         stt = WhisperSTT(stt_cfg, download_root=config.resolve("models/whisper"))
-        results.append(evaluate(stt, dataset, compute_type, beam_size))
+        results.append(evaluate(stt, dataset, compute_type, beam_size, prompts[mode], mode))
     print("\n" + format_results(results, len(dataset)))
     return 0
 
@@ -297,6 +348,13 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     run.add_argument("--model", default=None, help="modèle Whisper (défaut : config.yaml)")
     run.add_argument("--compute-type", nargs="+", default=["float16"])
     run.add_argument("--beam-size", nargs="+", type=int, default=[1])
+    run.add_argument(
+        "--prompt",
+        nargs="+",
+        choices=PROMPT_MODES,
+        default=["config"],
+        help="prompt initial : none, config (stt.initial_prompt), apps (+ applis installées)",
+    )
     return parser.parse_args(argv)
 
 

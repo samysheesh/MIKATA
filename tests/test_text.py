@@ -45,3 +45,29 @@ def test_custom_wake_words() -> None:
 )
 def test_clean_transcript(raw: str, expected: str) -> None:
     assert clean_transcript(raw) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Stop.", True),
+        ("stop stop stop !", True),
+        ("Laisse tomber, merci.", True),
+        ("Euh, annule ça.", True),
+        ("Tais-toi.", True),
+        ("C’est bon.", True),
+        ("Non.", True),
+        ("arrête", True),
+        # une commande qui contient le mot n'est pas une annulation
+        ("Arrête la musique.", False),
+        ("Stop process name notepad", False),
+        ("Annule le minuteur", False),
+        ("Merci.", False),
+        ("", False),
+    ],
+)
+def test_is_cancel_command(text: str, expected: bool) -> None:
+    from mikata.config import AgentConfig
+    from mikata.stt.text import is_cancel_command
+
+    assert is_cancel_command(text, AgentConfig().cancel_phrases) is expected

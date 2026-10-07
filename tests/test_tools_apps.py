@@ -227,3 +227,68 @@ def test_installed_app_names() -> None:
 
     apps = [AppEntry(n, "x") for n in ("spotify", "Brave", "Spotify", "  Steam  ", "x" * 80)]
     assert installed_app_names(apps) == ["Brave", "spotify", "Steam"]
+
+
+WIN11_NOTEPAD = [
+    WindowInfo(31, "Sans titre - Bloc-notes", "Notepad"),  # Windows 11 : appli du Store
+    WindowInfo(32, "YouTube - Google Chrome", "chrome"),
+]
+
+
+@pytest.mark.parametrize("name", ["notepad", "Notepad.exe", "Bloc-notes", "bloc notes"])
+def test_notepad_of_windows_11_is_found(name: str) -> None:
+    """Phase 6 : « Stop-Process -Name Notepad » / « ferme le bloc-notes » avec le Bloc-notes
+    de Windows 11, nom de processus connu ou non."""
+    assert [w.handle for w in find_windows(name, WIN11_NOTEPAD)] == [31]
+    unknown = [WindowInfo(31, "Sans titre - Bloc-notes", ""), WIN11_NOTEPAD[1]]
+    assert [w.handle for w in find_windows(name, unknown)] == [31]
+
+
+def test_french_names_and_process_names_are_aliases() -> None:
+    windows = [
+        WindowInfo(41, "Calculatrice", "CalculatorApp"),
+        WindowInfo(42, "Paramètres", "SystemSettings"),
+        WindowInfo(43, "Document1 - Word", "WINWORD"),
+        WindowInfo(44, "Sans titre - Paint", "mspaint"),
+    ]
+    assert [w.handle for w in find_windows("calculator", windows)] == [41]
+    assert [w.handle for w in find_windows("Calculatrice", windows)] == [41]
+    assert [w.handle for w in find_windows("paramètres", windows)] == [42]
+    assert [w.handle for w in find_windows("winword", windows)] == [43]
+    assert [w.handle for w in find_windows("Paint", windows)] == [44]
+    assert find_windows("Excel", windows) == []
+    apps = [AppEntry("Bloc-notes", "n"), AppEntry("Calculatrice", "c"), AppEntry("Paint", "p")]
+    assert find_app("notepad", apps) == apps[0]
+    assert find_app("calc", apps) == apps[1]
+    assert find_app("mspaint", apps) == apps[2]
+    assert find_app("Photoshop", apps) is None
+
+
+def test_close_app_error_lists_open_windows(tmp_path: Path) -> None:
+    """Rien ne correspond : le LLM reçoit la liste des fenêtres pour réessayer."""
+    result = _run(tmp_path, FakeDesktop(windows=WIN11_NOTEPAD), "close_app", name="Wordpad")
+    assert not result.ok
+    assert "aucune fenêtre ouverte pour « Wordpad »" in result.content
+    assert "Notepad : Sans titre - Bloc-notes" in result.content
+    empty = _run(tmp_path, FakeDesktop(windows=[]), "close_window", name="x")
+    assert "aucune fenêtre ouverte" in empty.content
+
+
+def test_process_name_without_psutil_access(monkeypatch: pytest.MonkeyPatch) -> None:
+    import psutil
+
+    def denied(pid: int) -> Any:
+        raise psutil.AccessDenied(pid)
+
+    monkeypatch.setattr(psutil, "Process", denied)
+    assert desktop_module._process_name(1234) == ""  # hors Windows : pas d'autre moyen
+
+    class Proc:
+        def __init__(self, pid: int) -> None:
+            pass
+
+        def name(self) -> str:
+            return "Notepad.exe"
+
+    monkeypatch.setattr(psutil, "Process", Proc)
+    assert desktop_module._process_name(1) == "Notepad"
