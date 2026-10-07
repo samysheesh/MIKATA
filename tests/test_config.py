@@ -30,7 +30,7 @@ def test_repo_config_is_valid_and_matches_section_10(config_file: Path) -> None:
     assert config.wake.model == Path("models/hey_jarvis.onnx")
     assert config.wake.verifier is None
     assert config.wake.threshold == 0.5
-    assert config.wake.consecutive_frames == 2
+    assert config.wake.consecutive_frames == 1
     assert config.wake.hotkey == "<ctrl>+<alt>+m"
     assert config.vad.end_silence_ms == 500
     assert config.vad.speculative_ms == 250

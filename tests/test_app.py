@@ -190,7 +190,7 @@ def _app(config_file: Path, **overrides: object) -> App:
 
 
 def test_wake_word_beeps_and_logs_audio(config_file: Path) -> None:
-    app = _app(config_file)
+    app = _app(config_file, consecutive_frames=2)
     # 2 trames consécutives >= 0,5 : détection à la trame 31 ; la trame 40 est isolée.
     detector = ScriptedDetector({30: 0.6, 31: 0.9, 40: 0.95})
     audio = ScriptedAudio(60, on_exhausted=lambda: app.request_shutdown("test"))

@@ -51,7 +51,7 @@ class WakeConfig(_Section):
     model: Path = Path("models/hey_jarvis.onnx")
     verifier: Path | None = None
     threshold: float = Field(default=0.5, ge=0, le=1)
-    consecutive_frames: int = Field(default=2, ge=1)
+    consecutive_frames: int = Field(default=1, ge=1)
     refractory_s: float = Field(default=2.0, ge=0)
     hotkey: str = "<ctrl>+<alt>+m"
     collect_negatives: bool = False

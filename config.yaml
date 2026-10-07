@@ -11,7 +11,7 @@ wake:
   model: models/hey_jarvis.onnx    # -> models/mikata.onnx en phase 7
   verifier: null                   # -> models/mikata_verifier.pkl
   threshold: 0.5                   # fixé ensuite par eval_wakeword.py
-  consecutive_frames: 2
+  consecutive_frames: 1
   refractory_s: 2.0
   hotkey: "<ctrl>+<alt>+m"
   collect_negatives: false         # true : enregistre data/negatives/ par extraits de 10 s
