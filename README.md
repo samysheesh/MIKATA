@@ -820,6 +820,30 @@ Comment ça marche :
   tu dis devient une nouvelle commande, avec l'historique (« et à Tokyo ? »). Si tu ne dis
   rien : bip descendant, retour au repos. Pas de fenêtre tant qu'une autre commande tourne :
   c'est la dernière réponse qui l'ouvre. `follow_up_s: 0` la désactive.
+- **Fenêtre de suivi dans le bruit** (retour de test) : ce qui est entendu sans « MIKATA »
+  passe deux filtres, et une phrase écartée ne reçoit **aucune réponse** : juste le bip de
+  fin, puis le repos. MIKATA ne dit jamais « j'ai pas bien entendu » dans la fenêtre de
+  suivi.
+  1. **Transcription** : hésitation seule (« euh », « hmm »), texte de moins de 2 lettres ou
+     incohérent (« la la la la »), ou confiance de Whisper sous
+     `agent.follow_up_min_confidence` (0,4). La confiance va de 0 à 1 : probabilité moyenne
+     des mots × probabilité qu'il y ait de la parole.
+  2. **Jugement du LLM** (`agent.follow_up_use_llm_gate: true`) : on lui dit que la phrase a
+     été entendue sans mot d'activation. Si elle ne s'adresse pas clairement à MIKATA
+     (conversation avec tes amis, vidéo), il répond le marqueur `[IGNORER]`. Ce marqueur
+     n'est jamais dit, et rien n'est fait ni gardé dans l'historique.
+  La décision est toujours écrite dans le log : `Fenêtre de suivi : « ... » retenue
+  (confiance 0.82 : ...)` ou `... ignorée (...)`.
+- **Heures et unités lues correctement** (retour de test) : « 3 h 40 » est lu « trois heures
+  quarante », « 14h05 » « quatorze heures cinq », « 9 h » « neuf heures », « 18:45 »
+  « dix-huit heures quarante-cinq ». Après un nombre : km/h, km, min, s, ms, h (durée), °C,
+  %, kg, Go, Mo, € et $ en toutes lettres, au singulier ou au pluriel (« 1 min » -> « une
+  minute »).
+- **Réponses longues dites, pas écrites** (retour de test : l'histoire avait été collée dans
+  le Bloc-notes) : histoire, blague, explication sont racontées à voix haute, en version
+  courte de 3 à 5 phrases. MIKATA n'ouvre une appli et n'écrit dans une fenêtre ou un
+  fichier que si tu le demandes explicitement (« écris-la dans un fichier »). Trois exemples
+  ont été ajoutés au prompt, et trois phrases à `scripts\eval_prompt.py` (23 en tout).
 - **Barge-in** : « MIKATA » (ou Ctrl+Alt+M) pendant qu'une réponse est jouée coupe **le son de
   cette réponse** tout de suite, et MIKATA t'écoute. Les autres commandes en parallèle
   continuent (décision de la phase 3) ; leurs réponses attendent que tu aies fini de parler au
@@ -860,12 +884,17 @@ Comment ça marche :
      installées : si une seule ressemble au nom entendu (Steam), MIKATA l'ouvre sans demander
      « Teams ou Steam ? ».
   5. **`type_text`** : ton correctif (collage par le presse-papiers) est gardé tel quel.
-- **Proposition, à valider** : garder la conversation sur disque. Aujourd'hui l'historique
-  est oublié après 10 min sans commande, et au redémarrage. Avec `agent.history_persist:
-  true`, il est écrit dans `data\history.json` à chaque échange, relu au démarrage, et gardé
-  `agent.history_persist_h` heures sans commande (24 h) au lieu de 10 min. Même plafond
-  (`history_max_tokens`, les plus anciens échanges sautent) ; « nouvelle conversation » le
-  vide. **Désactivé par défaut** en attendant ton accord : essai en section 8.
+- **Conversation gardée sur disque** (activé, comme demandé) :
+  - `agent.history_persist: true` : l'historique est écrit dans `data\history.json` à chaque
+    échange et relu au démarrage.
+  - Il est gardé `agent.history_persist_h` = 168 heures (7 jours) sans commande, au lieu de
+    10 min. La durée se change aussi à la voix (« garde la conversation un mois », outil
+    `set_history_duration`) ; ce réglage est gardé dans `history.json` et prime sur
+    `config.yaml`.
+  - Le plafond `history_max_tokens` (6 000) reste. Quand il est atteint, les échanges les
+    plus anciens ne sont plus supprimés : le LLM les **résume** en arrière-plan
+    (`agent.history_summarize`), et ce résumé ouvre l'historique envoyé.
+  - « nouvelle conversation » vide tout : échanges et résumé (pas la durée choisie).
 
 ### 1. Récupérer la branche, installer
 
@@ -976,7 +1005,7 @@ Attendu : après `Appel LLM en échec (1/2) : pas de réponse en 8 s`, une ligne
 recréée (aucune réponse)` puis `Appel LLM réussi à la tentative 2/2.`, le tout en moins de
 10 s au lieu de 20.
 
-### 8. Mémoire long terme, et la proposition « conversation gardée sur disque »
+### 8. Mémoire long terme et conversation gardée sur disque
 
 ```powershell
 uv run python -m mikata --ask "retiens que mon chat s'appelle Mochi"
@@ -986,23 +1015,78 @@ Get-Content data\memory.json
 
 Attendu : « Mochi » (le fait est relu à chaque démarrage), et le fait dans `memory.json`.
 
-Pour essayer la conversation gardée sur disque, mets `history_persist: true` dans la section
-`agent:` de `config.yaml`, puis :
+La conversation est maintenant gardée sur disque par défaut :
 
 ```powershell
+uv run python -m mikata --ask "nouvelle conversation"
 uv run python -m mikata --ask "quelle est la capitale du Japon ?"
 uv run python -m mikata --ask "et combien d'habitants ?"
+uv run python -m mikata --ask "garde la conversation un mois"
 Get-Content data\history.json
 ```
 
-Attendu : la seconde réponse parle de Tokyo alors que MIKATA a redémarré entre les deux. Dis-moi
-si tu veux garder ce réglage activé par défaut, et pour combien de temps (`history_persist_h`).
+Attendu :
+- la troisième réponse parle de Tokyo, alors que MIKATA a redémarré entre les deux ;
+- la quatrième confirme « un mois » ;
+- `history.json` contient `"keep_s": 2592000.0` et les échanges.
 
-### 9. Non-régression du prompt
+Le résumé se voit dans le log quand le plafond est atteint, après une longue conversation :
+`Historique : N ancien(s) échange(s) résumé(s)`, puis un champ `"summary"` dans
+`history.json`.
+
+### 9. Heures et unités dites à voix haute
+
+```powershell
+uv run python -m mikata --ask "dis exactement : il est 3 h 40, rendez-vous à 14h05, 90 km/h pendant 1 min et il fait -5 °C"
+uv run python -m mikata --ask "quelle heure est-il ?"
+```
+
+Attendu, dans le casque : « il est trois heures quarante, rendez-vous à quatorze heures cinq,
+90 kilomètres heure pendant une minute et il fait moins 5 degrés ». L'heure actuelle est
+dite « ... heures ... », jamais « h ».
+
+### 10. Fenêtre de suivi dans le bruit (avec le micro)
+
+```powershell
+uv run python -m mikata
+```
+
+1. « hey jarvis, quelle heure est-il ? ». Pendant la fenêtre de suivi, tousse, tape sur le
+   bureau ou fais « euh... ». Attendu : bip de fin, aucune réponse. Dans le log :
+   `Fenêtre de suivi : « ... » ignorée (...)`, ou `Rien compris`.
+2. « hey jarvis, quelle heure est-il ? ». Pendant la fenêtre, parle à quelqu'un d'autre
+   (« tu viens manger ce soir ? »). Attendu : bip de fin, aucune réponse, et dans le log
+   `Fenêtre de suivi : « tu viens manger ce soir » ignorée (le LLM juge que la phrase ne
+   s'adresse pas à MIKATA)`.
+3. « hey jarvis, quelle heure est-il ? », puis « et à Tokyo ? ». Attendu : l'heure de Tokyo,
+   et `Fenêtre de suivi : « Et à Tokyo ? » retenue (confiance 0.xx : ...)` dans le log.
+
+Pour régler : relève les confiances des phrases retenues et ignorées
+(`Select-String -Path data\logs\mikata.log -Pattern "Fenêtre de suivi" | Select-Object -Last
+20`). Puis place `agent.follow_up_min_confidence` entre les deux. Une valeur plus haute
+écarte plus de bruit, mais aussi plus de vraies questions. `agent.follow_up_use_llm_gate:
+false` coupe le jugement du LLM.
+
+### 11. Réponses longues dites à voix haute
+
+```powershell
+uv run python -m mikata --ask "raconte-moi une longue histoire"
+uv run python -m mikata --ask "explique-moi comment marche un frigo"
+```
+
+Attendu : 3 à 5 phrases dites dans le casque, aucune ligne `Outil ...` dans la sortie (le
+Bloc-notes ne s'ouvre pas). Avec « raconte-moi une histoire et écris-la dans un fichier
+histoire.txt sur le bureau », le fichier est créé (`Outil write_file(...) -> ok`).
+
+### 12. Non-régression du prompt
 
 ```powershell
 uv run python scripts\eval_prompt.py
 ```
 
-Attendu : `Réussies : 20/20` ; « lance Team » ouvre Steam sans poser de question.
+Attendu : `Réussies : 23/23`.
+- « lance Team » ouvre Steam sans poser de question.
+- « raconte-moi une longue histoire », « raconte-moi une blague » et « explique-moi comment
+  marche un frigo » n'appellent aucun outil et sont dites en 3 à 5 phrases (de 1 à 5 pour la
+  blague).
 
