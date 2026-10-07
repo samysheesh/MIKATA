@@ -25,8 +25,8 @@ def _repo_yaml() -> dict:
 
 def test_repo_config_is_valid_and_matches_section_10(config_file: Path) -> None:
     config = load_config(config_file)
-    assert config.audio.input_device == "Focusrite"
-    assert config.audio.output_device == "Casque"
+    assert config.audio.input_device == "NT-USB"
+    assert config.audio.output_device == "default"
     assert config.wake.model == Path("models/hey_jarvis.onnx")
     assert config.wake.verifier is None
     assert config.wake.threshold == 0.5

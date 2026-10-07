@@ -38,8 +38,8 @@ class _Section(BaseModel):
 
 
 class AudioConfig(_Section):
-    input_device: str = "Focusrite"
-    output_device: str = "Casque"
+    input_device: str = "NT-USB"
+    output_device: str = "default"
     pre_roll_s: float = Field(default=2.0, gt=0, le=10)
 
 
