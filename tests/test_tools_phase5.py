@@ -309,7 +309,17 @@ def fake_pynput(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, Any]]:
     return log
 
 
-def test_pynput_input(fake_pynput: list[tuple[str, Any]]) -> None:
+def test_pynput_input(fake_pynput: list[tuple[str, Any]], monkeypatch: pytest.MonkeyPatch) -> None:
+    clipboard = ["avant"]
+    pyperclip = types.ModuleType("pyperclip")
+    pyperclip.PyperclipException = RuntimeError  # type: ignore[attr-defined]
+    pyperclip.paste = lambda: clipboard[-1]  # type: ignore[attr-defined]
+    pyperclip.copy = lambda text: (  # type: ignore[attr-defined]
+        clipboard.append(text),
+        fake_pynput.append(("clipboard", text)),
+    )
+    monkeypatch.setitem(sys.modules, "pyperclip", pyperclip)
+    monkeypatch.setattr("time.sleep", lambda _seconds: None)
     control = PynputInput()
     control.type_text("Hé !")
     control.press_keys(["ctrl", "shift", "t"])
@@ -317,7 +327,11 @@ def test_pynput_input(fake_pynput: list[tuple[str, Any]]) -> None:
     control.mouse("right_click", 50, 60, 3)
     control.mouse("scroll_up", None, None, 5)
     assert fake_pynput == [
-        ("type", "Hé !"),
+        ("clipboard", "Hé !"),
+        ("press", "<ctrl>"),
+        ("tap", "v"),
+        ("release", "<ctrl>"),
+        ("clipboard", "avant"),
         ("press", "<ctrl>"),
         ("press", "<shift>"),
         ("tap", "t"),

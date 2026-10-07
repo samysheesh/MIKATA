@@ -1,7 +1,8 @@
 """Outils clavier et souris (§7) : type_text ★, press_keys ★, mouse ★.
 
 Le doc prévoit pyautogui ; on utilise pynput (déjà installé pour le raccourci clavier) :
-il tape le texte en Unicode, donc les accents français, ce que pyautogui ne sait pas faire.
+le texte est collé (presse-papiers), donc les accents français passent, ce que ni pyautogui ni
+pynput ne garantissent sur un clavier AZERTY.
 
 Garde-fou : Maj+Suppr (suppression définitive dans l'Explorateur) est refusé, et un texte
 tapé qui contient une commande de suppression aussi (il pourrait l'être dans un terminal).
@@ -60,9 +61,32 @@ class PynputInput:
     """Implémentation Windows de `tools.base.InputControl` (pynput, import paresseux)."""
 
     def type_text(self, text: str) -> None:
-        from pynput.keyboard import Controller
+        """Colle `text` (presse-papiers + Ctrl+V), puis restaure le presse-papiers.
 
-        Controller().type(text)
+        Taper caractère par caractère (pynput, SendInput) dépend de la disposition du clavier :
+        sur un AZERTY, « à » devient « ç » et la suite se corrompt. Coller est indépendant de
+        la disposition et conserve tous les caractères, accents et emojis compris.
+        """
+        import time
+
+        import pyperclip
+        from pynput.keyboard import Controller, Key, KeyCode
+
+        try:
+            previous: str | None = pyperclip.paste()
+        except pyperclip.PyperclipException:
+            previous = None
+        pyperclip.copy(text)
+        time.sleep(0.05)
+        keyboard = Controller()
+        keyboard.press(Key.ctrl)
+        try:
+            keyboard.tap(KeyCode.from_char("v"))
+        finally:
+            keyboard.release(Key.ctrl)
+        time.sleep(0.25)  # laisse l'application lire le presse-papiers avant de le restaurer
+        if previous is not None:
+            pyperclip.copy(previous)
 
     def press_keys(self, keys: list[str]) -> None:
         from pynput.keyboard import Controller, Key, KeyCode
