@@ -12,7 +12,7 @@ from mikata.audio.base import FRAME_SAMPLES
 from mikata.audio.capture import MAX_QUEUED_FRAMES, AudioCapture, CapturedFrame, FrameAssembler
 from mikata.audio.devices import DeviceInfo
 
-MIC = DeviceInfo(1, "Analogue 1 + 2 (Focusrite USB Audio)", "Windows WASAPI", 2, 0, 48_000)
+MIC = DeviceInfo(5, "Microphone (RØDE NT-USB+)", "Windows WASAPI", 2, 0, 48_000)
 
 
 def _sine(freq: float, rate: int, seconds: float, amp: float = 0.5) -> np.ndarray:
@@ -76,7 +76,7 @@ def test_capture_end_to_end(fake_sd: types.ModuleType) -> None:
     before = time.monotonic()
     frames = asyncio.run(scenario())
     stream = FakeInputStream.instances[-1]
-    assert stream.kwargs["device"] == 1
+    assert stream.kwargs["device"] == 5
     assert stream.kwargs["samplerate"] == 48_000
     assert stream.kwargs["channels"] == 2
     assert stream.kwargs["blocksize"] == 960

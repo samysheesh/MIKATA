@@ -32,6 +32,10 @@ class ConfigError(Exception):
     """Configuration absente, illisible ou invalide (message en français)."""
 
 
+class StartupError(Exception):
+    """Démarrage impossible pour une raison matérielle (GPU, DLL...), message en français."""
+
+
 class _Section(BaseModel):
     # Une clé inconnue (faute de frappe) est une erreur, pas un réglage ignoré en silence.
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -41,7 +45,7 @@ class AudioConfig(_Section):
     input_device: str = "NT-USB"
     output_device: str = "default"
     pre_roll_s: float = Field(default=2.0, gt=0, le=10)
-    # Ajouts phase 1 : canal du micro (1 = entrée 1 de l'interface ; null = moyenne des canaux)
+    # Ajouts phase 1 : canal du micro (1 = premier canal ; null = moyenne des canaux)
     # et volume des sons d'interface.
     input_channel: int | None = Field(default=None, ge=1)
     earcon_volume: float = Field(default=0.5, ge=0, le=1)
@@ -52,7 +56,7 @@ class WakeConfig(_Section):
     verifier: Path | None = None
     threshold: float = Field(default=0.5, ge=0, le=1)
     consecutive_frames: int = Field(default=1, ge=1)
-    refractory_s: float = Field(default=2.0, ge=0)
+    refractory_s: float = Field(default=1.0, ge=0)
     hotkey: str = "<ctrl>+<alt>+m"
     collect_negatives: bool = False
     log_days: int = Field(default=7, ge=1)  # ajout phase 1 : purge de data/wake_logs/
@@ -63,6 +67,9 @@ class VadConfig(_Section):
     speculative_ms: int = Field(default=250, gt=0)
     max_utterance_s: float = Field(default=15, gt=0)
     no_speech_timeout_s: float = Field(default=4, gt=0)
+    # Ajouts phase 2 : modèle Silero VAD (ONNX) et seuil de probabilité de voix.
+    model: Path = Path("models/silero_vad.onnx")
+    threshold: float = Field(default=0.5, gt=0, lt=1)
 
     @model_validator(mode="after")
     def _speculative_before_end(self) -> VadConfig:
@@ -74,9 +81,14 @@ class VadConfig(_Section):
 class SttConfig(_Section):
     model: str = "large-v3-turbo"
     device: Literal["cuda", "cpu"] = "cuda"
-    compute_type: Literal["float16", "int8_float16", "int8", "float32"] = "float16"
+    compute_type: Literal["float16", "int8_float16", "int8", "float32"] = "int8_float16"
     beam_size: int = Field(default=1, ge=1)
     initial_prompt: str = "MIKATA, Spotify, Discord, Steam, Chrome, VS Code"
+    # Ajout phase 2 : formes du mot d'activation retirées du texte transcrit (§3).
+    # « jarvis » couvre le modèle de développement hey_jarvis (retirable en phase 7).
+    wake_words: list[str] = Field(
+        default_factory=lambda: ["mikata", "mi kata", "micata", "mikado", "jarvis"], min_length=1
+    )
 
 
 class LlmConfig(_Section):

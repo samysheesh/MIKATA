@@ -82,9 +82,9 @@ HOST_APIS = [
     {"name": "Windows WASAPI", "default_input_device": 5, "default_output_device": 2},
 ]
 DEVICES: list[dict[str, Any]] = [
-    {"name": "Focusrite USB (Scarlett", "hostapi": 0, "max_input_channels": 2,
+    {"name": "Microphone (RØDE NT-USB+)", "hostapi": 0, "max_input_channels": 2,
      "max_output_channels": 0, "default_samplerate": 44100.0},
-    {"name": "Analogue 1 + 2 (Focusrite USB Audio)", "hostapi": 1, "max_input_channels": 2,
+    {"name": "Microphone (Realtek(R) Audio)", "hostapi": 1, "max_input_channels": 2,
      "max_output_channels": 0, "default_samplerate": 48000.0},
     {"name": "Casque (HyperX Cloud)", "hostapi": 1, "max_input_channels": 0,
      "max_output_channels": 2, "default_samplerate": 48000.0},

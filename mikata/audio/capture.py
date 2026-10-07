@@ -154,6 +154,14 @@ class AudioCapture:
     async def read(self) -> CapturedFrame:
         return await self._frames.get()
 
+    def clear(self) -> int:
+        """Oublie les trames en attente (ex. : l'audio d'avant un appui sur Entrée)."""
+        count = 0
+        while not self._frames.empty():
+            self._frames.get_nowait()
+            count += 1
+        return count
+
     def stop(self) -> None:
         """Ferme le flux et attend le thread de traitement. Idempotent."""
         self._stopping.set()

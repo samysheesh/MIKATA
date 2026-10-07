@@ -266,7 +266,7 @@ def test_ring_buffer_holds_pre_roll(config_file: Path) -> None:
     app = _app(config_file)
     app._audio = ScriptedAudio(40, on_exhausted=lambda: app.request_shutdown("test"))
     _run_app(app)
-    assert len(app.ring) == 32_000  # pre_roll_s = 2 s
+    assert len(app.ring) == 48_000  # pre_roll_s (2 s) + 1 s de marge, plein
     assert app.ring.read_last(1)[0] == 39
 
 

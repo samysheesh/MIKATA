@@ -36,7 +36,7 @@ def test_repo_config_is_valid_and_matches_section_10(config_file: Path) -> None:
     assert config.vad.speculative_ms == 250
     assert config.stt.model == "large-v3-turbo"
     assert config.stt.device == "cuda"
-    assert config.stt.compute_type == "float16"
+    assert config.stt.compute_type == "int8_float16"
     assert config.llm.max_tool_rounds == 8
     assert config.tts.backend == "piper"
     assert config.agent.follow_up_s == 6
@@ -48,6 +48,10 @@ def test_repo_config_is_valid_and_matches_section_10(config_file: Path) -> None:
     assert config.audio.earcon_volume == 0.5
     assert config.wake.log_days == 7
     assert config.logging.stats_interval_s == 60
+    # ajouts phase 2
+    assert config.vad.model == Path("models/silero_vad.onnx")
+    assert config.vad.threshold == 0.5
+    assert config.stt.wake_words == ["mikata", "mi kata", "micata", "mikado", "jarvis"]
 
 
 def test_repo_config_keys_are_exactly_the_model_fields() -> None:
@@ -109,6 +113,8 @@ def test_not_a_mapping(tmp_path: Path) -> None:
         ("logging", "level", "BAVARD", "logging.level"),
         ("audio", "input_channel", 0, "audio.input_channel"),
         ("audio", "earcon_volume", 1.5, "audio.earcon_volume"),
+        ("vad", "threshold", 1.0, "vad.threshold"),
+        ("stt", "wake_words", [], "stt.wake_words"),
     ],
 )
 def test_invalid_values(tmp_path: Path, section: str, key: str, value: object, loc: str) -> None:

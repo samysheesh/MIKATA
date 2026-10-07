@@ -21,7 +21,7 @@ MODULES = [
     ),
     *(f"mikata.wake.{m}" for m in ("base", "oww", "trigger", "recordings")),
     *(f"mikata.vad.{m}" for m in ("base", "silero")),
-    *(f"mikata.stt.{m}" for m in ("base", "whisper_local", "speculative")),
+    *(f"mikata.stt.{m}" for m in ("base", "whisper_local", "speculative", "text")),
     *(f"mikata.llm.{m}" for m in ("base", "client", "prompts")),
     *(f"mikata.agent.{m}" for m in ("loop", "memory", "guard")),
     *(
@@ -58,6 +58,8 @@ PATHS = [
     "scripts/eval_stt.py",
     "scripts/list_audio_devices.py",
     "scripts/download_models.py",
+    "scripts/stt_phrases_fr.txt",
+    "tests/fixtures/hey_jarvis_ouvre_spotify.wav",
     *(f"assets/sounds/{n}.wav" for n in ("wake", "end", "thinking", "error")),
     "scripts/user",
     "tests",

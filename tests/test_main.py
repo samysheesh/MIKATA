@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import threading
+import types
 from collections.abc import Callable
 from pathlib import Path
 from typing import ClassVar
@@ -148,7 +149,12 @@ def test_build_app_wires_real_components(
         def __init__(self, model: Path, verifier: Path | None) -> None:
             self.model = model
 
+    class Vad:
+        def __init__(self, model: Path, threshold: float) -> None:
+            self.model, self.threshold = model, threshold
+
     monkeypatch.setattr("mikata.wake.oww.OpenWakeWordDetector", Detector)
+    monkeypatch.setattr("mikata.vad.silero.SileroVAD", Vad)
     config = entry.load_config(config_file)
     app = entry.build_app(config, tray=False, audio=True)
     assert app._audio.device.name == "Microphone (RØDE NT-USB+)"  # type: ignore[union-attr]
@@ -156,3 +162,37 @@ def test_build_app_wires_real_components(
     assert app._detector.model == config_file.parent / "models" / "hey_jarvis.onnx"  # type: ignore[union-attr]
     assert app._earcons["wake"].dtype.name == "float32"
     assert app._hotkeys is not None and app._cpu is not None
+    assert app._vad.model == config_file.parent / "models" / "silero_vad.onnx"  # type: ignore[union-attr]
+    assert app._stt.download_root == config_file.parent / "models" / "whisper"  # type: ignore[union-attr]
+    assert not app._stt.loaded  # type: ignore[union-attr]  # chargé au démarrage de run()
+
+
+def test_missing_vad_model_exit(
+    config_file: Path, fake_sd: object, no_priority_change: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "mikata.wake.oww.OpenWakeWordDetector", lambda *a: types.SimpleNamespace(name="x")
+    )
+    assert entry.main(["--config", str(config_file), "--no-tray"]) == entry.EXIT_CONFIG
+    assert "silero_vad.onnx" in _log(config_file)
+
+
+def test_gpu_unavailable_exit_code(config_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from mikata.app import App
+    from mikata.stt.whisper_local import SttUnavailableError
+
+    class NoGpu:
+        def load(self) -> None:
+            raise SttUnavailableError("Aucun GPU NVIDIA utilisable par Whisper.")
+
+        def close(self) -> None:
+            pass
+
+    def build(config: object, *, tray: bool, audio: bool) -> App:
+        return App(entry.load_config(config_file), stt=NoGpu())  # type: ignore[arg-type]
+
+    monkeypatch.setattr(entry, "build_app", build)
+    assert entry.main(["--config", str(config_file), "--no-tray"]) == entry.EXIT_STARTUP
+    log = _log(config_file)
+    assert "Aucun GPU NVIDIA" in log
+    assert "Traceback" not in log

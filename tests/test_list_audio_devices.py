@@ -37,10 +37,10 @@ def test_collect_and_filter() -> None:
 
 def test_match_devices_by_substring_and_kind() -> None:
     wasapi = lad.filter_host_api(lad.collect_devices(_fake_sd()), lad.PREFERRED_HOST_API)
-    assert [d.index for d in lad.match_devices(wasapi, "focusrite", "input")] == [1]
+    assert [d.index for d in lad.match_devices(wasapi, "nt-usb", "input")] == [5]
     assert [d.index for d in lad.match_devices(wasapi, "Casque", "output")] == [2]
     assert [d.index for d in lad.match_devices(wasapi, "Casque", "input")] == [3]
-    assert lad.match_devices(wasapi, "Focusrite", "output") == []
+    assert lad.match_devices(wasapi, "NT-USB", "output") == []
 
 
 def test_describe_match() -> None:

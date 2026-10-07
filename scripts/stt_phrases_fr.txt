@@ -1,0 +1,52 @@
+# Phrases de référence pour scripts/eval_stt.py (une par ligne, # = commentaire).
+# Remplace-les par tes vraies commandes : noms de tes applis, de tes jeux, tes tournures.
+ouvre Spotify
+mets le volume à 30
+pause
+mets la musique suivante
+reviens à la chanson précédente
+coupe le son
+quelle heure est-il
+lance un minuteur de 10 minutes
+rappelle-moi de sortir le linge dans 20 minutes
+ouvre Discord
+lance Steam
+ouvre Chrome et va sur YouTube
+ouvre VS Code
+ferme le navigateur
+mets Discord au premier plan
+cherche la météo à Paris
+quel temps fera-t-il demain
+monte le son
+baisse le volume de moitié
+passe la sortie audio sur le casque
+verrouille l'ordinateur
+mets l'ordinateur en veille
+quel est l'état du processeur
+quelle est la température de la carte graphique
+combien de mémoire est utilisée
+copie ce texte dans le presse-papiers
+lis-moi le presse-papiers
+ouvre le dossier Téléchargements
+trouve le fichier rapport de stage
+déplace la capture d'écran sur le bureau
+écris bonjour à tous
+appuie sur entrée
+fais une recherche sur les nouveautés de Python
+résume cette page
+traduis bonjour en anglais
+combien font 17 fois 23
+souviens-toi que mon anniversaire est le 12 mars
+oublie ce que je t'ai dit sur mon anniversaire
+nouvelle conversation
+annule
+stop
+redémarre l'ordinateur dans une minute
+éteins l'ordinateur
+lance la playlist Chill
+mets en pause la vidéo
+avance de 30 secondes
+ouvre le gestionnaire des tâches
+quelle est l'adresse IP de cet ordinateur
+affiche le texte de la dernière réponse
+merci MIKATA c'est tout

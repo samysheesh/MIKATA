@@ -8,15 +8,16 @@ interroge un LLM cloud, agit sur le PC et répond à voix haute dans le casque.
 - Lancement : `uv run python -m mikata` (options : `--check-config`, `--config CHEMIN`, `--no-tray`, `--no-audio`)
 - Réglages : `config.yaml` ; secrets : `.env` (copier `.env.example`, jamais commité)
 - Logs : `data/logs/mikata.log` (rotation 5 Mo × 5, anciennes archives à la corbeille)
-- Modèles : `uv run python scripts/download_models.py` (dans `models/`, non commités)
+- Modèles : `uv run python scripts/download_models.py` (dans `models/`, non commités ; Whisper ~1,6 Go)
 
 ## Avancement
 
 | Phase | Contenu | État |
 | --- | --- | --- |
 | 0 | Squelette : config, logs, événements, icône, CI | fusionnée |
-| 1 | Audio + mot d'activation (`hey_jarvis`), bip, raccourci, priorité basse | livrée, à valider sur le PC |
-| 2 à 7 | Voir `docs/ARCHITECTURE.md` §11 | à faire |
+| 1 | Audio + mot d'activation (`hey_jarvis`), bip, raccourci, priorité basse | fusionnée |
+| 2 | VAD Silero + Whisper GPU, transcription spéculative, retrait du mot d'activation | livrée, à valider sur le PC |
+| 3 à 7 | Voir `docs/ARCHITECTURE.md` §11 | à faire |
 
 ## Développement
 
@@ -238,3 +239,115 @@ Get-ChildItem data\negatives -Recurse -Filter *.wav | Select-Object -Last 5 Full
 ```
 
 Attendu : des fichiers d'environ 320 Ko (10 s à 16 kHz). Remets `collect_negatives: false`.
+
+## Phase 2 — vérification sur le PC Windows
+
+Critères d'acceptation : transcription prête ≤ 100 ms après la fin de parole détectée
+(médiane), VRAM ≤ 2 Go, début de phrase intact quand on enchaîne sans pause.
+
+Comment ça marche : à la détection, l'enregistrement repart du **début du pré-roll** (les 2 s
+d'avant), donc « hey jarvis ouvre Spotify » dit d'une traite arrive entier à Whisper ; le mot
+d'activation et tout ce qui le précède sont ensuite retirés du texte. Le bip part en parallèle,
+la capture ne s'arrête jamais.
+
+### 1. Récupérer la branche, installer, télécharger les modèles
+
+```powershell
+git fetch origin
+git checkout phase-2
+git pull
+uv sync                                   # installe aussi les DLL CUDA (~1 Go, une fois)
+uv run python scripts\download_models.py  # + silero_vad.onnx et Whisper large-v3-turbo (~1,6 Go)
+```
+
+Attendu : des lignes `[OK]`, dont `[OK] .../models/silero_vad.onnx` et
+`[OK] Whisper large-v3-turbo : ...\models\whisper\...`.
+
+### 2. Lint et tests
+
+```powershell
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
+```
+
+Attendu : tout en `passed` (les tests sur les vrais modèles `hey_jarvis` et Silero tournent
+maintenant qu'ils sont téléchargés).
+
+### 3. GPU et DLL CUDA
+
+```powershell
+uv run python -c "from mikata.stt.whisper_local import add_cuda_dll_directories as a; print(a()); import ctranslate2; print('GPU CUDA :', ctranslate2.get_cuda_device_count())"
+```
+
+Attendu : deux dossiers (`...\nvidia\cublas\bin` et `...\nvidia\cudnn\bin`) puis `GPU CUDA : 1`.
+
+Contre-épreuve du message d'erreur sans GPU (le GPU est masqué le temps d'une commande) :
+
+```powershell
+$env:CUDA_VISIBLE_DEVICES = "-1"; uv run python -m mikata --no-tray; echo $LASTEXITCODE; Remove-Item Env:CUDA_VISIBLE_DEVICES
+```
+
+Attendu : `ERROR | ... Aucun GPU NVIDIA utilisable par Whisper ... nvidia-smi ...`, puis `3`.
+
+### 4. Lancer MIKATA et critère « VRAM ≤ 2 Go »
+
+```powershell
+nvidia-smi --query-gpu=memory.used --format=csv     # avant : note la valeur
+uv run python -m mikata
+```
+
+Attendu dans la console : `Chargement de Whisper (large-v3-turbo)...` puis
+`Whisper large-v3-turbo prêt sur cuda (float16) en x s, VRAM +NNNN Mo.` avec NNNN ≤ 2048,
+puis `MIKATA démarré, en attente.` Dans un autre PowerShell, pendant que MIKATA tourne :
+
+```powershell
+nvidia-smi --query-gpu=memory.used --format=csv     # après : l'écart avec « avant » doit être ≤ 2 Go
+```
+
+Si ça dépasse : `compute_type: int8_float16` dans la section `stt` de `config.yaml`.
+
+### 5. Critère « début de phrase intact »
+
+Dis, **sans pause** après le mot d'activation :
+
+1. « hey jarvis ouvre Spotify »
+2. « hey jarvis mets le volume à trente »
+3. « hey jarvis pause » (commande finie avant même le bip)
+
+Puis, **avec pause** : « hey jarvis » … (bip) … « quelle heure est-il ».
+Et enfin « hey jarvis » sans rien dire : bip descendant au bout de ~4 s
+(`Écoute terminée : aucune parole.`).
+
+```powershell
+Select-String -Path data\logs\mikata.log -Encoding utf8 -Pattern "Commande :" | Select-Object -Last 4
+```
+
+Attendu : `Commande : « ouvre Spotify » (texte brut : « Hey Jarvis, ouvre Spotify. »)` etc. —
+le texte brut commence bien par le mot d'activation, la commande est entière.
+
+### 6. Critère « transcription prête ≤ 100 ms après la fin de parole »
+
+Fais 20 commandes variées (« hey jarvis … »), puis :
+
+```powershell
+$v = Select-String -Path data\logs\mikata.log -Encoding utf8 -Pattern "stt_pr.t \+(\d+) ms" | Select-Object -Last 20 | ForEach-Object { [int]$_.Matches[0].Groups[1].Value }
+$v -join ", "
+"Médiane : " + ($v | Sort-Object)[[math]::Floor($v.Count / 2)] + " ms"
+```
+
+Attendu : médiane ≤ 100 ms. Chaque ligne `Mesures :` dit aussi si le résultat spéculatif a
+servi (`spéculatif`) ou s'il a fallu un second passage (`direct`).
+
+### 7. Benchmark STT (`scripts/eval_stt.py`)
+
+Enregistre une fois tes 50 commandes (phrases de `scripts\stt_phrases_fr.txt`, à adapter) :
+Entrée, tu lis la phrase, l'enregistrement s'arrête quand tu te tais.
+
+```powershell
+uv run python scripts\eval_stt.py record
+uv run python scripts\eval_stt.py run --compute-type float16 int8_float16 --beam-size 1 2
+```
+
+Attendu : un tableau WER / latence médiane / p95 pour les 4 réglages, puis les pires phrases.
+Garde dans `config.yaml` le réglage qui donne le meilleur WER sans dépasser la VRAM.
