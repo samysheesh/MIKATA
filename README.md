@@ -5,10 +5,10 @@ interroge un LLM cloud, agit sur le PC et répond à voix haute dans le casque.
 
 - Architecture (fait foi) : [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 - Instructions pour Claude Code : [`CLAUDE.md`](CLAUDE.md)
-- Lancement : `uv run python -m mikata` (options : `--check-config`, `--config CHEMIN`, `--no-tray`, `--no-audio`)
+- Lancement : `uv run python -m mikata` (options : `--check-config`, `--config CHEMIN`, `--no-tray`, `--no-audio`, `--no-llm`, `--ask "question"`)
 - Réglages : `config.yaml` ; secrets : `.env` (copier `.env.example`, jamais commité)
 - Logs : `data/logs/mikata.log` (rotation 5 Mo × 5, anciennes archives à la corbeille)
-- Modèles : `uv run python scripts/download_models.py` (dans `models/`, non commités ; Whisper ~1,6 Go)
+- Modèles : `uv run python scripts/download_models.py` (dans `models/`, non commités ; Whisper ~1,6 Go, voix ~420 Mo)
 
 ## Avancement
 
@@ -16,8 +16,9 @@ interroge un LLM cloud, agit sur le PC et répond à voix haute dans le casque.
 | --- | --- | --- |
 | 0 | Squelette : config, logs, événements, icône, CI | fusionnée |
 | 1 | Audio + mot d'activation (`hey_jarvis`), bip, raccourci, priorité basse | fusionnée |
-| 2 | VAD Silero + Whisper GPU, transcription spéculative, retrait du mot d'activation | livrée, à valider sur le PC |
-| 3 à 7 | Voir `docs/ARCHITECTURE.md` §11 | à faire |
+| 2 | VAD Silero + Whisper GPU, transcription spéculative, retrait du mot d'activation | fusionnée |
+| 3 | LLM en streaming + voix (Piper / Kokoro), commandes en parallèle | livrée, à valider sur le PC |
+| 4 à 7 | Voir `docs/ARCHITECTURE.md` §11 | à faire |
 
 ## Développement
 
@@ -351,3 +352,124 @@ uv run python scripts\eval_stt.py run --compute-type float16 int8_float16 --beam
 
 Attendu : un tableau WER / latence médiane / p95 pour les 4 réglages, puis les pires phrases.
 Garde dans `config.yaml` le réglage qui donne le meilleur WER sans dépasser la VRAM.
+
+## Phase 3 — vérification sur le PC Windows
+
+Critères d'acceptation : premier son < 2 s après ta dernière syllabe (médiane sur 20 essais) ;
+choix Piper ou Kokoro tranché.
+
+Comment ça marche : la commande transcrite part telle quelle au LLM, qui corrige lui-même les
+erreurs de transcription évidentes (« lance Team » → Steam). La réponse arrive en flux,
+découpée en fragments (le premier dès une virgule après 6 mots) ; chaque fragment est
+synthétisé pendant que le précédent est joué. Pas encore d'outils (phase 4) : pour une action,
+MIKATA répond qu'il ne peut pas encore la faire.
+
+**Commandes en parallèle** : « hey jarvis » est accepté dès que le micro est libre, même si une
+commande précédente est encore en train de réfléchir ou de parler. Les deux avancent en même
+temps ; seules les réponses parlées passent l'une après l'autre (deux voix ne se superposent
+pas). Le bip de la nouvelle commande se mélange à la voix sans la couper.
+
+### 1. Récupérer la branche, installer, télécharger les voix
+
+```powershell
+git fetch origin
+git checkout phase-3
+git pull
+uv sync
+uv run python scripts\download_models.py   # + voix Piper fr_FR-siwis-medium et Kokoro (~420 Mo)
+```
+
+Attendu : des lignes `[OK]`, dont `fr_FR-siwis-medium.onnx`, `fr_FR-siwis-medium.onnx.json`,
+`kokoro-v1.0.onnx` et `voices-v1.0.bin`.
+
+### 2. Lint et tests
+
+```powershell
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
+```
+
+Attendu : tout en `passed` (les tests sur les vraies voix tournent maintenant qu'elles sont
+téléchargées).
+
+### 3. Sans clé LLM : refus propre
+
+Tant que `LLM_API_KEY` est vide dans `.env` :
+
+```powershell
+uv run python -m mikata
+echo $LASTEXITCODE
+```
+
+Attendu : `ERROR | ... LLM non configuré, démarrage impossible :` avec la liste de ce qui manque
+(`LLM_API_KEY absente ...`, et `llm.base_url / llm.model non renseignés ...` si c'est le cas),
+puis `2`. Le micro n'est pas ouvert. Pour continuer à utiliser les phases 1 et 2 sans LLM :
+`uv run python -m mikata --no-llm`.
+
+### 4. Choisir la voix : Piper ou Kokoro
+
+```powershell
+uv run python scripts\eval_tts.py --play
+```
+
+Attendu : un tableau (chargement, synthèse du premier fragment de 8 mots, facteur temps réel)
+puis les 5 phrases de chaque voix jouées dans le casque. La synthèse du premier fragment doit
+rester sous 200 ms (colonne `OK`). Mesures en cloud (4 vCPU, plus lent que ton 5900X) : Piper
+~90 à 190 ms, Kokoro ~700 à 1 100 ms. Choisis à l'oreille parmi les voix `OK` et mets
+`backend: piper` ou `backend: kokoro` dans la section `tts` de `config.yaml`.
+
+### 5. Brancher le LLM
+
+Dans `.env` : `LLM_API_KEY=ta-cle`. Dans `config.yaml`, section `llm` : `base_url` (endpoint
+compatible OpenAI de CommandCode, qui finit en général par `/v1`) et `model` (nom exact du modèle
+« flash »). Puis, sans micro :
+
+```powershell
+uv run python -m mikata --ask "Dis-moi bonjour en une phrase."
+```
+
+Attendu : la réponse dite dans le casque et affichée, puis une ligne
+`--ask : premier token NNN ms, premier son NNN ms, issue : ok.` Si `issue : server` : clé,
+`base_url` ou `model` incorrects (le détail est dans `data\logs\mikata.log`).
+
+### 6. Critère « premier son < 2 s »
+
+```powershell
+uv run python -m mikata
+```
+
+Attendu au démarrage : `Chargement de Whisper ...`, `Chargement de la voix (piper)...`,
+`MIKATA démarré, en attente.`
+
+Fais 20 commandes variées (« hey jarvis, quelle heure est-il », « hey jarvis, quelle est la
+capitale du Canada », « hey jarvis, raconte-moi une blague courte »...). Chaque réponse
+écrit une ligne :
+
+```
+Réponse #3 : premier son ≈ 1360 ms après la dernière syllabe (depuis fin_parole : stt_prêt +0 ms, llm_premier_token +650 ms, premier_son +870 ms, total +4100 ms) ; issue : ok.
+```
+
+Dans un autre PowerShell :
+
+```powershell
+$v = Select-String -Path data\logs\mikata.log -Encoding utf8 -Pattern "premier son . (\d+) ms apr" | Select-Object -Last 20 | ForEach-Object { [int]$_.Matches[0].Groups[1].Value }
+$v -join ", "
+"Médiane : " + ($v | Sort-Object)[[math]::Floor($v.Count / 2)] + " ms"
+```
+
+Attendu : médiane < 2000 ms. La « dernière syllabe » est la dernière trame que le VAD juge
+parlée : la vraie fin du mot peut être ~80 ms plus tard, garde donc un peu de marge
+(< 1 900 ms). La ligne montre où va le temps : `llm_premier_token` est la part du fournisseur.
+
+### 7. Commandes en parallèle, corrections, son de réflexion
+
+1. Dis « hey jarvis, explique-moi comment marche un moteur électrique », puis, **dès ta phrase
+   finie** (pendant qu'il réfléchit ou commence à répondre), « hey jarvis, combien font 17 fois
+   23 ». Attendu : deux bips, la ligne `Nouvelle commande pendant 1 autre(s) en
+   cours.`, puis les deux réponses l'une après l'autre (`Réponse #1` et `Réponse #2` dans le log).
+2. Dis « hey jarvis, lance Team ». Attendu : la réponse parle de Steam (le LLM a corrigé la
+   transcription ; il dit qu'il ne peut pas encore lancer d'application, c'est la phase 4).
+3. Pose une question longue : si rien n'est dit au bout de 1,2 s après ta fin de phrase, un
+   petit son de réflexion doit être joué.
+4. Dis « hey jarvis, nouvelle conversation ». Attendu : « D'accord, nouvelle conversation. »

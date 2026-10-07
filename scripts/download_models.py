@@ -1,10 +1,12 @@
-"""Télécharge les modèles dans models/ (phases 1 et 2).
+"""Télécharge les modèles dans models/ (phases 1 à 3).
 
 Usage : uv run python scripts/download_models.py [--no-whisper]
 
 - openWakeWord (§4) : hey_jarvis_v0.1.onnx -> models/hey_jarvis.onnx (développement),
   melspectrogram.onnx et embedding_model.onnx (features communs à tous les modèles)
 - Silero VAD v5 (§5) : models/silero_vad.onnx
+- Voix (§8) : Piper fr_FR-siwis-medium (.onnx + .onnx.json, ~63 Mo) et Kokoro-82M en ONNX
+  fp32 + fichier des voix (~350 Mo) ; les deux, pour pouvoir les comparer (eval_tts.py)
 - Whisper (§5) : le modèle `stt.model` de config.yaml (large-v3-turbo, ~1,6 Go) dans
   models/whisper/, là où MIKATA le cherche au démarrage
 
@@ -21,11 +23,17 @@ from pathlib import Path
 
 OWW_URL = "https://github.com/dscripka/openWakeWord/releases/download/v0.5.1"
 SILERO_URL = "https://raw.githubusercontent.com/snakers4/silero-vad/v5.1.2/src/silero_vad/data"
+PIPER_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/fr/fr_FR/siwis/medium"
+KOKORO_URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0"
 MODELS = {
     "hey_jarvis.onnx": f"{OWW_URL}/hey_jarvis_v0.1.onnx",
     "melspectrogram.onnx": f"{OWW_URL}/melspectrogram.onnx",
     "embedding_model.onnx": f"{OWW_URL}/embedding_model.onnx",
     "silero_vad.onnx": f"{SILERO_URL}/silero_vad.onnx",
+    "fr_FR-siwis-medium.onnx": f"{PIPER_URL}/fr_FR-siwis-medium.onnx",
+    "fr_FR-siwis-medium.onnx.json": f"{PIPER_URL}/fr_FR-siwis-medium.onnx.json",
+    "kokoro-v1.0.onnx": f"{KOKORO_URL}/kokoro-v1.0.onnx",
+    "voices-v1.0.bin": f"{KOKORO_URL}/voices-v1.0.bin",
 }
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DIR = PROJECT_ROOT / "models"
@@ -35,7 +43,7 @@ WHISPER_SUBDIR = "whisper"
 def download(url: str, dest: Path) -> int:
     """Télécharge vers `dest` via un fichier temporaire ; renvoie la taille en octets."""
     tmp = dest.with_name(dest.name + ".part")
-    with urllib.request.urlopen(url, timeout=60) as response, tmp.open("wb") as out:
+    with urllib.request.urlopen(url, timeout=120) as response, tmp.open("wb") as out:
         size = 0
         while chunk := response.read(1 << 16):
             out.write(chunk)

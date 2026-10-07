@@ -52,6 +52,12 @@ def test_repo_config_is_valid_and_matches_section_10(config_file: Path) -> None:
     assert config.vad.model == Path("models/silero_vad.onnx")
     assert config.vad.threshold == 0.5
     assert config.stt.wake_words == ["mikata", "mi kata", "micata", "mikado", "jarvis"]
+    # ajouts phase 3
+    assert config.llm.turn_timeout_s == 60
+    assert config.tts.voice == Path("models/fr_FR-siwis-medium.onnx")
+    assert config.tts.kokoro_voice == "ff_siwis"
+    assert config.tts.cpu_threads == 4
+    assert config.agent.history_max_tokens == 6000
 
 
 def test_repo_config_keys_are_exactly_the_model_fields() -> None:
@@ -115,6 +121,8 @@ def test_not_a_mapping(tmp_path: Path) -> None:
         ("audio", "earcon_volume", 1.5, "audio.earcon_volume"),
         ("vad", "threshold", 1.0, "vad.threshold"),
         ("stt", "wake_words", [], "stt.wake_words"),
+        ("tts", "cpu_threads", 0, "tts.cpu_threads"),
+        ("tts", "speed", 3, "tts.speed"),
     ],
 )
 def test_invalid_values(tmp_path: Path, section: str, key: str, value: object, loc: str) -> None:

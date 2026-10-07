@@ -14,7 +14,12 @@ def test_model_list() -> None:
         "melspectrogram.onnx",
         "embedding_model.onnx",
         "silero_vad.onnx",
+        "fr_FR-siwis-medium.onnx",
+        "fr_FR-siwis-medium.onnx.json",
+        "kokoro-v1.0.onnx",
+        "voices-v1.0.bin",
     }
+    assert "/resolve/v1.0.0/" in dm.MODELS["fr_FR-siwis-medium.onnx"]  # version figée
     assert "v5.1.2" in dm.MODELS["silero_vad.onnx"]  # version figée
 
 
@@ -33,7 +38,7 @@ def test_downloads_missing_files_and_whisper(
     monkeypatch.setattr(dm, "download", fake_download)
     monkeypatch.setattr(dm, "download_whisper", lambda m, d: whisper.append((m, d)) or d)
     assert dm.main(["--dir", str(tmp_path), "--config", str(config_file)]) == 0
-    assert sorted(fetched) == ["embedding_model.onnx", "melspectrogram.onnx", "silero_vad.onnx"]
+    assert sorted(fetched) == sorted(set(dm.MODELS) - {"hey_jarvis.onnx"})
     assert (tmp_path / "hey_jarvis.onnx").read_bytes() == b"deja la"  # jamais écrasé
     assert whisper == [("large-v3-turbo", tmp_path / "whisper")]
 

@@ -12,12 +12,18 @@ dependencies = [
     # version, sinon erreur au premier calcul. Changer ces deux versions ensemble.
     "ctranslate2==4.8.2",
     "faster-whisper>=1.1",
+    # Client HTTP persistant du SDK OpenAI (httpx2), en HTTP/2 (§2, connexion préchauffée).
+    "httpx2[http2]>=2.12",
+    # TTS : Kokoro en ONNX (le paquet « kokoro » installe PyTorch), Piper (§8).
+    "kokoro-onnx>=0.6",
     "loguru>=0.7.2",
     "numpy>=2.1",
     "nvidia-ml-py>=12.535",
     "onnxruntime>=1.19",
+    "openai>=3.20",
     "openwakeword>=0.6",
     "pillow>=11.0",
+    "piper-tts>=1.8",
     "psutil>=6.0",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",

@@ -2,14 +2,23 @@
 
 Phase 1 : capture continue → tampon circulaire → mot d'activation (executor dédié)
 → bip + journal de détection. Le raccourci clavier a le même effet.
-Phase 2 : IDLE → LISTENING (enregistrement depuis le début du pré-roll, VAD Silero)
-→ TRANSCRIBING (Whisper, spéculatif) → texte sans le mot d'activation → IDLE.
-THINKING et la suite arrivent avec les phases 3 à 6.
+Phase 2 : écoute depuis le début du pré-roll (VAD Silero) → transcription (Whisper,
+spéculative) → texte sans le mot d'activation.
+Phase 3 : réflexion (LLM en streaming) → parole (TTS par fragments) ; son de réflexion.
+
+Commandes en parallèle : chaque commande a son propre état (`_Request.state`). Il n'y a
+qu'un micro, donc une seule commande **écoute** à la fois (`_listening`) ; dès que sa fin de
+parole est détectée, le micro est libre et « MIKATA » peut lancer la suivante pendant que la
+première transcrit, réfléchit, agit ou parle. Rien n'est refusé ni mis en file, sauf la
+parole elle-même : deux réponses ne se superposent pas (`audio.player.Speaker`).
+L'état affiché (icône) est le plus « actif » des états en cours.
 """
 
 from __future__ import annotations
 
 import asyncio
+import functools
+import itertools
 import time
 from collections import deque
 from collections.abc import Callable, Mapping
@@ -17,7 +26,7 @@ from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
 from loguru import logger
@@ -26,8 +35,8 @@ from mikata.audio.base import SAMPLE_RATE
 from mikata.audio.capture import CapturedFrame
 from mikata.audio.ringbuffer import RingBuffer
 from mikata.config import Config
-from mikata.events import BusEvent, Cancel, EventBus, Shutdown, SpeechEnded, WakeDetected
-from mikata.stt.base import STT, Transcript
+from mikata.events import BusEvent, EventBus, Shutdown, WakeDetected
+from mikata.stt.base import STT
 from mikata.stt.speculative import CommandRecorder, EndReason
 from mikata.stt.text import clean_transcript, strip_wake_word, wake_word_pattern
 from mikata.vad.base import VAD
@@ -39,6 +48,10 @@ from mikata.wake.recordings import (
     save_detection,
 )
 from mikata.wake.trigger import WakeTrigger
+
+if TYPE_CHECKING:
+    from mikata.agent.loop import Agent
+    from mikata.audio.player import Speaker, SpeechStream
 
 WAKE_LOG_S = 2.0
 HOTKEY_PRE_ROLL_S = 0.3  # raccourci : pas de mot d'activation à retirer, peu de pré-roll
@@ -56,6 +69,17 @@ class State(StrEnum):
     ACTING = "acting"
     SPEAKING = "speaking"
     FOLLOW_UP = "follow_up"
+
+
+# Priorité d'affichage quand plusieurs commandes sont en cours (la plus haute gagne).
+DISPLAY_PRIORITY = (
+    State.LISTENING,
+    State.SPEAKING,
+    State.ACTING,
+    State.THINKING,
+    State.TRANSCRIBING,
+    State.FOLLOW_UP,
+)
 
 
 class StatusIcon(Protocol):
@@ -109,16 +133,27 @@ class ResettableVAD(VAD, Protocol):
     def reset(self) -> None: ...
 
 
-@dataclass
+@dataclass(eq=False)
 class _Request:
-    """Horodatages d'une commande (time.monotonic) pour la ligne de mesures (§10)."""
+    """Une commande, de la détection à la fin de la réponse. Horodatages : time.monotonic."""
 
+    id: int
     source: str
-    wake_at: float
-    recorder: CommandRecorder
-    end_at: float = 0.0
+    wake_at: float  # bip
+    wake_frame_at: float  # capture de la trame de détection
+    recorder: CommandRecorder | None = None
+    state: State = State.LISTENING
+    end_at: float = 0.0  # fin de parole détectée
     reason: EndReason | None = None
+    stream: SpeechStream | None = None
     marks: dict[str, float] = field(default_factory=dict)
+
+    @property
+    def last_syllable_at(self) -> float:
+        """Dernière trame de parole ; à défaut (commande finie avant le bip), la détection."""
+        if self.recorder is not None and self.recorder.last_speech_at is not None:
+            return self.recorder.last_speech_at
+        return self.wake_frame_at
 
 
 class App:
@@ -136,6 +171,8 @@ class App:
         cpu: CpuSampler | None = None,
         vad: ResettableVAD | None = None,
         stt: SpeechToText | None = None,
+        agent: Agent | None = None,
+        speaker: Speaker | None = None,
     ) -> None:
         self.config = config
         self.bus = bus or EventBus()
@@ -148,12 +185,17 @@ class App:
         self._cpu = cpu
         self._vad = vad
         self._stt = stt
+        self._agent = agent
+        self._speaker = speaker
         self.state = State.IDLE
         self._wake_pattern = wake_word_pattern(config.stt.wake_words)
-        self._request: _Request | None = None
+        self._listening: _Request | None = None  # la commande qui a le micro
+        self._active: dict[int, _Request] = {}  # commandes en cours (y compris l'écoute)
+        self._ids = itertools.count(1)
         self._request_tasks: set[asyncio.Task[None]] = set()
-        # Dernières commandes reconnues (phase 2 : journal seulement ; bornée, tourne h24).
+        # Dernières commandes reconnues et réponses (bornées : MIKATA tourne h24).
         self.commands: deque[str] = deque(maxlen=100)
+        self.answers: deque[str] = deque(maxlen=100)
 
         self.ring = RingBuffer.for_seconds(config.audio.pre_roll_s + RING_MARGIN_S)
         self._written = 0  # échantillons écrits dans le tampon depuis le démarrage
@@ -182,6 +224,19 @@ class App:
         if self._tray is not None:
             self._tray.set_state(state)
 
+    def _refresh_state(self) -> None:
+        """État affiché = le plus prioritaire des états des commandes en cours."""
+        states = {request.state for request in self._active.values()}
+        state = next((s for s in DISPLAY_PRIORITY if s in states), State.IDLE)
+        if state is not self.state:
+            self._set_state(state)
+
+    def _set_request_state(self, request: _Request, state: State) -> None:
+        if request.state is not state:
+            logger.debug("Commande #{} : {} -> {}", request.id, request.state, state)
+            request.state = state
+        self._refresh_state()
+
     async def run(self) -> None:
         """Boucle principale : rend la main après un `Shutdown` ou une annulation (Ctrl+C)."""
         loop = asyncio.get_running_loop()
@@ -196,6 +251,11 @@ class App:
             if self._stt is not None:
                 logger.info("Chargement de Whisper ({})...", self.config.stt.model)
                 await asyncio.to_thread(self._stt.load)
+            if self._speaker is not None:
+                logger.info("Chargement de la voix ({})...", self.config.tts.backend)
+                await asyncio.to_thread(self._speaker.load)
+            if self._agent is not None:
+                self._spawn(self._agent.prewarm(), "préchauffage LLM")
             if self._audio is not None:
                 self._audio.start(loop)
                 self._tasks.append(asyncio.create_task(self._audio_loop(), name="audio"))
@@ -236,14 +296,26 @@ class App:
             self._hotkeys = None
 
     async def _shutdown(self) -> None:
-        if self._request is not None:
-            self._request.recorder.cancel()
+        for request in self._active.values():
+            if request.recorder is not None:
+                request.recorder.cancel()
+            if request.stream is not None:
+                request.stream.cancel()
         tasks = [*self._tasks, *self._request_tasks]
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         self._tasks.clear()
         self._request_tasks.clear()
+        for name, aclose in (
+            ("voix", self._speaker.aclose if self._speaker else None),
+            ("LLM", self._agent.aclose if self._agent else None),
+        ):
+            if aclose is not None:
+                try:
+                    await aclose()
+                except Exception:
+                    logger.exception("Erreur à l'arrêt ({}).", name)
         for name, stop in (
             ("raccourci", self._hotkeys.stop if self._hotkeys else None),
             ("micro", self._audio.stop if self._audio else None),
@@ -275,16 +347,17 @@ class App:
             self._written += len(captured.samples)
             # Pas d'await entre l'écriture dans le tampon et cette lecture : une trame est soit
             # dans le pré-roll d'une commande, soit ajoutée à son enregistrement, jamais les deux.
-            request = self._request
+            request = self._listening
             if self._collector is not None:
                 clip = self._collector.add(captured.samples)
                 if clip is not None:
                     self._submit_io(self._save_negative, clip, datetime.now())
-            if request is not None and not request.recorder.finished and self._vad is not None:
+            recorder = request.recorder if request is not None else None
+            if recorder is not None and not recorder.finished and self._vad is not None:
                 speech = await loop.run_in_executor(
                     self._wake_executor, self._vad.is_speech, captured.samples
                 )
-                request.recorder.add(captured.samples, speech)
+                recorder.add(captured.samples, speech, captured.captured_at)
             if self._detector is None:
                 continue
             score = await loop.run_in_executor(
@@ -300,25 +373,22 @@ class App:
     async def _handle(self, event: BusEvent) -> None:
         if isinstance(event, WakeDetected):
             self._on_wake(event)
-        elif isinstance(event, SpeechEnded):
-            self._on_speech_ended(event)
-        elif isinstance(event, Transcript):
-            self._on_transcript(event)
-        elif isinstance(event, Cancel):
-            self._on_cancel(event)
         else:
-            logger.debug("Événement non géré en phase 2 : {}", type(event).__name__)
+            logger.debug("Événement non géré : {}", type(event).__name__)
 
     def _on_wake(self, event: WakeDetected) -> None:
         now = time.monotonic()
-        if self.state is not State.IDLE:
-            logger.debug("Mot d'activation ignoré en état {} ({}).", self.state, event.source)
+        if self._listening is not None:  # le micro sert déjà à une commande
+            logger.debug("Mot d'activation ignoré pendant une écoute ({}).", event.source)
             return
-        if self._player is not None and "wake" in self._earcons:
-            self._player.play_nowait(self._earcons["wake"])
+        self._play("wake")
         self.detections += 1
         out_ms = (self._player.output_latency_s if self._player else 0.0) * 1000
         pipeline_ms = (now - event.ts) * 1000
+        if self._agent is not None:  # TLS prête quand la commande partira (§2, technique 2)
+            self._spawn(self._agent.prewarm(), "préchauffage LLM")
+        if self._active:
+            logger.info("Nouvelle commande pendant {} autre(s) en cours.", len(self._active))
 
         if event.source == "hotkey":
             self._trigger.suppress(now)
@@ -352,7 +422,7 @@ class App:
             self._submit_io(self._save_wake_log, audio, event.score, datetime.now())
         self._start_listening(event, now)
 
-    # -- écoute et transcription (phase 2) -------------------------------------------------
+    # -- écoute (une seule à la fois : il n'y a qu'un micro) -------------------------------
 
     def _start_listening(self, event: WakeDetected, now: float) -> None:
         if self._stt is None or self._vad is None or self._audio is None:
@@ -366,64 +436,71 @@ class App:
         pre_roll = self.ring.read_last(min(samples, self.ring.capacity))
         if self._wake_executor is not None:  # même thread que is_speech : ordre garanti
             self._wake_executor.submit(self._vad.reset)
-        recorder = CommandRecorder(
+        request = _Request(
+            id=next(self._ids), source=event.source, wake_at=now, wake_frame_at=event.ts
+        )
+        request.recorder = CommandRecorder(
             self._stt,
             pre_roll,
             self.config.vad,
             self._wake_pattern,
-            on_end=self._on_recorder_end,
+            on_end=functools.partial(self._on_recorder_end, request),
             check_pre_roll=not hotkey,
         )
-        self._request = _Request(source=event.source, wake_at=now, recorder=recorder)
-        self._set_state(State.LISTENING)
-        logger.debug("Écoute : {:.1f} s de pré-roll.", len(pre_roll) / SAMPLE_RATE)
+        self._listening = request
+        self._active[request.id] = request
+        self._set_request_state(request, State.LISTENING)
+        logger.debug(
+            "Commande #{} : écoute, {:.1f} s de pré-roll.", request.id, len(pre_roll) / SAMPLE_RATE
+        )
 
-    def _on_recorder_end(self, reason: EndReason) -> None:
-        request = self._request
-        if request is None:
-            return
+    def _on_recorder_end(self, request: _Request, reason: EndReason) -> None:
         request.end_at = time.monotonic()
         request.reason = reason
+        if self._listening is request:
+            self._listening = None  # micro libre : une autre commande peut commencer
         if reason is EndReason.NO_SPEECH:
-            self.bus.publish(Cancel(reason=str(reason)))
-        else:
-            self.bus.publish(SpeechEnded(request.recorder.audio))
-
-    def _on_speech_ended(self, event: SpeechEnded) -> None:
-        request = self._request
-        if request is None:
+            logger.info("Écoute terminée : {}.", reason)
+            self._play("end")
+            self._finish(request)
             return
-        self._set_state(State.TRANSCRIBING)
-        task = asyncio.create_task(self._transcribe(request), name="transcription")
+        self._set_request_state(request, State.TRANSCRIBING)
+        self._spawn(self._process(request), f"commande #{request.id}")
+
+    # -- traitement d'une commande (plusieurs en parallèle) --------------------------------
+
+    def _spawn(self, coro: object, name: str) -> None:
+        task = asyncio.create_task(coro, name=name)  # type: ignore[arg-type]
         self._request_tasks.add(task)
         task.add_done_callback(self._request_tasks.discard)
 
-    async def _transcribe(self, request: _Request) -> None:
+    async def _process(self, request: _Request) -> None:
         try:
-            transcript = await request.recorder.transcribe()
+            text = await self._transcribe(request)
+            if text and self._agent is not None and self._speaker is not None:
+                await self._respond(request, text)
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("Transcription impossible.")
+            logger.exception("Commande #{} : erreur.", request.id)
             self._play("error")
-            self._finish_request()
-            return
-        request.marks["stt_ready"] = time.monotonic()
-        self.bus.publish(transcript)
+        finally:
+            if request.stream is not None:
+                request.stream.close()
+            self._finish(request)
 
-    def _on_transcript(self, transcript: Transcript) -> None:
-        request = self._request
-        if request is None:
-            return
+    async def _transcribe(self, request: _Request) -> str:
+        assert request.recorder is not None
+        recorder = request.recorder
+        transcript = await recorder.transcribe()
+        request.marks["stt_ready"] = time.monotonic()
         raw = transcript.text
         text, found = strip_wake_word(clean_transcript(raw), self._wake_pattern)
-        ready = request.marks.get("stt_ready", time.monotonic())
-        recorder = request.recorder
         logger.info(
             "Mesures : fin_parole +{:.0f} ms après le bip, stt_prêt +{:.0f} ms après "
             "fin_parole ({}), Whisper {:.2f} s pour {:.1f} s d'audio, fin : {}.",
             (request.end_at - request.wake_at) * 1000,
-            (ready - request.end_at) * 1000,
+            (request.marks["stt_ready"] - request.end_at) * 1000,
             "spéculatif" if recorder.used_speculative else "direct",
             transcript.latency_s,
             transcript.duration_s,
@@ -431,25 +508,75 @@ class App:
         )
         if request.source != "hotkey" and not found:
             logger.debug("Mot d'activation absent du texte : rien de retiré.")
-        if text:
-            logger.success("Commande : « {} » (texte brut : « {} »)", text, raw)
-            self.commands.append(text)
-        else:
+        if not text:
             logger.info("Rien compris (texte brut : « {} »).", raw)
             self._play("end")
-        self._finish_request()
+            return ""
+        logger.success("Commande #{} : « {} » (texte brut : « {} »)", request.id, text, raw)
+        self.commands.append(text)
+        return text
 
-    def _on_cancel(self, event: Cancel) -> None:
-        if self._request is None:
-            return
-        logger.info("Écoute terminée : {}.", event.reason or "annulée")
-        self._request.recorder.cancel()
-        self._play("end")
-        self._finish_request()
+    async def _respond(self, request: _Request, text: str) -> None:
+        assert self._agent is not None and self._speaker is not None
+        self._set_request_state(request, State.THINKING)
+        stream = self._speaker.open(label=f"#{request.id}")
+        request.stream = stream
+        stream.on_first_sound = functools.partial(self._on_first_sound, request)
+        self._spawn(self._thinking_sound(request), f"réflexion #{request.id}")
+        result = await self._agent.respond(text, stream)
+        stream.close()
+        await stream.wait()
+        request.marks["done"] = time.monotonic()
+        if result.answer:
+            self.answers.append(result.answer)
+        self._log_response(request, result.first_token_at, result.outcome, result.answer)
 
-    def _finish_request(self) -> None:
-        self._request = None
-        self._set_state(State.IDLE)
+    def _on_first_sound(self, request: _Request) -> None:
+        request.marks["first_sound"] = time.monotonic()
+        self._set_request_state(request, State.SPEAKING)
+
+    async def _thinking_sound(self, request: _Request) -> None:
+        """Petit son si rien n'est joué `thinking_sound_after_s` après la fin de parole (§2)."""
+        delay = request.end_at + self.config.agent.thinking_sound_after_s - time.monotonic()
+        await asyncio.sleep(max(0.0, delay))
+        stream = request.stream
+        if request.id in self._active and stream is not None and stream.first_sound_at is None:
+            self._play("thinking")
+
+    def _log_response(
+        self, request: _Request, first_token_at: float | None, outcome: str, answer: str
+    ) -> None:
+        def since_end(t: float | None) -> str:
+            return "—" if t is None else f"+{(t - request.end_at) * 1000:.0f} ms"
+
+        stream = request.stream
+        first_sound = stream.first_sound_at if stream is not None else None
+        after_syllable = (
+            f"{(first_sound - request.last_syllable_at) * 1000:.0f} ms"
+            if first_sound is not None
+            else "—"
+        )
+        logger.info(
+            "Réponse #{} : premier son ≈ {} après la dernière syllabe (depuis fin_parole : "
+            "stt_prêt {}, llm_premier_token {}, premier_son {}, total {}) ; issue : {}.",
+            request.id,
+            after_syllable,
+            since_end(request.marks.get("stt_ready")),
+            since_end(first_token_at),
+            since_end(first_sound),
+            since_end(request.marks.get("done")),
+            outcome,
+        )
+        if answer:
+            logger.info("Réponse #{} : « {} »", request.id, answer)
+
+    def _finish(self, request: _Request) -> None:
+        if self._listening is request:
+            self._listening = None
+        if request.recorder is not None:
+            request.recorder.cancel()
+        self._active.pop(request.id, None)
+        self._refresh_state()
 
     def _play(self, earcon: str) -> None:
         if self._player is not None and earcon in self._earcons:

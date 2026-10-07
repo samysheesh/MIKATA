@@ -33,7 +33,7 @@ def test_play_nowait_outputs_sound_then_silence(fake_sd: types.ModuleType) -> No
         player.start(asyncio.get_running_loop())
         assert player.output_latency_s == FakeOutputStream.latency
         player.play_nowait(np.full(1000, 0.5, dtype=np.float32))
-        _wait_until(lambda: player._current is None)
+        _wait_until(lambda: player._effect is None)
         await asyncio.sleep(0.02)
         player.close()
         return player
@@ -79,14 +79,49 @@ def test_stop_interrupts_play(fake_sd: types.ModuleType) -> None:
     assert asyncio.run(scenario()) < 0.2
 
 
-def test_new_sound_replaces_current(fake_sd: types.ModuleType) -> None:
+def test_new_phrase_replaces_current(fake_sd: types.ModuleType) -> None:
     async def scenario() -> None:
         player = AudioPlayer(HEADSET)
         player.start(asyncio.get_running_loop())
         first = asyncio.create_task(player.play(np.full(48_000 * 10, 0.1, np.float32), 48_000))
         await asyncio.sleep(0.02)
-        player.play_nowait(np.full(10, 0.9, np.float32))
-        await asyncio.wait_for(first, 1)  # l'ancien son est terminé (coupé)
+        second = asyncio.create_task(player.play(np.full(480, 0.3, np.float32), 48_000))
+        await asyncio.wait_for(first, 1)  # la phrase précédente est coupée
+        await asyncio.wait_for(second, 1)
         player.close()
+
+    asyncio.run(scenario())
+
+
+def test_effect_is_mixed_over_speech_without_cutting_it(fake_sd: types.ModuleType) -> None:
+    """Le bip d'une nouvelle commande ne coupe pas la réponse de la précédente."""
+
+    async def scenario() -> None:
+        player = AudioPlayer(HEADSET)
+        player.start(asyncio.get_running_loop())
+        speech = asyncio.create_task(player.play(np.full(9600, 0.25, np.float32), 48_000))
+        await asyncio.sleep(0.01)
+        player.play_nowait(np.full(960, 0.5, np.float32))
+        await asyncio.wait_for(speech, 2)
+        player.close()
+
+    asyncio.run(scenario())
+    out = FakeOutputStream.instances[-1].output()[:, 0]
+    assert int(np.isclose(out, 0.25).sum()) == 9600 - 960  # la parole entière a été jouée
+    assert int(np.isclose(out, 0.75).sum()) == 960  # bip additionné par-dessus
+
+
+def test_stop_cuts_speech_but_not_effects(fake_sd: types.ModuleType) -> None:
+    async def scenario() -> AudioPlayer:
+        player = AudioPlayer(HEADSET)
+        player.start(asyncio.get_running_loop())
+        speech = asyncio.create_task(player.play(np.full(48_000, 0.1, np.float32), 48_000))
+        player.play_nowait(np.full(48_000, 0.2, np.float32))
+        await asyncio.sleep(0.01)
+        player.stop()
+        await asyncio.wait_for(speech, 1)
+        assert player._speech is None and player._effect is not None
+        player.close()
+        return player
 
     asyncio.run(scenario())

@@ -119,7 +119,7 @@ def _with_audio(config_file: Path, **audio: object) -> Path:
 def test_missing_models_exit_with_hint(
     config_file: Path, fake_sd: object, no_priority_change: None
 ) -> None:
-    assert entry.main(["--config", str(config_file), "--no-tray"]) == entry.EXIT_CONFIG
+    assert entry.main(["--config", str(config_file), "--no-tray", "--no-llm"]) == entry.EXIT_CONFIG
     log = _log(config_file)
     assert "hey_jarvis.onnx" in log
     assert "download_models.py" in log
@@ -127,13 +127,13 @@ def test_missing_models_exit_with_hint(
 
 def test_unknown_device_exit(config_file: Path, fake_sd: object, no_priority_change: None) -> None:
     _with_audio(config_file, input_device='"Rode NT-USB"')
-    assert entry.main(["--config", str(config_file), "--no-tray"]) == entry.EXIT_CONFIG
+    assert entry.main(["--config", str(config_file), "--no-tray", "--no-llm"]) == entry.EXIT_CONFIG
     assert "aucun périphérique" in _log(config_file)
 
 
 def test_channel_out_of_range(config_file: Path, fake_sd: object, no_priority_change: None) -> None:
     _with_audio(config_file, input_channel="3")
-    assert entry.main(["--config", str(config_file), "--no-tray"]) == entry.EXIT_CONFIG
+    assert entry.main(["--config", str(config_file), "--no-tray", "--no-llm"]) == entry.EXIT_CONFIG
     assert "audio.input_channel = 3" in _log(config_file)
 
 
@@ -156,7 +156,8 @@ def test_build_app_wires_real_components(
     monkeypatch.setattr("mikata.wake.oww.OpenWakeWordDetector", Detector)
     monkeypatch.setattr("mikata.vad.silero.SileroVAD", Vad)
     config = entry.load_config(config_file)
-    app = entry.build_app(config, tray=False, audio=True)
+    app = entry.build_app(config, tray=False, audio=True, llm=False)
+    assert app._agent is None and app._speaker is None
     assert app._audio.device.name == "Microphone (RØDE NT-USB+)"  # type: ignore[union-attr]
     assert app._player.device.name == "Casque (HyperX Cloud)"  # type: ignore[union-attr]
     assert app._detector.model == config_file.parent / "models" / "hey_jarvis.onnx"  # type: ignore[union-attr]
@@ -173,7 +174,7 @@ def test_missing_vad_model_exit(
     monkeypatch.setattr(
         "mikata.wake.oww.OpenWakeWordDetector", lambda *a: types.SimpleNamespace(name="x")
     )
-    assert entry.main(["--config", str(config_file), "--no-tray"]) == entry.EXIT_CONFIG
+    assert entry.main(["--config", str(config_file), "--no-tray", "--no-llm"]) == entry.EXIT_CONFIG
     assert "silero_vad.onnx" in _log(config_file)
 
 
@@ -188,7 +189,7 @@ def test_gpu_unavailable_exit_code(config_file: Path, monkeypatch: pytest.Monkey
         def close(self) -> None:
             pass
 
-    def build(config: object, *, tray: bool, audio: bool) -> App:
+    def build(config: object, *, tray: bool, audio: bool, llm: bool = True) -> App:
         return App(entry.load_config(config_file), stt=NoGpu())  # type: ignore[arg-type]
 
     monkeypatch.setattr(entry, "build_app", build)
@@ -196,3 +197,85 @@ def test_gpu_unavailable_exit_code(config_file: Path, monkeypatch: pytest.Monkey
     log = _log(config_file)
     assert "Aucun GPU NVIDIA" in log
     assert "Traceback" not in log
+
+
+# -- phase 3 : LLM obligatoire, voix --------------------------------------------------------
+
+
+def _with_llm(config_file: Path, key: str | None = "sk-test") -> Path:
+    text = config_file.read_text(encoding="utf-8")
+    text = text.replace('base_url: "https://..."', 'base_url: "https://api.example.test/v1"')
+    text = text.replace('model: "..."', 'model: "deepseek-flash"')
+    config_file.write_text(text, encoding="utf-8")
+    if key is not None:
+        (config_file.parent / ".env").write_text(f"LLM_API_KEY={key}\n", encoding="utf-8")
+    return config_file
+
+
+def test_refuses_to_start_without_llm_key(
+    config_file: Path, fake_sd: object, no_priority_change: None
+) -> None:
+    from conftest import FakeInputStream
+
+    _with_llm(config_file, key=None)
+    assert entry.main(["--config", str(config_file), "--no-tray"]) == entry.EXIT_CONFIG
+    log = _log(config_file)
+    assert "LLM_API_KEY absente" in log
+    assert ".env" in log and "--no-llm" in log
+    assert "Traceback" not in log
+    assert FakeInputStream.instances == []  # refus avant d'ouvrir le micro
+
+
+def test_refuses_to_start_with_placeholder_endpoint(
+    config_file: Path, fake_sd: object, no_priority_change: None
+) -> None:
+    (config_file.parent / ".env").write_text("LLM_API_KEY=sk-test\n", encoding="utf-8")
+    assert entry.main(["--config", str(config_file), "--no-tray"]) == entry.EXIT_CONFIG
+    log = _log(config_file)
+    assert "llm.base_url / llm.model non renseignés" in log
+    assert "LLM_API_KEY absente" not in log
+
+
+def test_build_app_with_llm_and_voice(
+    config_file: Path, fake_sd: object, no_priority_change: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "mikata.wake.oww.OpenWakeWordDetector", lambda *a: types.SimpleNamespace(name="x")
+    )
+    monkeypatch.setattr("mikata.vad.silero.SileroVAD", lambda *a: object())
+    config = entry.load_config(_with_llm(config_file))
+    app = entry.build_app(config, tray=False, audio=True)
+    assert app._agent is not None and app._speaker is not None
+    assert app._agent.llm.cfg.model == "deepseek-flash"  # type: ignore[attr-defined]
+    assert app._speaker.tts.name == "piper"
+    assert app._speaker.tts.model == config_file.parent / "models" / "fr_FR-siwis-medium.onnx"  # type: ignore[attr-defined]
+    assert app._speaker.player is app._player  # même flux de sortie que les bips
+    assert app._agent.phrases is app._speaker.cache
+
+
+def test_ask_without_audio_prints_answer(
+    config_file: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from mikata.agent.loop import Agent
+    from mikata.llm.base import Done, TextDelta
+
+    class FakeLLM:
+        async def stream(self, messages: list, tools: list):  # type: ignore[no-untyped-def]
+            assert "quelle heure" in messages[-1]["content"]
+            yield TextDelta("Il est midi.")
+            yield Done("stop")
+
+    monkeypatch.setattr(entry, "build_agent", lambda config, phrases=None: Agent(FakeLLM(), config))
+    code = entry.main(
+        ["--config", str(_with_llm(config_file)), "--ask", "quelle heure", "--no-audio"]
+    )
+    assert code == entry.EXIT_OK
+    assert capsys.readouterr().out.strip() == "Il est midi."
+    assert "premier token" in _log(config_file)
+
+
+def test_ask_refuses_without_key(config_file: Path) -> None:
+    code = entry.main(
+        ["--config", str(_with_llm(config_file, key=None)), "--ask", "x", "--no-audio"]
+    )
+    assert code == entry.EXIT_CONFIG

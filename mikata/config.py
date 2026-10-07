@@ -96,6 +96,7 @@ class LlmConfig(_Section):
     model: str = "..."
     max_tool_rounds: int = Field(default=8, ge=1)
     request_timeout_s: float = Field(default=20, gt=0)
+    turn_timeout_s: float = Field(default=60, gt=0)  # ajout phase 3 : §6, 60 s par requête
 
     @field_validator("base_url")
     @classmethod
@@ -106,20 +107,27 @@ class LlmConfig(_Section):
 
     @property
     def is_placeholder(self) -> bool:
-        """Vrai tant que l'endpoint CommandCode n'est pas renseigné (avant la phase 3)."""
+        """Vrai tant que l'endpoint CommandCode n'est pas renseigné."""
         return "..." in self.base_url or self.model.strip() in ("", "...")
 
 
 class TtsConfig(_Section):
     backend: Literal["piper", "kokoro"] = "piper"
-    voice: Path = Path("models/fr_FR-voice.onnx")
+    voice: Path = Path("models/fr_FR-siwis-medium.onnx")  # voix Piper (+ .onnx.json)
     first_chunk_min_words: int = Field(default=6, ge=1)
+    # Ajouts phase 3 : Kokoro (ONNX), vitesse de parole, threads CPU (§10 : 4 max).
+    kokoro_model: Path = Path("models/kokoro-v1.0.onnx")
+    kokoro_voices: Path = Path("models/voices-v1.0.bin")
+    kokoro_voice: str = "ff_siwis"
+    speed: float = Field(default=1.0, ge=0.5, le=2.0)
+    cpu_threads: int = Field(default=4, ge=1, le=16)
 
 
 class AgentConfig(_Section):
     follow_up_s: float = Field(default=6, ge=0)
     session_reset_min: float = Field(default=10, gt=0)
     thinking_sound_after_s: float = Field(default=1.2, ge=0)
+    history_max_tokens: int = Field(default=6000, ge=500)  # ajout phase 3 : §6, ~6 000 tokens
 
 
 class GuardConfig(_Section):
