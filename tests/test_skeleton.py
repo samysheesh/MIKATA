@@ -59,6 +59,7 @@ PATHS = [
     "scripts/list_audio_devices.py",
     "scripts/download_models.py",
     "scripts/stt_phrases_fr.txt",
+    "scripts/eval_tts.py",
     "tests/fixtures/hey_jarvis_ouvre_spotify.wav",
     *(f"assets/sounds/{n}.wav" for n in ("wake", "end", "thinking", "error")),
     "scripts/user",

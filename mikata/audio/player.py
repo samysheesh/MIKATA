@@ -1,21 +1,31 @@
-"""Lecture dans le casque (§8) : flux de sortie WASAPI ouvert en permanence.
+"""Lecture dans le casque (§8).
 
-Garder le flux ouvert évite les 20 à 50 ms d'ouverture du périphérique à chaque son :
-le bip part au bloc suivant. Le callback ne fait que recopier des échantillons déjà prêts.
-La phase 3 ajoutera la file de phrases du TTS au-dessus de `play()`.
+`AudioPlayer` : flux de sortie WASAPI ouvert en permanence (le son part au bloc suivant),
+avec deux canaux mixés :
+- **parole** (`play` / `stop`) : une phrase à la fois, coupable immédiatement (barge-in) ;
+- **effets** (`play_nowait`) : bips et sons d'interface, joués **par-dessus** la parole sans
+  l'interrompre (avec des commandes en parallèle, le bip d'une nouvelle commande ne doit pas
+  couper la réponse de la précédente).
+Le callback ne fait que recopier et additionner des échantillons déjà prêts.
+
+`Speaker` : file de phrases (§8). Chaque commande ouvre un `SpeechStream` ; la phrase N+1 est
+synthétisée pendant que N est jouée. Les flux sont joués dans l'ordre d'ouverture : deux voix
+ne se superposent jamais, mais une commande n'attend jamais l'autre pour réfléchir.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import threading
-from typing import Any
+import time
+from collections.abc import Callable
+from typing import Any, Protocol
 
 import numpy as np
 from loguru import logger
 
 from mikata.audio.devices import DeviceInfo
+from mikata.tts.base import TTS
 
 
 class _Playback:
@@ -45,16 +55,15 @@ def _resolve(future: asyncio.Future[None]) -> None:
 
 
 class AudioPlayer:
-    """Implémente l'interface `Player` (tts/base.py) + `play_nowait` pour les sons courts."""
+    """Implémente l'interface `Player` (tts/base.py) + `play_nowait` pour les effets."""
 
     def __init__(self, device: DeviceInfo) -> None:
         self.device = device
         self.sample_rate = int(device.default_samplerate)
         self._channels = min(device.max_output_channels, 2)
-        self._current: _Playback | None = None
+        self._speech: _Playback | None = None
+        self._effect: _Playback | None = None
         self._stream: Any = None
-        self._loop: asyncio.AbstractEventLoop | None = None
-        self._lock = threading.Lock()
 
     @property
     def output_latency_s(self) -> float:
@@ -64,7 +73,6 @@ class AudioPlayer:
     def start(self, loop: asyncio.AbstractEventLoop) -> None:
         import sounddevice as sd
 
-        self._loop = loop
         self._stream = sd.OutputStream(
             device=self.device.index,
             samplerate=self.sample_rate,
@@ -82,50 +90,58 @@ class AudioPlayer:
             self.output_latency_s * 1000,
         )
 
-    def _callback(self, outdata: np.ndarray, frames: int, time_info: Any, status: Any) -> None:
-        # Thread PortAudio : recopie d'échantillons préparés, rien d'autre.
-        current = self._current
-        if current is None:
-            outdata.fill(0)
-            return
-        pos = current.pos
-        chunk = current.pcm[pos : pos + frames]
-        n = len(chunk)
-        outdata[:n] = chunk[:, None]
-        outdata[n:] = 0
-        current.pos = pos + n
-        if current.pos >= len(current.pcm):
-            if self._current is current:
-                self._current = None
-            current.finish()
+    @staticmethod
+    def _advance(playback: _Playback, frames: int) -> np.ndarray:
+        chunk = playback.pcm[playback.pos : playback.pos + frames]
+        playback.pos += len(chunk)
+        return chunk
 
-    def _replace(self, playback: _Playback | None) -> None:
-        with self._lock:
-            previous, self._current = self._current, playback
-        if previous is not None:
-            previous.finish()
+    def _callback(self, outdata: np.ndarray, frames: int, time_info: Any, status: Any) -> None:
+        # Thread PortAudio : recopie (et addition des deux canaux), rien d'autre.
+        outdata.fill(0)
+        speech, effect = self._speech, self._effect
+        if speech is not None:
+            chunk = self._advance(speech, frames)
+            outdata[: len(chunk)] = chunk[:, None]
+            if speech.pos >= len(speech.pcm):
+                if self._speech is speech:
+                    self._speech = None
+                speech.finish()
+        if effect is not None:
+            chunk = self._advance(effect, frames)
+            outdata[: len(chunk)] += chunk[:, None]
+            if effect.pos >= len(effect.pcm) and self._effect is effect:
+                self._effect = None
 
     def play_nowait(self, pcm: np.ndarray) -> None:
-        """Joue immédiatement `pcm` (float32 mono à `sample_rate`), coupe le son en cours."""
-        self._replace(_Playback(np.ascontiguousarray(pcm, dtype=np.float32), None, None))
+        """Effet sonore (float32 mono à `sample_rate`), mixé par-dessus la parole."""
+        self._effect = _Playback(np.ascontiguousarray(pcm, dtype=np.float32), None, None)
 
     async def play(self, pcm: np.ndarray, sample_rate: int) -> None:
-        """Joue `pcm` et attend la fin (ou un `stop()`)."""
+        """Joue une phrase et attend sa fin (ou un `stop()`). Coupe la phrase en cours."""
         if sample_rate != self.sample_rate:
             import soxr
 
             pcm = soxr.resample(pcm.astype(np.float32), sample_rate, self.sample_rate)
         loop = asyncio.get_running_loop()
         done: asyncio.Future[None] = loop.create_future()
-        self._replace(_Playback(np.ascontiguousarray(pcm, dtype=np.float32), loop, done))
+        previous, self._speech = (
+            self._speech,
+            _Playback(np.ascontiguousarray(pcm, dtype=np.float32), loop, done),
+        )
+        if previous is not None:
+            previous.finish()
         await done
 
     def stop(self) -> None:
-        """Coupe immédiatement le son en cours (barge-in)."""
-        self._replace(None)
+        """Coupe immédiatement la parole en cours (barge-in) ; les effets continuent."""
+        previous, self._speech = self._speech, None
+        if previous is not None:
+            previous.finish()
 
     def close(self) -> None:
         self.stop()
+        self._effect = None
         stream, self._stream = self._stream, None
         if stream is not None:
             try:
@@ -133,3 +149,150 @@ class AudioPlayer:
                 stream.close()
             except Exception:
                 logger.exception("Erreur à la fermeture du flux de sortie.")
+
+
+# -- file de phrases ----------------------------------------------------------------------
+
+
+class SpeechPlayer(Protocol):
+    @property
+    def output_latency_s(self) -> float: ...
+    async def play(self, pcm: np.ndarray, sample_rate: int) -> None: ...
+    def stop(self) -> None: ...
+
+
+class PhraseSource(Protocol):
+    sample_rate: int
+
+    def lookup(self, text: str) -> np.ndarray | None: ...
+
+
+_END = object()
+
+
+class SpeechStream:
+    """Les phrases d'une commande, dans l'ordre. `say` ne bloque jamais."""
+
+    def __init__(self, speaker: Speaker, label: str) -> None:
+        self._speaker = speaker
+        self.label = label
+        self._items: asyncio.Queue[Any] = asyncio.Queue()
+        self._done = asyncio.Event()
+        self._tasks: list[asyncio.Task[np.ndarray]] = []
+        self.cancelled = False
+        self.closed = False
+        self.fragments = 0
+        self.first_sound_at: float | None = None
+        self.on_first_sound: Callable[[], None] | None = None
+
+    def say(self, text: str) -> None:
+        """Ajoute une phrase : synthèse lancée tout de suite, lecture à son tour."""
+        if self.closed or self.cancelled or not text.strip():
+            return
+        cached = self._speaker.cache.lookup(text) if self._speaker.cache else None
+        if cached is not None:
+            self.say_audio(cached, self._speaker.cache.sample_rate)  # type: ignore[union-attr]
+            return
+        task = asyncio.create_task(self._speaker.tts.synthesize(text))
+        self._tasks.append(task)
+        self._items.put_nowait((task, self._speaker.tts))
+        self.fragments += 1
+
+    def say_audio(self, pcm: np.ndarray, sample_rate: int) -> None:
+        """Ajoute un audio déjà prêt (phrase en cache)."""
+        if self.closed or self.cancelled:
+            return
+        self._items.put_nowait((pcm, sample_rate))
+        self.fragments += 1
+
+    def close(self) -> None:
+        """Plus aucune phrase à venir."""
+        if not self.closed:
+            self.closed = True
+            self._items.put_nowait(_END)
+
+    def cancel(self) -> None:
+        """Abandonne les phrases restantes et coupe celle en cours si c'est la nôtre."""
+        if self.cancelled:
+            return
+        self.cancelled = True
+        for task in self._tasks:
+            task.cancel()
+        if self._speaker.current is self:
+            self._speaker.player.stop()
+        self.close()
+
+    async def wait(self) -> None:
+        await self._done.wait()
+
+
+class Speaker:
+    def __init__(self, tts: TTS, player: SpeechPlayer, cache: PhraseSource | None = None) -> None:
+        self.tts = tts
+        self.player = player
+        self.cache = cache
+        self.current: SpeechStream | None = None
+        self._streams: asyncio.Queue[SpeechStream] = asyncio.Queue()
+        self._task: asyncio.Task[None] | None = None
+
+    def load(self) -> None:
+        """Charge le moteur TTS et le cache de phrases (bloquant, au démarrage)."""
+        load = getattr(self.tts, "load", None)
+        if load is not None:
+            load()
+        warm = getattr(self.cache, "warm", None)
+        if warm is not None:
+            warm()
+
+    def open(self, label: str = "") -> SpeechStream:
+        stream = SpeechStream(self, label)
+        self._streams.put_nowait(stream)
+        if self._task is None or self._task.done():
+            self._task = asyncio.create_task(self._run(), name="speaker")
+        return stream
+
+    async def _run(self) -> None:
+        while True:
+            stream = await self._streams.get()
+            self.current = stream
+            try:
+                await self._play_stream(stream)
+            finally:
+                self.current = None
+                stream._done.set()
+
+    async def _play_stream(self, stream: SpeechStream) -> None:
+        while True:
+            item = await stream._items.get()
+            if item is _END:
+                return
+            if stream.cancelled:
+                continue
+            try:
+                if isinstance(item[0], asyncio.Task):
+                    task, tts = item
+                    pcm, rate = await task, tts.sample_rate
+                else:
+                    pcm, rate = item
+            except asyncio.CancelledError:
+                if stream.cancelled:
+                    continue
+                raise
+            except Exception:
+                logger.exception("Synthèse vocale impossible pour un fragment.")
+                continue
+            if stream.first_sound_at is None:
+                stream.first_sound_at = time.monotonic() + self.player.output_latency_s
+                if stream.on_first_sound is not None:
+                    stream.on_first_sound()
+            await self.player.play(pcm, rate)
+
+    async def aclose(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task
+        self.player.stop()
+        close = getattr(self.tts, "close", None)
+        if close is not None:
+            close()

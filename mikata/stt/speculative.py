@@ -80,6 +80,7 @@ class CommandRecorder:
         self._spec_task: asyncio.Task[Transcript] | None = None
         self._spec_valid = False  # aucune parole depuis le lancement du spéculatif
         self.reason: EndReason | None = None
+        self.last_speech_at: float | None = None  # capture de la dernière trame de parole
         self.speculative_runs = 0
         self.used_speculative = False
 
@@ -99,13 +100,16 @@ class CommandRecorder:
 
     # -- trames -------------------------------------------------------------------------
 
-    def add(self, frame: np.ndarray, is_speech: bool) -> None:
+    def add(self, frame: np.ndarray, is_speech: bool, captured_at: float | None = None) -> None:
+        """Trame suivante ; `captured_at` (time.monotonic) date la « dernière syllabe »."""
         if self.finished or self._timed_out:
             return
         self._chunks.append(frame)
         self._samples += len(frame)
         self._frames += 1
         if is_speech:
+            if captured_at is not None:
+                self.last_speech_at = captured_at
             self._speech_seen = True
             self._silent_frames = 0
             self._spec_valid = False  # la parole reprend : le spéculatif est périmé

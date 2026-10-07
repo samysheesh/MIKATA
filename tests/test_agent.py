@@ -1,0 +1,182 @@
+from __future__ import annotations
+
+import asyncio
+from collections.abc import AsyncIterator
+from datetime import datetime
+from typing import Any
+
+import numpy as np
+
+from mikata.agent.loop import Agent
+from mikata.config import Config
+from mikata.llm.base import Done, LLMEvent, TextDelta, ToolCallReq
+from mikata.llm.client import LlmError
+
+
+class ScriptedLLM:
+    """Chaque appel rejoue le script suivant ; un élément Exception est levé à cet endroit."""
+
+    def __init__(self, *scripts: list[Any], delay: float = 0.0) -> None:
+        self.scripts = list(scripts)
+        self.calls: list[list[dict[str, Any]]] = []
+        self.delay = delay
+        self.prewarmed = 0
+
+    async def prewarm(self) -> None:
+        self.prewarmed += 1
+
+    async def stream(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+    ) -> AsyncIterator[LLMEvent]:
+        self.calls.append(messages)
+        assert tools == []  # pas d'outils en phase 3
+        for item in self.scripts.pop(0):
+            await asyncio.sleep(self.delay)
+            if isinstance(item, Exception):
+                raise item
+            yield item
+
+
+class Sink:
+    def __init__(self) -> None:
+        self.said: list[str] = []
+        self.audio: list[tuple[Any, int]] = []
+
+    def say(self, text: str) -> None:
+        self.said.append(text)
+
+    def say_audio(self, pcm: Any, sample_rate: int) -> None:
+        self.audio.append((pcm, sample_rate))
+
+
+class Phrases:
+    sample_rate = 22_050
+
+    def get(self, key: str) -> Any:
+        return np.full(10, len(key), dtype=np.float32)
+
+
+NOW = datetime(2026, 10, 7, 15, 42)
+
+
+def _agent(llm: ScriptedLLM, config: Config | None = None, phrases: Any = None) -> Agent:
+    return Agent(
+        llm, config or Config(), phrases=phrases, window_title=lambda: "Steam", clock=lambda: NOW
+    )
+
+
+def _run(agent: Agent, command: str, sink: Sink) -> Any:
+    return asyncio.run(agent.respond(command, sink))
+
+
+def test_streamed_answer_goes_to_speech_by_fragments() -> None:
+    llm = ScriptedLLM(
+        [
+            TextDelta("D'accord, je lance Steam"),
+            TextDelta(" tout de suite, voilà. Bon"),
+            TextDelta(" jeu !"),
+            Done("stop"),
+        ]
+    )
+    agent, sink = _agent(llm), Sink()
+    result = _run(agent, "lance Team", sink)
+    assert sink.said == ["D'accord, je lance Steam tout de suite,", "voilà.", "Bon jeu !"]
+    assert result.answer == "D'accord, je lance Steam tout de suite, voilà. Bon jeu !"
+    assert result.outcome == "ok" and result.attempts == 1 and result.first_token_at is not None
+    last = llm.calls[0][-1]["content"]
+    assert "Commande transcrite : « lance Team »" in last  # texte brut : le LLM corrige
+    assert "mercredi 7 octobre 2026, 15:42" in last and "Fenêtre active : Steam" in last
+    assert agent.memory.messages()[-2:] == [
+        {"role": "user", "content": "lance Team"},
+        {"role": "assistant", "content": result.answer},
+    ]
+
+
+def test_history_is_sent_on_next_turn() -> None:
+    llm = ScriptedLLM([TextDelta("Il est midi."), Done("stop")], [TextDelta("Oui."), Done("stop")])
+    agent = _agent(llm)
+    _run(agent, "quelle heure", Sink())
+    _run(agent, "tu es sûr", Sink())
+    roles = [m["role"] for m in llm.calls[1]]
+    assert roles == ["system", "user", "assistant", "user"]
+    assert llm.calls[1][1]["content"] == "quelle heure"
+
+
+def test_one_immediate_retry_then_success() -> None:
+    llm = ScriptedLLM([LlmError("serveur injoignable")], [TextDelta("Me revoilà."), Done("stop")])
+    sink = Sink()
+    result = _run(_agent(llm), "salut", sink)
+    assert result.attempts == 2 and result.outcome == "ok"
+    assert sink.said == ["Me revoilà."]
+
+
+def test_server_unreachable_plays_cached_phrase() -> None:
+    llm = ScriptedLLM([LlmError("a")], [LlmError("b")])
+    sink = Sink()
+    result = _run(_agent(llm, phrases=Phrases()), "salut", sink)
+    assert result.outcome == "server" and result.attempts == 2
+    assert sink.said == [] and len(sink.audio) == 1 and sink.audio[0][1] == 22_050
+
+
+def test_server_phrase_without_cache_is_synthesized() -> None:
+    sink = Sink()
+    _run(_agent(ScriptedLLM([LlmError("a")], [LlmError("b")])), "salut", sink)
+    assert sink.said == ["Je n'arrive pas à joindre le serveur."]
+
+
+def test_failure_after_first_words_keeps_them() -> None:
+    llm = ScriptedLLM([TextDelta("Il fait beau. Et"), LlmError("coupé")])
+    sink = Sink()
+    result = _run(_agent(llm), "météo", sink)
+    assert result.attempts == 1  # pas de retry : on ne répète pas la réponse
+    assert sink.said == ["Il fait beau.", "Et"]
+
+
+def test_turn_timeout() -> None:
+    config = Config()
+    config = config.model_copy(
+        update={"llm": config.llm.model_copy(update={"turn_timeout_s": 0.05})}
+    )
+    llm = ScriptedLLM([TextDelta("Euh"), TextDelta(" ..."), Done("stop")], delay=0.04)
+    sink = Sink()
+    result = _run(_agent(llm, config), "question", sink)
+    assert result.outcome == "timeout"
+    assert sink.said[-1] == "Désolé, ça prend trop de temps."
+
+
+def test_new_conversation_command() -> None:
+    llm = ScriptedLLM([TextDelta("A."), Done("stop")])
+    agent, sink = _agent(llm), Sink()
+    _run(agent, "bonjour", Sink())
+    result = _run(agent, "Nouvelle conversation.", sink)
+    assert result.outcome == "reset"
+    assert agent.memory.messages() == []
+    assert sink.said == ["D'accord, nouvelle conversation."]
+    assert len(llm.calls) == 1  # pas d'appel LLM
+
+
+def test_tool_calls_ignored_before_phase_4() -> None:
+    llm = ScriptedLLM([ToolCallReq("1", "open_app", {"name": "Steam"}), Done("tool_calls")])
+    result = _run(_agent(llm), "lance Steam", Sink())
+    assert result.answer == "" and len(result.tool_calls) == 1
+    assert _agent(llm).memory.messages() == []
+
+
+def test_parallel_turns_do_not_block_each_other() -> None:
+    # 2 tours de 2 morceaux à 0,1 s : ~0,2 s en parallèle, ~0,4 s l'un après l'autre.
+    llm = ScriptedLLM(*[[TextDelta(f"Réponse {i}."), Done("stop")] for i in range(2)], delay=0.1)
+    agent = _agent(llm)
+
+    async def scenario() -> float:
+        start = asyncio.get_running_loop().time()
+        await asyncio.gather(*(agent.respond(f"commande {i}", Sink()) for i in range(2)))
+        return asyncio.get_running_loop().time() - start
+
+    assert asyncio.run(scenario()) < 0.3
+    assert len(agent.memory) == 2
+
+
+def test_prewarm_delegates() -> None:
+    llm = ScriptedLLM()
+    asyncio.run(_agent(llm).prewarm())
+    assert llm.prewarmed == 1
