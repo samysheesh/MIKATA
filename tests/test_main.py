@@ -252,7 +252,8 @@ def test_build_app_with_llm_and_voice(
     tools = app._agent.tools
     assert tools is not None and tools.ctx.announce == app.announce
     assert {"open_app", "set_volume", "get_weather"} <= set(tools.tools)
-    assert tools.ctx.desktop is None and tools.ctx.audio is None  # hors Windows
+    on_windows = sys.platform == "win32"  # bureau et volume pilotés seulement sous Windows
+    assert (tools.ctx.desktop is not None, tools.ctx.audio is not None) == (on_windows, on_windows)
     assert tools.ctx.search_api_key is None
     assert app._agent.usage is not None
     assert app._agent.usage.path == config_file.parent / "data" / "llm_usage.json"
