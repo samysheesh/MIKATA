@@ -91,12 +91,39 @@ class SttConfig(_Section):
     )
 
 
+ReasoningLevel = Literal["none", "low", "medium", "high"]
+
+
 class LlmConfig(_Section):
     base_url: str = "https://..."
     model: str = "..."
     max_tool_rounds: int = Field(default=8, ge=1)
     request_timeout_s: float = Field(default=20, gt=0)
     turn_timeout_s: float = Field(default=60, gt=0)  # ajout phase 3 : §6, 60 s par requête
+    # Ajouts phase 4. Niveau de réflexion du modèle (`reasoning_effort`) : « none » par
+    # défaut (premier mot plus tôt) ; null = paramètre non envoyé (choix du fournisseur).
+    reasoning_effort: ReasoningLevel | None = "none"
+    # Mot-clé dit en début ou en fin de commande -> niveau de réflexion pour cette commande
+    # (détecté par le code, retiré du texte ; variantes de « réfléchis » acceptées).
+    reasoning_keywords: dict[Literal["low", "medium", "high"], list[str]] = Field(
+        default_factory=lambda: {
+            "low": ["réfléchis"],
+            "medium": ["réfléchis bien"],
+            "high": ["réfléchis à fond"],
+        }
+    )
+    # Filet : un outil en échec, ou plus de N étapes d'outils -> au moins « low ».
+    reasoning_fallback_steps: int = Field(default=2, ge=1)
+    include_usage: bool = True  # demande le décompte des tokens en fin de flux
+    price_input_usd_per_mtok: float = Field(default=0.30, ge=0)
+    price_output_usd_per_mtok: float = Field(default=1.20, ge=0)
+    price_cached_usd_per_mtok: float = Field(default=0.006, ge=0)
+    credit_usd: float = Field(default=5.0, ge=0)
+
+    @field_validator("reasoning_keywords")
+    @classmethod
+    def _keywords(cls, value: dict[str, list[str]]) -> dict[str, list[str]]:
+        return {level: [k.strip() for k in words if k.strip()] for level, words in value.items()}
 
     @field_validator("base_url")
     @classmethod
@@ -109,6 +136,21 @@ class LlmConfig(_Section):
     def is_placeholder(self) -> bool:
         """Vrai tant que l'endpoint CommandCode n'est pas renseigné."""
         return "..." in self.base_url or self.model.strip() in ("", "...")
+
+
+class ToolsConfig(_Section):
+    """Ajout phase 4 : exécution des outils (§6, §7)."""
+
+    timeout_s: float = Field(default=15, gt=0)  # par appel d'outil
+    result_max_chars: int = Field(default=2000, ge=200)  # résultat renvoyé au LLM (§6)
+
+
+class WebConfig(_Section):
+    """Ajout phase 4 : outils web (§7)."""
+
+    search_provider: Literal["tavily", "brave"] = "tavily"  # clé : SEARCH_API_KEY (.env)
+    max_results: int = Field(default=5, ge=1, le=10)
+    default_city: str | None = None  # ville de la météo si aucune n'est dite
 
 
 class TtsConfig(_Section):
@@ -179,6 +221,8 @@ class Config(_Section):
     stt: SttConfig = Field(default_factory=SttConfig)
     llm: LlmConfig = Field(default_factory=LlmConfig)
     tts: TtsConfig = Field(default_factory=TtsConfig)
+    tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    web: WebConfig = Field(default_factory=WebConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
     guard: GuardConfig = Field(default_factory=GuardConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)

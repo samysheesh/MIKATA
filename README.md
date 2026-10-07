@@ -6,7 +6,7 @@ interroge un LLM cloud, agit sur le PC et répond à voix haute dans le casque.
 - Architecture (fait foi) : [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 - Instructions pour Claude Code : [`CLAUDE.md`](CLAUDE.md)
 - Lancement : `uv run python -m mikata` (options : `--check-config`, `--config CHEMIN`, `--no-tray`, `--no-audio`, `--no-llm`, `--ask "question"`)
-- Réglages : `config.yaml` ; secrets : `.env` (copier `.env.example`, jamais commité)
+- Réglages : `config.yaml` ; secrets : `.env` (copier `.env.example`, jamais commité) : `LLM_API_KEY`, `SEARCH_API_KEY` (Tavily, voir phase 4)
 - Logs : `data/logs/mikata.log` (rotation 5 Mo × 5, anciennes archives à la corbeille)
 - Modèles : `uv run python scripts/download_models.py` (dans `models/`, non commités ; Whisper ~1,6 Go, voix ~420 Mo)
 
@@ -17,8 +17,9 @@ interroge un LLM cloud, agit sur le PC et répond à voix haute dans le casque.
 | 0 | Squelette : config, logs, événements, icône, CI | fusionnée |
 | 1 | Audio + mot d'activation (`hey_jarvis`), bip, raccourci, priorité basse | fusionnée |
 | 2 | VAD Silero + Whisper GPU, transcription spéculative, retrait du mot d'activation | fusionnée |
-| 3 | LLM en streaming + voix (Piper / Kokoro), commandes en parallèle | livrée, à valider sur le PC |
-| 4 à 7 | Voir `docs/ARCHITECTURE.md` §11 | à faire |
+| 3 | LLM en streaming + voix (Piper / Kokoro), commandes en parallèle | fusionnée |
+| 4 | Outils (system, apps, web, media, ui, memory), réflexion choisie à la voix, coût par commande | livrée, à valider sur le PC |
+| 5 à 7 | Voir `docs/ARCHITECTURE.md` §11 | à faire |
 
 ## Développement
 
@@ -473,3 +474,167 @@ parlée : la vraie fin du mot peut être ~80 ms plus tard, garde donc un peu de 
 3. Pose une question longue : si rien n'est dit au bout de 1,2 s après ta fin de phrase, un
    petit son de réflexion doit être joué.
 4. Dis « hey jarvis, nouvelle conversation ». Attendu : « D'accord, nouvelle conversation. »
+
+## Phase 4 — vérification sur le PC Windows
+
+Critères d'acceptation : « ouvre Spotify », « volume à 30 », « pause » répondent « C'est fait »
+en **un seul appel LLM** ; « cherche la météo à Paris » répond juste. En plus : deux commandes
+enchaînées en parallèle (« ouvre Spotify » puis « ouvre Brave ») sans refus.
+
+Comment ça marche :
+
+- **Outils** (22, un module par famille dans `mikata/tools/`) : `get_time`, `system_status`,
+  `set_timer`, `set_reminder`, `lock` ; `open_app`, `close_app`, `focus_window`,
+  `list_windows` ; `open_url`, `web_search`, `fetch_page`, `get_weather` ; `media_control`,
+  `set_volume`, `mute`, `set_output_device` ; `show_text`, `clipboard_read`, `clipboard_write` ;
+  `remember`, `forget`. Les appels d'une même réponse s'exécutent en parallèle.
+- **Chemin court-circuité** : si tous les outils appelés sont terminaux (ouvrir, volume,
+  pause...) et réussissent, MIKATA joue « C'est fait » (en cache) sans rappeler le LLM.
+  Sinon les résultats repartent au LLM (8 étapes au plus).
+- **Réflexion choisie à la voix** : par défaut `reasoning_effort: none` (premier mot le plus
+  tôt). Un mot-clé en **début ou fin** de commande la règle pour cette commande : « réfléchis »
+  → low, « réfléchis bien » → medium, « réfléchis à fond » → high. Il est détecté par le code
+  (variantes « réfléchi », « réfléchit »... acceptées), retiré du texte avant l'appel, et
+  configurable (`llm.reasoning_keywords`). Filet : si un outil échoue, ou au-delà de
+  `llm.reasoning_fallback_steps` (2) étapes d'outils, la suite de la commande passe à `low`.
+- **Coût** : une ligne `Tokens #n : entrée ... (dont cache ...), sortie ..., coût ≈ ... $ ;
+  cumul ... $ sur 5.00 $ de crédit (... %, ≈ N commandes restantes)` par commande, cumul gardé
+  dans `data\llm_usage.json` (tarifs dans la section `llm` de `config.yaml`).
+- Aucune suppression de fichier : `show_text` écrit dans `data\show_text\`, `remember` dans
+  `data\memory.json` (30 faits au plus, réécrit en place).
+- Pas dans cette phase : `shutdown` / `restart` / `sleep` (phase 5, avec les 5 s pour
+  annuler et le garde-fou). Minuteurs et rappels sont en mémoire : perdus si MIKATA
+  redémarre. Lecture et pause sont la même touche média (bascule).
+
+### 1. Clé de recherche web : Tavily (recommandé)
+
+Tavily plutôt que Brave : 1 000 recherches gratuites par mois **sans carte bancaire**, et une
+réponse résumée pensée pour les LLM. Brave Search n'a plus de palier gratuit sans carte
+(5 $ de crédit mensuel, carte obligatoire). La météo, elle, passe par Open-Meteo, sans clé.
+
+1. Crée un compte sur https://app.tavily.com (Google, GitHub ou e-mail).
+2. Dans le tableau de bord, section **API Keys**, copie la clé (elle commence par `tvly-`).
+3. Dans `.env` : `SEARCH_API_KEY=tvly-...` (la section `web` de `config.yaml` est déjà sur
+   `search_provider: tavily`). Pour Brave : clé créée sur
+   https://api-dashboard.search.brave.com (carte demandée) et `search_provider: brave`.
+
+### 2. Récupérer la branche, installer
+
+```powershell
+git fetch origin
+git checkout phase-4
+git pull
+uv sync
+```
+
+Attendu : installation de `pycaw`, `comtypes`, `win11toast`, `rapidfuzz`, `trafilatura`,
+`pyperclip`.
+
+### 3. Lint, tests, config
+
+```powershell
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
+uv run python -m mikata --check-config
+```
+
+Attendu : tout en `passed` ; puis `LLM : deepseek-v4.1-flash @ https://opencode.ai/zen/v1
+(réflexion par défaut : none)`, `Recherche web : tavily`, `SEARCH_API_KEY : définie` et
+`Configuration valide`.
+
+### 4. Les quatre commandes du critère, sans micro
+
+`--ask` passe par la même boucle que la voix (préchauffage compris) et dit la réponse dans le
+casque. Lance Spotify et mets un morceau avant la 3e commande.
+
+```powershell
+uv run python -m mikata --ask "ouvre Spotify"
+uv run python -m mikata --ask "volume à 30"
+uv run python -m mikata --ask "pause"
+uv run python -m mikata --ask "cherche la météo à Paris"
+```
+
+Attendu pour les trois premières : l'action faite, « C'est fait » dans le casque, et dans la
+console :
+
+```
+Outil open_app(name='Spotify') -> ok en 15 ms : Spotify ouvert.
+Tokens --ask : entrée 2650 (dont cache 2560), sortie 18 (dont réflexion 0), 1 appel(s) ; coût ≈ 0.00010 $ ; cumul ...
+--ask : premier token 900 ms, premier son 1000 ms, réflexion none ; chemin : court-circuit (outil terminal, 1 appel(s) LLM) ; issue : ok.
+```
+
+`1 appel(s) LLM` est le critère. Pour la météo : `Outil get_weather(city='Paris') -> ok`,
+`chemin : 1 étape(s) d'outils, 2 appel(s) LLM`, et une réponse à comparer avec
+https://meteofrance.com (température actuelle, temps, min / max du jour).
+
+### 5. Les mêmes à la voix, et en parallèle
+
+```powershell
+uv run python -m mikata
+```
+
+1. Dis « hey jarvis, ouvre Spotify », « hey jarvis, volume à 30 », « hey jarvis, pause »,
+   « hey jarvis, cherche la météo à Paris ». Puis, dans un autre PowerShell :
+
+   ```powershell
+   Select-String -Path data\logs\mikata.log -Encoding utf8 -Pattern "chemin : " | Select-Object -Last 4
+   ```
+
+   Attendu : `court-circuit (outil terminal, 1 appel(s) LLM)` pour les trois actions,
+   `1 étape(s) d'outils, 2 appel(s) LLM` pour la météo, chacune avec `réflexion none` juste
+   après le `premier son`.
+2. Dis « hey jarvis, ouvre Spotify » puis, **dès ta phrase finie**, « hey jarvis, ouvre
+   Brave ». Attendu : deux bips, `Nouvelle commande pendant 1 autre(s) en cours.`, Spotify et
+   Brave ouverts, deux « C'est fait ».
+
+### 6. Réflexion choisie à la voix
+
+1. « hey jarvis, un train part à 17 h 05 et roule 76 minutes, à quelle heure arrive-t-il ? »
+   (sans mot-clé : `réflexion none`, réponse peut-être fausse) ;
+2. la même en ajoutant « réfléchis bien » à la fin (attendu : `Réflexion demandée : medium
+   (mot-clé « réfléchis bien »).`, réponse 18 h 21) ;
+3. « hey jarvis, réfléchis à fond, combien font 17 fois 23 ? » (attendu : `high`, 391) ;
+4. « hey jarvis, ouvre Photoshop » (pas installé) : l'outil échoue, attendu `Réflexion
+   relevée : none -> low (outil en échec).` et une phrase qui dit que l'appli est introuvable.
+
+Niveau et latence du premier son de chaque réponse :
+
+```powershell
+Select-String -Path data\logs\mikata.log -Encoding utf8 -Pattern "premier son . (\d+) ms apr.s la derni.re syllabe, r.flexion (\S+)" | Select-Object -Last 10 | ForEach-Object { $_.Matches[0].Groups[2].Value + " : " + $_.Matches[0].Groups[1].Value + " ms" }
+```
+
+Les lignes `Appel LLM n (réflexion ...) : premier élément ... ms, réflexion du modèle ... ms`
+détaillent chaque appel (temps passé à réfléchir côté fournisseur).
+
+### 7. Tour des autres outils
+
+| Dis « hey jarvis, ... » | Attendu |
+| --- | --- |
+| « mets un minuteur de 10 secondes » | « C'est fait », puis 10 s après : 3 notes, « Le minuteur de 10 secondes est terminé. » et une notification Windows |
+| « rappelle-moi dans 1 minute de boire de l'eau » | 1 min après : « Rappel : boire de l'eau. » + notification |
+| « donne-moi une recette de crêpes et affiche-la » | résumé oral + la recette dans le Bloc-notes (`data\show_text\`) |
+| « copie bonjour à tous dans le presse-papiers » | Ctrl+V colle « bonjour à tous » |
+| « qu'est-ce que j'ai copié ? » | il lit le presse-papiers |
+| « retiens que mon chien s'appelle Rex », puis « nouvelle conversation », puis « comment s'appelle mon chien ? » | « Rex » (fait dans `data\memory.json`) |
+| « oublie le nom de mon chien » | le fait disparaît de `data\memory.json` |
+| « comment va le PC ? » | processeur, mémoire, carte graphique (charge, température) |
+| « quelles fenêtres sont ouvertes ? » puis « mets Spotify au premier plan » | liste, puis Spotify devant |
+| « ferme Brave » | toutes les fenêtres de Brave fermées |
+| « mets le son sur les haut-parleurs » / « remets le casque » | sortie par défaut de Windows changée (la voix de MIKATA reste sur `audio.output_device`) |
+| « monte le son » / « coupe le son » / « remets le son » | volume +10, sourdine, son remis |
+| « ouvre YouTube » | youtube.com dans le navigateur |
+| « cherche les résultats de la Ligue 1 » | réponse tirée de `web_search` (Tavily) |
+| « verrouille le PC » (à garder pour la fin) | écran de verrouillage |
+
+### 8. Coût
+
+```powershell
+Select-String -Path data\logs\mikata.log -Encoding utf8 -Pattern "^.*Tokens #" | Select-Object -Last 5
+Get-Content data\llm_usage.json
+```
+
+Attendu : une ligne par commande avec les tokens et le coût, et le cumul (`cost_usd`,
+`commands`, depuis `since`). Une action simple coûte de l'ordre de 0,0001 $ quand le début de
+la requête (prompt et outils, identiques à chaque appel) est facturé au tarif « cache », et
+environ 0,001 $ sinon : la part `dont cache` de la ligne `Tokens` le montre.

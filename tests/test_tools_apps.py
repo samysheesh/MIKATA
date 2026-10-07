@@ -1,0 +1,174 @@
+"""Outils applications / fenêtres et index du menu Démarrer (Windows simulé)."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import subprocess
+from pathlib import Path
+from typing import Any
+
+import pytest
+from tool_fakes import FakeDesktop, make_ctx
+
+from mikata.llm.base import ToolCallReq
+from mikata.tools import desktop as desktop_module
+from mikata.tools.apps import find_app, find_windows, fold, open_apps
+from mikata.tools.base import AppEntry, WindowInfo
+from mikata.tools.desktop import WindowsDesktop, merge_apps, parse_start_apps, scan_start_menu
+from mikata.tools.registry import ToolRegistry, ToolResult
+
+APPS = FakeDesktop().apps
+
+
+def _run(tmp_path: Path, desktop: FakeDesktop, tool: str, **arguments: Any) -> ToolResult:
+    async def scenario() -> ToolResult:
+        registry = ToolRegistry(make_ctx(tmp_path, desktop=desktop))
+        try:
+            return await registry.execute(ToolCallReq("1", tool, arguments))
+        finally:
+            await registry.aclose()
+
+    return asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("Spotify", "Spotify"),
+        ("spotify.exe", "Spotify"),
+        ("brave", "Brave"),
+        ("Steam", "Steam"),
+        ("chrome", "Google Chrome"),  # le plus court des noms presque égaux
+        ("Spotifaille", "Spotify"),
+        ("Photoshop", None),
+        ("", None),
+    ],
+)
+def test_find_app(query: str, expected: str | None) -> None:
+    app = find_app(query, APPS)
+    assert (app.name if app else None) == expected
+
+
+def test_fold() -> None:
+    assert fold("  Éditeur.EXE (Bêta) ") == "editeur beta"
+
+
+def test_scan_start_menu(tmp_path: Path) -> None:
+    user, common = tmp_path / "user", tmp_path / "common"
+    for path in (
+        user / "Spotify.lnk",
+        user / "Steam" / "Counter-Strike 2.url",
+        user / "Steam" / "Uninstall Steam.lnk",
+        common / "Brave.lnk",
+        common / "Outils" / "Lisez-moi.lnk",
+        common / "Outils" / "notes.txt",
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"")
+    apps = scan_start_menu([user, common, tmp_path / "absent"])
+    assert [a.name for a in apps] == ["Spotify", "Counter-Strike 2", "Brave"]
+    assert apps[0].target == str(user / "Spotify.lnk")
+
+
+def test_parse_start_apps() -> None:
+    output = "﻿" + json.dumps(
+        [
+            {"Name": "Spotify", "AppID": "SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify"},
+            {"Name": "Désinstaller Truc", "AppID": "x"},
+            {"Name": "", "AppID": "y"},
+        ]
+    )
+    apps = parse_start_apps(output)
+    assert apps == [
+        AppEntry("Spotify", "shell:AppsFolder\\SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify")
+    ]
+    single = parse_start_apps(json.dumps({"Name": "Calculatrice", "AppID": "calc"}))
+    assert single == [AppEntry("Calculatrice", "shell:AppsFolder\\calc")]
+    assert parse_start_apps("  ") == []
+
+
+def test_merge_apps_keeps_first_source() -> None:
+    merged = merge_apps(
+        [AppEntry("Spotify", "a.lnk")],
+        [AppEntry("spotify", "shell:AppsFolder\\x"), AppEntry("Xbox", "shell:AppsFolder\\y")],
+    )
+    assert merged == [AppEntry("Spotify", "a.lnk"), AppEntry("Xbox", "shell:AppsFolder\\y")]
+
+
+def test_windows_desktop_app_index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "Brave.lnk").write_bytes(b"")
+    calls: list[str] = []
+
+    def fake_powershell(command: str, timeout: float = 10.0) -> str:
+        calls.append(command)
+        return json.dumps([{"Name": "Spotify", "AppID": "Spotify!App"}])
+
+    monkeypatch.setattr(desktop_module, "start_menu_dirs", lambda: [tmp_path])
+    monkeypatch.setattr(desktop_module, "_run_powershell", fake_powershell)
+    desktop = WindowsDesktop()
+    assert [a.name for a in desktop.list_apps()] == ["Brave", "Spotify"]
+    desktop.list_apps()  # en cache
+    assert len(calls) == 1 and "Get-StartApps" in calls[0]
+    desktop.list_apps(refresh=True)
+    assert len(calls) == 2
+
+    def broken(command: str, timeout: float = 10.0) -> str:
+        raise subprocess.CalledProcessError(1, "powershell")
+
+    monkeypatch.setattr(desktop_module, "_run_powershell", broken)
+    assert [a.name for a in desktop.list_apps(refresh=True)] == ["Brave"]  # raccourcis seuls
+
+
+def test_start_menu_dirs(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APPDATA", "/u/AppData/Roaming")
+    monkeypatch.setenv("PROGRAMDATA", "/ProgramData")
+    dirs = desktop_module.start_menu_dirs()
+    assert dirs[0] == Path("/u/AppData/Roaming/Microsoft/Windows/Start Menu/Programs")
+    assert dirs[1] == Path("/ProgramData/Microsoft/Windows/Start Menu/Programs")
+
+
+def test_open_app_launches_best_match(tmp_path: Path) -> None:
+    desktop = FakeDesktop()
+    result = _run(tmp_path, desktop, "open_app", name="spotifaille")
+    assert result.ok and result.content == "Spotify ouvert." and result.terminal
+    assert desktop.log == [("list_apps", False), ("launch", "Spotify")]
+
+
+def test_open_app_refreshes_index_before_giving_up(tmp_path: Path) -> None:
+    desktop = FakeDesktop(late_apps=[AppEntry("Discord", "Discord.lnk")])
+    result = _run(tmp_path, desktop, "open_app", name="Discord")
+    assert result.ok and desktop.log[-2:] == [("list_apps", True), ("launch", "Discord")]
+    missing = _run(tmp_path, FakeDesktop(), "open_app", name="Photoshop")
+    assert (
+        not missing.ok
+        and missing.content == "aucune application « Photoshop » dans le menu Démarrer"
+    )
+
+
+def test_find_windows_by_process_then_title() -> None:
+    windows = [
+        WindowInfo(1, "Spotify Premium", "Spotify"),
+        WindowInfo(2, "Nouvel onglet - Brave", "brave"),
+        WindowInfo(3, "Discussion - Brave", "brave"),
+        WindowInfo(4, "main.py - Visual Studio Code", "Code"),
+    ]
+    assert [w.handle for w in find_windows("Brave", windows)] == [2, 3]
+    assert [w.handle for w in find_windows("visual studio code", windows)] == [4]
+    assert find_windows("Discord", windows) == []
+    assert open_apps(windows) == ["Spotify", "brave", "Code"]
+
+
+def test_close_focus_and_list_windows(tmp_path: Path) -> None:
+    desktop = FakeDesktop()
+    closed = _run(tmp_path, desktop, "close_app", name="Brave")
+    assert closed.ok and closed.content == "brave fermé (2 fenêtre(s))."
+    assert desktop.log == [("close", 12), ("close", 13)]
+    focused = _run(tmp_path, desktop, "focus_window", name="spotify")
+    assert focused.ok and desktop.log[-1] == ("focus", 11)
+    listed = _run(tmp_path, desktop, "list_windows")
+    assert not listed.terminal and "Spotify : Spotify Premium" in listed.content
+    nothing = _run(tmp_path, desktop, "close_app", name="Discord")
+    assert not nothing.ok and "aucune fenêtre" in nothing.content
+    empty = _run(tmp_path, FakeDesktop(windows=[]), "list_windows")
+    assert empty.content == "Aucune fenêtre ouverte."

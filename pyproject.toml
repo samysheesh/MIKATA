@@ -37,6 +37,12 @@ dependencies = [
     "nvidia-cudnn-cu12==9.10.2.21; sys_platform == 'win32'",
     "pynput>=1.7.7; sys_platform == 'win32'",
     "pystray>=0.19.5; sys_platform == 'win32'",
+    "rapidfuzz>=3.9",
+    "trafilatura>=2.0",
+    "pyperclip>=1.9",
+    "pycaw>=20240316 ; sys_platform == 'win32'",
+    "comtypes>=1.4 ; sys_platform == 'win32'",
+    "win11toast>=0.35 ; sys_platform == 'win32'",
 ]
 
 [dependency-groups]

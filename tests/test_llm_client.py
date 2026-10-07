@@ -11,7 +11,7 @@ import pytest
 from pydantic import SecretStr
 
 from mikata.config import ConfigError, LlmConfig, Secrets
-from mikata.llm.base import Done, LLMClient, TextDelta, ToolCallReq
+from mikata.llm.base import Done, LLMClient, TextDelta, ToolCallReq, Usage
 from mikata.llm.client import (
     LlmError,
     LlmNotConfiguredError,
@@ -79,7 +79,7 @@ def test_streams_text_then_done() -> None:
     assert request.headers["authorization"] == "Bearer sk-test"
     payload = json.loads(request.content)
     assert payload["model"] == "deepseek-flash" and payload["stream"] is True
-    assert "tools" not in payload  # pas d'outils en phase 3
+    assert "tools" not in payload  # aucun outil demandé
 
 
 def test_tool_calls_are_reassembled() -> None:
@@ -164,3 +164,88 @@ def test_check_llm_config() -> None:
     assert isinstance(info.value, ConfigError)
     with pytest.raises(LlmNotConfiguredError, match="LLM_API_KEY"):
         check_llm_config(CFG, Secrets())
+
+
+# -- Ajouts phase 4 : niveau de réflexion, décompte des tokens, réflexion du modèle ---------
+
+
+def _payload(server: Server) -> dict[str, Any]:
+    return json.loads(server.requests[-1].content)
+
+
+def _stream_with(server: Server, cfg: LlmConfig = CFG, **kwargs: Any) -> list[Any]:
+    async def run() -> list[Any]:
+        client = OpenAICompatClient(cfg, SecretStr("sk-test"), httpx2.MockTransport(server))
+        try:
+            messages = [{"role": "user", "content": "x"}]
+            return [e async for e in client.stream(messages, [], **kwargs)]
+        finally:
+            await client.aclose()
+
+    return asyncio.run(run())
+
+
+def test_reasoning_effort_and_usage_are_requested() -> None:
+    server = Server(_sse([_chunk({"content": "ok"}), _chunk({}, "stop")]))
+    _stream_with(server)
+    payload = _payload(server)
+    assert payload["reasoning_effort"] == "none"  # défaut de llm.reasoning_effort
+    assert payload["stream_options"] == {"include_usage": True}
+    assert "thinking" not in payload
+    _stream_with(server, reasoning_effort="high")  # niveau choisi pour cette commande
+    assert _payload(server)["reasoning_effort"] == "high"
+    _stream_with(server, reasoning_effort=None)  # null : choix du fournisseur
+    assert "reasoning_effort" not in _payload(server)
+    quiet = CFG.model_copy(update={"include_usage": False, "reasoning_effort": None})
+    _stream_with(server, quiet)
+    assert "stream_options" not in _payload(server) and "reasoning_effort" not in _payload(server)
+
+
+def _usage_chunk(usage: dict[str, Any]) -> dict[str, Any]:
+    return {**_chunk({}), "choices": [], "usage": usage}
+
+
+@pytest.mark.parametrize(
+    "usage",
+    [
+        {  # format OpenAI (OpenCode Zen)
+            "prompt_tokens": 1200,
+            "completion_tokens": 40,
+            "total_tokens": 1240,
+            "prompt_tokens_details": {"cached_tokens": 1024},
+            "completion_tokens_details": {"reasoning_tokens": 25},
+        },
+        {  # format DeepSeek natif
+            "prompt_tokens": 1200,
+            "completion_tokens": 40,
+            "total_tokens": 1240,
+            "prompt_cache_hit_tokens": 1024,
+            "prompt_cache_miss_tokens": 176,
+            "completion_tokens_details": {"reasoning_tokens": 25},
+        },
+    ],
+)
+def test_usage_is_parsed(usage: dict[str, Any]) -> None:
+    server = Server(_sse([_chunk({"content": "ok"}), _chunk({}, "stop"), _usage_chunk(usage)]))
+    done = _stream_with(server)[-1]
+    assert done.usage == Usage(prompt=1200, completion=40, cached=1024, reasoning=25)
+
+
+def test_reasoning_content_is_kept_and_timed() -> None:
+    server = Server(
+        _sse(
+            [
+                _chunk({"role": "assistant", "reasoning_content": "17 h 05 + 76 min "}),
+                _chunk({"reasoning_content": "= 18 h 21."}),
+                _chunk({"content": "18 h 21."}),
+                _chunk({}, "stop"),
+            ]
+        )
+    )
+    events = _stream_with(server, reasoning_effort="low")
+    assert events[0] == TextDelta("18 h 21.")
+    done = events[-1]
+    assert done.reasoning == "17 h 05 + 76 min = 18 h 21."
+    assert done.reasoning_s is not None and done.reasoning_s >= 0
+    plain = _stream_with(Server(_sse([_chunk({"content": "ok"}), _chunk({}, "stop")])))[-1]
+    assert plain.reasoning == "" and plain.reasoning_s is None and plain.usage is None

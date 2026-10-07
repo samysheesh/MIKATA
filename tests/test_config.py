@@ -23,7 +23,13 @@ def _repo_yaml() -> dict:
     return yaml.safe_load((PROJECT_ROOT / "config.yaml").read_text(encoding="utf-8"))
 
 
-def test_repo_config_is_valid_and_matches_section_10(config_file: Path) -> None:
+def test_repo_config_yaml_is_valid() -> None:
+    """Le config.yaml du dépôt (avec les réglages de l'utilisateur) se charge, quelles que
+    soient ses valeurs."""
+    load_config(PROJECT_ROOT / "config.yaml", env_file=PROJECT_ROOT / "absent.env")
+
+
+def test_defaults_match_section_10(config_file: Path) -> None:
     config = load_config(config_file)
     assert config.audio.input_device == "NT-USB"
     assert config.audio.output_device == "default"
@@ -58,6 +64,18 @@ def test_repo_config_is_valid_and_matches_section_10(config_file: Path) -> None:
     assert config.tts.kokoro_voice == "ff_siwis"
     assert config.tts.cpu_threads == 4
     assert config.agent.history_max_tokens == 6000
+    # ajouts phase 4
+    assert config.llm.reasoning_effort == "none"
+    assert config.llm.reasoning_keywords["medium"] == ["réfléchis bien"]
+    assert config.llm.reasoning_fallback_steps == 2
+    assert config.llm.include_usage is True
+    assert (config.llm.price_input_usd_per_mtok, config.llm.price_output_usd_per_mtok) == (
+        0.30,
+        1.20,
+    )
+    assert config.llm.price_cached_usd_per_mtok == 0.006 and config.llm.credit_usd == 5.0
+    assert (config.tools.timeout_s, config.tools.result_max_chars) == (15, 2000)
+    assert config.web.search_provider == "tavily" and config.web.default_city is None
 
 
 def test_repo_config_keys_are_exactly_the_model_fields() -> None:
@@ -68,7 +86,7 @@ def test_repo_config_keys_are_exactly_the_model_fields() -> None:
         assert set(values) == set(Config.model_fields[section].annotation.model_fields)
 
 
-def test_defaults_equal_repo_config(config_file: Path) -> None:
+def test_test_config_equals_defaults(config_file: Path) -> None:
     assert load_config(config_file).model_dump() == Config().model_dump()
 
 

@@ -1,17 +1,18 @@
 from __future__ import annotations
 
-import shutil
 import sys
 import threading
 import time
 import types
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, ClassVar
 
 import numpy as np
 import pytest
+import yaml
 
-from mikata.config import PROJECT_ROOT
+from mikata.config import Config
 
 
 @pytest.fixture(autouse=True)
@@ -21,12 +22,30 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(name, raising=False)
 
 
+def write_test_config(path: Path, **sections: dict[str, Any]) -> Path:
+    """config.yaml de test : valeurs par défaut du code (LLM en placeholder « ... »),
+    indépendantes du config.yaml réel ; `sections` en surcharge (ex. llm={"model": "x"})."""
+    data = Config().model_dump(mode="json", exclude={"secrets"})
+    for section, values in sections.items():
+        data[section].update(values)
+    path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return path
+
+
+def edit_config(path: Path, **sections: dict[str, Any]) -> Path:
+    """Modifie des clés d'un config.yaml existant (lecture YAML, mise à jour, réécriture)."""
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    for section, values in sections.items():
+        data[section].update(values)
+    path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return path
+
+
 @pytest.fixture
 def config_file(tmp_path: Path) -> Path:
-    """Copie du config.yaml du dépôt dans un dossier temporaire (logs isolés)."""
-    dest = tmp_path / "config.yaml"
-    shutil.copy(PROJECT_ROOT / "config.yaml", dest)
-    return dest
+    """config.yaml de test dans un dossier temporaire (logs isolés), indépendant des valeurs
+    du config.yaml réel (clé, endpoint LLM, voix... de l'utilisateur)."""
+    return write_test_config(tmp_path / "config.yaml")
 
 
 class FakeIcon:
@@ -192,3 +211,14 @@ def fake_sd(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     FakeOutputStream.instances = []
     monkeypatch.setitem(sys.modules, "sounddevice", sd)
     return sd
+
+
+@pytest.fixture
+def caplog_loguru() -> Iterator[list[str]]:
+    """Messages loguru émis pendant le test (sans mise en forme)."""
+    from loguru import logger
+
+    messages: list[str] = []
+    handler = logger.add(lambda m: messages.append(m.record["message"]), level="DEBUG")
+    yield messages
+    logger.remove(handler)

@@ -51,3 +51,16 @@ def test_window_title_outside_windows() -> None:
 
     if sys.platform != "win32":
         assert active_window_title() is None
+
+
+def test_context_lists_open_apps() -> None:
+    now = datetime(2026, 10, 7, 15, 42)
+    context = dynamic_context(now, "Spotify Premium", ["Spotify", "brave", "Discord"])
+    assert context.endswith("Applis ouvertes : Spotify, brave, Discord.")
+    assert "Applis" not in dynamic_context(now, None, [])
+
+
+def test_system_prompt_tool_guidance() -> None:
+    assert "« C'est fait » est dit automatiquement" in SYSTEM_PROMPT
+    assert "get_weather" in SYSTEM_PROMPT and "show_text" in SYSTEM_PROMPT
+    assert "dans la même réponse" in SYSTEM_PROMPT  # actions indépendantes en parallèle

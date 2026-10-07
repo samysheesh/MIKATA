@@ -40,7 +40,10 @@ class DummyStt:
 
 class DummyLlm:
     async def stream(
-        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        reasoning_effort: str | None = None,
     ) -> AsyncIterator[LLMEvent]:
         yield TextDelta("ok")
         yield ToolCallReq("1", "get_time", {})

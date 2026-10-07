@@ -32,11 +32,29 @@ stt:
   # Formes du mot d'activation retirées du texte (tout ce qui précède part aussi).
   wake_words: ["mikata", "mi kata", "micata", "mikado", "jarvis"]
 llm:
-  base_url: "https://..."          # endpoint CommandCode
-  model: "..."                     # nom du modèle flash exposé par CommandCode
+  base_url: "https://opencode.ai/zen/v1"  # OpenCode Zen (compatible OpenAI)
+  model: "deepseek-v4.1-flash"     # nom exact du modèle chez OpenCode Zen
   max_tool_rounds: 8
   request_timeout_s: 20
   turn_timeout_s: 60               # durée max d'une requête complète
+  reasoning_effort: none           # réflexion par défaut : none | low | medium | high
+  reasoning_keywords:              # dit en début ou fin de commande -> niveau de réflexion
+    low: ["réfléchis"]
+    medium: ["réfléchis bien"]
+    high: ["réfléchis à fond"]
+  reasoning_fallback_steps: 2      # outil en échec ou plus de N étapes -> au moins « low »
+  include_usage: true              # décompte des tokens (ligne « Tokens » du log)
+  price_input_usd_per_mtok: 0.30   # DeepSeek V4.1 Flash sur OpenCode Zen, $ / million
+  price_output_usd_per_mtok: 1.20
+  price_cached_usd_per_mtok: 0.006
+  credit_usd: 5.0                  # crédit, pour estimer ce qui reste
+tools:
+  timeout_s: 15                    # durée max d'un appel d'outil
+  result_max_chars: 2000           # résultat d'outil renvoyé au LLM (tronqué)
+web:
+  search_provider: tavily          # tavily | brave ; clé SEARCH_API_KEY dans .env
+  max_results: 5
+  default_city: null               # ville de la météo si aucune n'est dite (ex. "Paris")
 tts:
   backend: piper                   # piper | kokoro
   voice: models/fr_FR-siwis-medium.onnx   # voix Piper (scripts/download_models.py)

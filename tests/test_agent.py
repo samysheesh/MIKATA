@@ -19,6 +19,8 @@ class ScriptedLLM:
     def __init__(self, *scripts: list[Any], delay: float = 0.0) -> None:
         self.scripts = list(scripts)
         self.calls: list[list[dict[str, Any]]] = []
+        self.tools: list[list[dict[str, Any]]] = []
+        self.efforts: list[str | None] = []
         self.delay = delay
         self.prewarmed = 0
 
@@ -26,10 +28,14 @@ class ScriptedLLM:
         self.prewarmed += 1
 
     async def stream(
-        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        reasoning_effort: str | None = None,
     ) -> AsyncIterator[LLMEvent]:
-        self.calls.append(messages)
-        assert tools == []  # pas d'outils en phase 3
+        self.calls.append([dict(m) for m in messages])
+        self.tools.append(tools)
+        self.efforts.append(reasoning_effort)
         for item in self.scripts.pop(0):
             await asyncio.sleep(self.delay)
             if isinstance(item, Exception):
@@ -155,11 +161,13 @@ def test_new_conversation_command() -> None:
     assert len(llm.calls) == 1  # pas d'appel LLM
 
 
-def test_tool_calls_ignored_before_phase_4() -> None:
+def test_tool_calls_without_registry_are_not_run() -> None:
     llm = ScriptedLLM([ToolCallReq("1", "open_app", {"name": "Steam"}), Done("tool_calls")])
-    result = _run(_agent(llm), "lance Steam", Sink())
-    assert result.answer == "" and len(result.tool_calls) == 1
-    assert _agent(llm).memory.messages() == []
+    agent, sink = _agent(llm), Sink()
+    result = _run(agent, "lance Steam", sink)
+    assert result.answer == "" and len(result.tool_calls) == 1 and result.outcome == "limit"
+    assert sink.said == ["Désolé, quelque chose s'est mal passé."]
+    assert agent.memory.messages() == []
 
 
 def test_parallel_turns_do_not_block_each_other() -> None:
