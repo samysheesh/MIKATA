@@ -826,7 +826,7 @@ Comment ça marche :
   suivi.
   1. **Transcription** : hésitation seule (« euh », « hmm »), texte de moins de 2 lettres ou
      incohérent (« la la la la »), ou confiance de Whisper sous
-     `agent.follow_up_min_confidence` (0,4). La confiance va de 0 à 1 : probabilité moyenne
+     `agent.follow_up_min_confidence` (0,2). La confiance va de 0 à 1 : probabilité moyenne
      des mots × probabilité qu'il y ait de la parole.
   2. **Jugement du LLM** (`agent.follow_up_use_llm_gate: true`) : on lui dit que la phrase a
      été entendue sans mot d'activation. Si elle ne s'adresse pas clairement à MIKATA
