@@ -12,7 +12,7 @@ wake:
   verifier: null                   # -> models/mikata_verifier.pkl
   threshold: 0.5                   # fixé ensuite par eval_wakeword.py
   consecutive_frames: 1
-  refractory_s: 2.0
+  refractory_s: 1.0
   hotkey: "<ctrl>+<alt>+m"
   collect_negatives: false         # true : enregistre data/negatives/ par extraits de 10 s
   log_days: 7                      # purge (corbeille) de data/wake_logs/ après N jours
@@ -26,7 +26,7 @@ vad:
 stt:
   model: large-v3-turbo
   device: cuda
-  compute_type: float16
+  compute_type: int8_float16
   beam_size: 1
   initial_prompt: "MIKATA, Spotify, Discord, Steam, Chrome, VS Code"
   # Formes du mot d'activation retirées du texte (tout ce qui précède part aussi).

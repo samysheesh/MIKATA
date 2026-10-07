@@ -36,7 +36,7 @@ def test_repo_config_is_valid_and_matches_section_10(config_file: Path) -> None:
     assert config.vad.speculative_ms == 250
     assert config.stt.model == "large-v3-turbo"
     assert config.stt.device == "cuda"
-    assert config.stt.compute_type == "float16"
+    assert config.stt.compute_type == "int8_float16"
     assert config.llm.max_tool_rounds == 8
     assert config.tts.backend == "piper"
     assert config.agent.follow_up_s == 6

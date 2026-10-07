@@ -56,7 +56,7 @@ class WakeConfig(_Section):
     verifier: Path | None = None
     threshold: float = Field(default=0.5, ge=0, le=1)
     consecutive_frames: int = Field(default=1, ge=1)
-    refractory_s: float = Field(default=2.0, ge=0)
+    refractory_s: float = Field(default=1.0, ge=0)
     hotkey: str = "<ctrl>+<alt>+m"
     collect_negatives: bool = False
     log_days: int = Field(default=7, ge=1)  # ajout phase 1 : purge de data/wake_logs/
@@ -81,7 +81,7 @@ class VadConfig(_Section):
 class SttConfig(_Section):
     model: str = "large-v3-turbo"
     device: Literal["cuda", "cpu"] = "cuda"
-    compute_type: Literal["float16", "int8_float16", "int8", "float32"] = "float16"
+    compute_type: Literal["float16", "int8_float16", "int8", "float32"] = "int8_float16"
     beam_size: int = Field(default=1, ge=1)
     initial_prompt: str = "MIKATA, Spotify, Discord, Steam, Chrome, VS Code"
     # Ajout phase 2 : formes du mot d'activation retirées du texte transcrit (§3).

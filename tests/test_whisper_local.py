@@ -69,7 +69,7 @@ def test_load_and_transcribe(fake_whisper: types.SimpleNamespace, tmp_path: Path
     assert model.model == "large-v3-turbo"
     assert model.kwargs == {
         "device": "cuda",
-        "compute_type": "float16",
+        "compute_type": "int8_float16",
         "download_root": str(tmp_path),
         "local_files_only": True,
     }
