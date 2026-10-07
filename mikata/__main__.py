@@ -37,6 +37,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--no-tray", action="store_true", help="sans icône de notification (arrêt par Ctrl+C)"
     )
+    parser.add_argument(
+        "--no-audio", action="store_true", help="sans micro, sortie ni mot d'activation"
+    )
     parser.add_argument("--version", action="version", version=f"MIKATA {__version__}")
     return parser.parse_args(argv)
 
@@ -64,6 +67,54 @@ def log_config_summary(config: Config) -> None:
         logger.info("{} : {}", name, "définie" if value is not None else "absente (.env)")
 
 
+def build_app(config: Config, *, tray: bool, audio: bool) -> App:
+    """Assemble l'orchestrateur avec les composants réels (imports lourds paresseux)."""
+    icon = TrayIcon() if tray else None
+    if not audio:
+        return App(config, tray=icon)
+
+    from mikata.audio.capture import AudioCapture
+    from mikata.audio.devices import collect_devices, find_device
+    from mikata.audio.earcons import Earcons
+    from mikata.audio.player import AudioPlayer
+    from mikata.governor import CpuMonitor, lower_priority
+    from mikata.ui.hotkeys import HotkeyListener
+    from mikata.wake.oww import OpenWakeWordDetector
+
+    lower_priority()
+    try:
+        import sounddevice as sd
+    except OSError as exc:
+        raise RuntimeError(f"Bibliothèque audio PortAudio introuvable : {exc}") from exc
+
+    devices = collect_devices(sd)
+    mic = find_device(devices, config.audio.input_device, "input")
+    headset = find_device(devices, config.audio.output_device, "output")
+    if config.audio.input_channel is not None and config.audio.input_channel > min(
+        mic.max_input_channels, 8
+    ):
+        raise ConfigError(
+            f"audio.input_channel = {config.audio.input_channel} : « {mic.name} » n'a que "
+            f"{mic.max_input_channels} canal(aux)."
+        )
+    player = AudioPlayer(headset)
+    verifier = config.resolve(config.wake.verifier) if config.wake.verifier else None
+    detector = OpenWakeWordDetector(config.resolve(config.wake.model), verifier)
+    logger.info("Mot d'activation chargé : {}", detector.name)
+    return App(
+        config,
+        tray=icon,
+        audio=AudioCapture(mic, channel=config.audio.input_channel),
+        detector=detector,
+        player=player,
+        earcons=Earcons(
+            config.resolve("assets/sounds"), player.sample_rate, config.audio.earcon_volume
+        ),
+        hotkeys=HotkeyListener(config.wake.hotkey) if config.wake.hotkey else None,
+        cpu=CpuMonitor(),
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     config_path = resolve_config_path(args.config)
@@ -85,7 +136,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             logger.success("Configuration valide : {}", config_path)
             return EXIT_OK
 
-        app = App(config, tray=None if args.no_tray else TrayIcon())
+        try:
+            app = build_app(config, tray=not args.no_tray, audio=not args.no_audio)
+        except ConfigError as exc:
+            logger.error("{}", exc)
+            return EXIT_CONFIG
         try:
             asyncio.run(app.run())
         except KeyboardInterrupt:

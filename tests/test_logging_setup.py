@@ -7,7 +7,7 @@ import pytest
 from loguru import logger
 
 from mikata.config import LoggingConfig
-from mikata.logging_setup import setup_logging, shutdown_logging
+from mikata.logging_setup import setup_logging, shutdown_logging, trash_old_logs
 
 
 def test_file_sink_and_stdlib_interception(tmp_path: Path) -> None:
@@ -47,3 +47,18 @@ def test_setup_is_idempotent(tmp_path: Path) -> None:
     logger.info("une seule fois")
     shutdown_logging()
     assert log_file.read_text(encoding="utf-8").count("une seule fois") == 1
+
+
+def test_retention_sends_old_logs_to_trash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import os
+
+    trashed: list[str] = []
+    monkeypatch.setattr("mikata.logging_setup.send2trash", trashed.append)
+    files = []
+    for i in range(7):
+        path = tmp_path / f"mikata.{i}.log"
+        path.write_text("x", encoding="utf-8")
+        os.utime(path, (1000 + i, 1000 + i))
+        files.append(str(path))
+    trash_old_logs(5)(files)
+    assert sorted(trashed) == sorted(files[:2])  # les 2 plus anciennes
