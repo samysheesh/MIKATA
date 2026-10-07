@@ -97,7 +97,9 @@ def format_results(results: Sequence[Result]) -> str:
 
 
 def play(files: Sequence[Path], config: Any) -> None:
+    import numpy as np
     import sounddevice as sd
+    import soxr
 
     from mikata.audio.devices import collect_devices, default_device_index, find_device
     from mikata.audio.wavfile import read_wav
@@ -111,7 +113,10 @@ def play(files: Sequence[Path], config: Any) -> None:
     for path in files:
         pcm, rate = read_wav(path)
         print(f"  ♪ {path.name}")
-        sd.play(pcm, rate, device=device.index, blocking=True)
+        target = int(device.default_samplerate)  # WASAPI partagé : taux du périphérique imposé
+        if rate != target:
+            pcm = soxr.resample(pcm.astype(np.float32), rate, target)
+        sd.play(pcm, target, device=device.index, blocking=True)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
