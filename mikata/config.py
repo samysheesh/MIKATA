@@ -143,6 +143,7 @@ class ToolsConfig(_Section):
 
     timeout_s: float = Field(default=15, gt=0)  # par appel d'outil
     result_max_chars: int = Field(default=2000, ge=200)  # résultat renvoyé au LLM (§6)
+    shell_timeout_s: float = Field(default=30, gt=0)  # ajout phase 5 : run_powershell (§7)
 
 
 class WebConfig(_Section):
@@ -173,10 +174,16 @@ class AgentConfig(_Section):
 
 
 class GuardConfig(_Section):
-    allowed_dirs: list[Path] = Field(default_factory=lambda: [Path("~")])
+    allowed_dirs: list[Path] = Field(default_factory=lambda: [Path("~")], min_length=1)
     backup_days: int = Field(default=14, ge=1)
     shutdown_cancel_s: float = Field(default=5, ge=0)
     confirm_after_web: bool = False
+    # Ajouts phase 5 : confirmation orale des commandes risquées (liste grise), délai de
+    # réponse, taille maximale envoyée à la corbeille (au-delà, Windows supprimerait
+    # définitivement : refus).
+    confirm_risky: bool = True
+    confirm_timeout_s: float = Field(default=6, gt=0)
+    trash_max_mb: float = Field(default=4096, gt=0)
 
 
 class LoggingConfig(_Section):
@@ -185,6 +192,7 @@ class LoggingConfig(_Section):
     rotation_mb: float = Field(default=5, gt=0)
     retention_files: int = Field(default=5, ge=1)
     stats_interval_s: float = Field(default=60, ge=0)  # ajout phase 1 : ligne CPU (0 = jamais)
+    actions_file: Path = Path("data/actions.log")  # ajout phase 5 : journal des actions (§7)
 
     @field_validator("level", mode="before")
     @classmethod

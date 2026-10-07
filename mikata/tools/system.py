@@ -1,7 +1,9 @@
-"""Outils système (§7) : get_time, system_status, set_timer ★, set_reminder ★, lock ★.
+"""Outils système (§7) : get_time, system_status, set_timer ★, set_reminder ★, lock ★,
+et (phase 5) shutdown ★ / restart ★ / sleep ★.
 
-`shutdown` / `restart` / `sleep` arrivent en phase 5 avec le garde-fou : ils exigent le
-délai d'annulation de 5 s (« stop » annule, §7), prévu par le plan dans cette phase-là.
+Extinction, redémarrage, veille : MIKATA annonce l'action, puis laisse
+`guard.shutdown_cancel_s` (5 s) pour dire « stop », qui l'annule (§7). Pas une
+confirmation : sans réponse, l'action a lieu.
 
 Minuteurs et rappels : tâches asyncio en mémoire (perdues si MIKATA redémarre). À
 l'échéance : son « timer », phrase dite dans le casque et notification Windows.
@@ -19,7 +21,7 @@ from loguru import logger
 from pydantic import BaseModel, Field, model_validator
 
 from mikata.llm.prompts import format_now
-from mikata.tools.base import BaseTool, NoParams, ToolContext, ToolError
+from mikata.tools.base import BaseTool, NoParams, ToolContext, ToolError, current_turn
 from mikata.tools.registry import register_tool
 
 MAX_DELAY = timedelta(days=7)
@@ -230,3 +232,55 @@ class Lock(BaseTool[NoParams]):
         desktop = self.ctx.require_desktop()
         await self.ctx.run_blocking(desktop.lock)
         return "Session verrouillée."
+
+
+class _PowerTool(BaseTool[NoParams]):
+    """Annonce, délai pour dire « stop », puis l'action (desktop.power)."""
+
+    params = NoParams
+    terminal = True
+    action: str
+    announce: str  # « Extinction » -> « Extinction dans 5 secondes. Dis stop pour annuler. »
+    cancelled: str  # dit si l'utilisateur annule
+
+    def time_limit(self) -> float:
+        guard = self.ctx.config.guard
+        return guard.shutdown_cancel_s + guard.confirm_timeout_s + 30.0
+
+    async def run(self, args: NoParams) -> str:
+        guard = self.ctx.require_guard()
+        desktop = self.ctx.require_desktop()
+        proceed = await guard.countdown(
+            self.announce, self.cancelled, current_turn(), self.ctx.sleep
+        )
+        if not proceed:
+            return f"{self.cancelled} (l'utilisateur a dit stop)"
+        await self.ctx.run_blocking(desktop.power, self.action)
+        return f"Demande envoyée à Windows : {self.action}."
+
+
+@register_tool
+class Shutdown(_PowerTool):
+    name = "shutdown"
+    description = "Éteint le PC (après 5 s pendant lesquelles « stop » annule)."
+    action = "shutdown"
+    announce = "Extinction"
+    cancelled = "Extinction annulée."
+
+
+@register_tool
+class Restart(_PowerTool):
+    name = "restart"
+    description = "Redémarre le PC (après 5 s pendant lesquelles « stop » annule)."
+    action = "restart"
+    announce = "Redémarrage"
+    cancelled = "Redémarrage annulé."
+
+
+@register_tool
+class Sleep(_PowerTool):
+    name = "sleep"
+    description = "Met le PC en veille (après 5 s pendant lesquelles « stop » annule)."
+    action = "sleep"
+    announce = "Mise en veille"
+    cancelled = "Mise en veille annulée."

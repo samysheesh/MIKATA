@@ -6,6 +6,8 @@ Phase 2 : écoute depuis le début du pré-roll (VAD Silero) → transcription (
 spéculative) → texte sans le mot d'activation.
 Phase 3 : réflexion (LLM en streaming) → parole (TTS par fragments) ; son de réflexion.
 Phase 4 : outils (état ACTING), annonces des minuteurs et rappels (`announce`).
+Phase 5 : écoute courte sans mot d'activation (`listen_once`) pour les confirmations
+orales du garde-fou et le « stop » avant extinction.
 
 Commandes en parallèle : chaque commande a son propre état (`_Request.state`). Il n'y a
 qu'un micro, donc une seule commande **écoute** à la fois (`_listening`) ; dès que sa fin de
@@ -425,6 +427,58 @@ class App:
 
     # -- écoute (une seule à la fois : il n'y a qu'un micro) -------------------------------
 
+    @property
+    def _can_listen(self) -> bool:
+        return self._stt is not None and self._vad is not None and self._audio is not None
+
+    async def listen_once(self, timeout_s: float) -> str:
+        """Écoute une réponse courte sans mot d'activation (« oui », « stop »...).
+
+        Attend que le micro soit libre, bipe, écoute jusqu'à la fin de la phrase (ou
+        `timeout_s` sans parole), puis transcrit. Renvoie "" si rien n'a été dit.
+        """
+        if not self._can_listen:
+            return ""
+        assert self._stt is not None and self._vad is not None
+        loop = asyncio.get_running_loop()
+        deadline = time.monotonic() + timeout_s
+        while self._listening is not None:  # une autre commande a le micro
+            if time.monotonic() >= deadline:
+                return ""
+            await asyncio.sleep(0.05)
+        now = time.monotonic()
+        self._play("wake")
+        if self._wake_executor is not None:
+            self._wake_executor.submit(self._vad.reset)
+        ended: asyncio.Future[EndReason] = loop.create_future()
+
+        def on_end(reason: EndReason) -> None:
+            if not ended.done():
+                ended.set_result(reason)
+
+        request = _Request(id=next(self._ids), source="réponse", wake_at=now, wake_frame_at=now)
+        vad = self.config.vad.model_copy(update={"no_speech_timeout_s": max(0.5, deadline - now)})
+        pre_roll = self.ring.read_last(round(HOTKEY_PRE_ROLL_S * SAMPLE_RATE))
+        request.recorder = CommandRecorder(
+            self._stt, pre_roll, vad, self._wake_pattern, on_end=on_end, check_pre_roll=False
+        )
+        self._listening = request
+        self._active[request.id] = request
+        self._set_request_state(request, State.LISTENING)
+        try:
+            if await ended is EndReason.NO_SPEECH:
+                logger.info("Réponse orale : rien entendu en {:.0f} s.", timeout_s)
+                return ""
+            if self._listening is request:
+                self._listening = None
+            self._set_request_state(request, State.TRANSCRIBING)
+            transcript = await request.recorder.transcribe()
+            text, _ = strip_wake_word(clean_transcript(transcript.text), self._wake_pattern)
+            logger.info("Réponse orale : « {} »", text)
+            return text
+        finally:
+            self._finish(request)
+
     def _start_listening(self, event: WakeDetected, now: float) -> None:
         if self._stt is None or self._vad is None or self._audio is None:
             return
@@ -529,6 +583,7 @@ class App:
             stream,
             label=f"#{request.id}",
             on_phase=functools.partial(self._on_agent_phase, request),
+            listen=self.listen_once if self._can_listen else None,
         )
         stream.close()
         await stream.wait()

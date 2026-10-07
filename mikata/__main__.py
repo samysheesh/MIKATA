@@ -117,27 +117,49 @@ def build_speaker(config: Config, player: Any) -> Speaker:
 
 
 def build_tool_context(config: Config) -> ToolContext:
-    """Services des outils : bureau Windows, volume, notifications, web, mémoire."""
+    """Services des outils : bureau Windows, volume, notifications, web, mémoire ;
+    phase 5 : garde-fou, clavier et souris, lancement de commandes."""
+    from mikata.agent.guard import Guard
     from mikata.agent.memory import LongTermMemory
     from mikata.tools.base import ToolContext
+    from mikata.tools.shell import SubprocessRunner
     from mikata.tools.web import create_http_client
 
     ctx = ToolContext(
         config,
         http=create_http_client(),
         memory=LongTermMemory(config.resolve(MEMORY_FILE)),
+        guard=Guard(config, folders=_known_folders()),  # phase 5 : garde-fou
+        shell=SubprocessRunner(),
     )
     key = config.secrets.search_api_key
     ctx.search_api_key = key.get_secret_value() if key is not None else None
     if sys.platform == "win32":
         from mikata.tools.desktop import WindowsDesktop
+        from mikata.tools.input import PynputInput
         from mikata.tools.media import PycawAudio
         from mikata.ui.notify import ToastNotifier
 
         ctx.desktop, ctx.audio, ctx.notifier = WindowsDesktop(), PycawAudio(), ToastNotifier()
+        ctx.input = PynputInput()
     else:
         logger.warning("Hors Windows : outils du bureau, du volume et des notifications inactifs.")
     return ctx
+
+
+def _known_folders() -> dict[str, Path]:
+    """Vrais dossiers Bureau, Documents... (Windows) ; vide ailleurs ou en cas d'échec."""
+    if sys.platform != "win32":
+        return {}
+    from mikata.tools.desktop import known_folders
+
+    try:
+        return known_folders()
+    except Exception as exc:
+        logger.warning(
+            "Dossiers personnels introuvables ({}) : chemins sous le dossier perso.", exc
+        )
+        return {}
 
 
 def build_agent(config: Config, phrases: Any = None, *, tools: bool = True) -> Agent:
@@ -152,7 +174,7 @@ def build_agent(config: Config, phrases: Any = None, *, tools: bool = True) -> A
     if not tools:
         return Agent(llm, config, phrases=phrases, usage=usage)
 
-    from mikata.tools.apps import open_apps
+    from mikata.tools.apps import installed_app_names, open_apps
     from mikata.tools.registry import ToolRegistry
 
     ctx = build_tool_context(config)
@@ -173,6 +195,9 @@ def build_agent(config: Config, phrases: Any = None, *, tools: bool = True) -> A
         long_memory=ctx.memory,
         usage=usage,
         open_apps=running_apps if desktop is not None else None,
+        installed_apps=(
+            (lambda: installed_app_names(desktop.cached_apps())) if desktop is not None else None
+        ),
     )
 
 

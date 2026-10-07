@@ -93,7 +93,11 @@ def test_set_output_device(tmp_path: Path) -> None:
 def test_find_device() -> None:
     devices = [("a", "Haut-parleurs (Realtek(R) Audio)"), ("b", "Casque (AirPods de Samy)")]
     assert find_device("casque", devices) == devices[1]
+    assert find_device("le casque", devices) == devices[1]
+    assert find_device("airpods", devices) == devices[1]
+    assert find_device("haut-parleurs", devices) == devices[0]
     assert find_device("enceintes", devices) is None
+    assert find_device("casque Bluetooth Sony", devices) is None
     assert find_device("x", []) is None
 
 

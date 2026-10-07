@@ -76,6 +76,12 @@ def test_defaults_match_section_10(config_file: Path) -> None:
     assert config.llm.price_cached_usd_per_mtok == 0.006 and config.llm.credit_usd == 5.0
     assert (config.tools.timeout_s, config.tools.result_max_chars) == (15, 2000)
     assert config.web.search_provider == "tavily" and config.web.default_city is None
+    # ajouts phase 5
+    assert config.guard.allowed_dirs == [Path("~")] and config.guard.backup_days == 14
+    assert config.guard.shutdown_cancel_s == 5 and config.guard.confirm_after_web is False
+    assert config.guard.confirm_risky is True and config.guard.confirm_timeout_s == 6
+    assert config.guard.trash_max_mb == 4096 and config.tools.shell_timeout_s == 30
+    assert config.logging.actions_file == Path("data/actions.log")
 
 
 def test_repo_config_keys_are_exactly_the_model_fields() -> None:

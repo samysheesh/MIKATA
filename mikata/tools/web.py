@@ -17,7 +17,7 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field
 
-from mikata.tools.base import BaseTool, ToolContext, ToolError
+from mikata.tools.base import BaseTool, ToolContext, ToolError, current_turn
 from mikata.tools.registry import register_tool
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MIKATA/0.4"
@@ -135,6 +135,13 @@ class OpenUrl(BaseTool[UrlParams]):
         return f"Page ouverte : {url}"
 
 
+def _mark_web_read() -> None:
+    """La commande a lu du contenu web (garde-fou : `guard.confirm_after_web`)."""
+    turn = current_turn()
+    if turn is not None:
+        turn.web_read = True
+
+
 def _strip_tags(text: str) -> str:
     return re.sub(r"<[^>]+>", "", text or "").strip()
 
@@ -170,6 +177,7 @@ class WebSearch(BaseTool[SearchParams]):
         if not key:
             raise ToolError("recherche web indisponible : SEARCH_API_KEY absente du fichier .env")
         count = self.ctx.config.web.max_results
+        _mark_web_read()
         if provider == "tavily":
             response = await _request(
                 self.ctx,
@@ -235,6 +243,7 @@ class FetchPage(BaseTool[UrlParams]):
 
     async def run(self, args: UrlParams) -> str:
         url = normalize_url(args.url)
+        _mark_web_read()
         response = await _request(self.ctx, "GET", url, "Le site")
         kind = response.headers.get("content-type", "")
         if kind and not kind.startswith(("text/", "application/xhtml")):

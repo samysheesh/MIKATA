@@ -48,6 +48,26 @@ PHASE_4_TOOLS = {
     "remember",
     "forget",
 }
+PHASE_5_TOOLS = {
+    "close_window",  # une seule fenêtre (la fenêtre active par défaut)
+    # system : reportés de la phase 4 (délai d'annulation)
+    "shutdown",
+    "restart",
+    "sleep",
+    # input
+    "type_text",
+    "press_keys",
+    "mouse",
+    # files
+    "find_files",
+    "read_file",
+    "write_file",
+    "move_file",
+    "delete_file",
+    # shell
+    "run_powershell",
+    "run_script",
+}
 TERMINAL = {
     "set_timer",
     "set_reminder",
@@ -64,6 +84,13 @@ TERMINAL = {
     "clipboard_write",
     "remember",
     "forget",
+    "shutdown",
+    "restart",
+    "sleep",
+    "type_text",
+    "press_keys",
+    "mouse",
+    "close_window",
 }
 
 
@@ -71,22 +98,26 @@ def _registry(tmp_path: Path, **kwargs: object) -> ToolRegistry:
     return ToolRegistry(make_ctx(tmp_path, **kwargs))  # type: ignore[arg-type]
 
 
-def test_phase_4_catalogue_and_terminal_tools(tmp_path: Path) -> None:
+def test_catalogue_and_terminal_tools(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
-    assert set(registry.tools) - {"echo_test"} == PHASE_4_TOOLS
+    assert set(registry.tools) - {"echo_test"} == PHASE_4_TOOLS | PHASE_5_TOOLS
     assert {n for n in registry.tools if registry.is_terminal(n)} - {"echo_test"} == TERMINAL
-    assert FAMILIES == ("system", "apps", "web", "media", "ui", "memory_tools")
+    assert FAMILIES == (
+        "system", "apps", "web", "media", "ui", "memory_tools", "input", "files", "shell"
+    )  # fmt: skip
     for tool in registry.tools.values():
         assert isinstance(tool, Tool)  # respecte l'interface de §9
 
 
 def test_schemas_are_stable_sorted_and_lean(tmp_path: Path) -> None:
-    registry = ToolRegistry(make_ctx(tmp_path), include=PHASE_4_TOOLS)
+    registry = ToolRegistry(make_ctx(tmp_path), include=PHASE_4_TOOLS | PHASE_5_TOOLS)
     schemas = registry.schemas()
     names = [s["function"]["name"] for s in schemas]
     assert names == sorted(names)
     # identiques d'un appel à l'autre (cache de prompt)
-    assert schemas == ToolRegistry(make_ctx(tmp_path), include=PHASE_4_TOOLS).schemas()
+    assert (
+        schemas == ToolRegistry(make_ctx(tmp_path), include=PHASE_4_TOOLS | PHASE_5_TOOLS).schemas()
+    )
     for schema in schemas:
         assert schema["type"] == "function"
         params = schema["function"]["parameters"]

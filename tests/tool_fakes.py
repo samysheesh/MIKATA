@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from mikata.agent.guard import Guard
 from mikata.agent.memory import LongTermMemory
 from mikata.config import Config
 from mikata.tools.base import AppEntry, ToolContext, ToolError, WindowInfo
@@ -31,6 +33,9 @@ class FakeDesktop:
                 AppEntry("Steam", r"C:\Start\Steam\Steam.lnk"),
                 AppEntry("Google Chrome", r"C:\Start\Google Chrome.lnk"),
                 AppEntry("Chrome Remote Desktop", r"C:\Start\Chrome Remote Desktop.lnk"),
+                AppEntry("Photos", "shell:AppsFolder\\Microsoft.Windows.Photos!App"),
+                AppEntry("Visual Studio Code", r"C:\Start\Visual Studio Code.lnk"),
+                AppEntry("Counter-Strike 2", r"C:\Start\Steam\Counter-Strike 2.url"),
             ]
         )
         self.late_apps = late_apps or []  # apparaissent au rafraîchissement de l'index
@@ -65,6 +70,12 @@ class FakeDesktop:
     def windows(self) -> list[WindowInfo]:
         return list(self.win)
 
+    def foreground_window(self) -> WindowInfo | None:
+        return self.win[0] if self.win else None
+
+    def cached_apps(self) -> list[AppEntry]:
+        return list(self.apps)
+
     def close_window(self, window: WindowInfo) -> None:
         self._record("close", window.handle)
 
@@ -76,6 +87,9 @@ class FakeDesktop:
 
     def lock(self) -> None:
         self._record("lock")
+
+    def power(self, action: str) -> None:
+        self._record("power", action)
 
     def clipboard_read(self) -> str:
         return self.clipboard
@@ -111,6 +125,52 @@ class FakeAudio:
         self.default = device_id
 
 
+class FakeTrash:
+    """Corbeille de test : déplace l'élément dans `folder` (jamais de suppression)."""
+
+    def __init__(self, folder: Path, fail: bool = False) -> None:
+        self.folder = folder
+        self.fail = fail
+        self.calls: list[str] = []
+
+    def __call__(self, path: str) -> None:
+        self.calls.append(path)
+        if self.fail:
+            raise OSError("corbeille pleine (simulé)")
+        self.folder.mkdir(parents=True, exist_ok=True)
+        shutil.move(path, self.folder / f"{len(self.calls)}-{Path(path).name}")
+
+
+class FakeRunner:
+    """Lanceur de commandes de test : enregistre, ne lance rien."""
+
+    def __init__(self, code: int = 0, output: str = "ok", error: Exception | None = None) -> None:
+        self.code, self.output, self.error = code, output, error
+        self.calls: list[tuple[list[str], float, Path | None]] = []
+
+    async def run(
+        self, argv: list[str], timeout_s: float, cwd: Path | None = None
+    ) -> tuple[int, str]:
+        self.calls.append((argv, timeout_s, cwd))
+        if self.error is not None:
+            raise self.error
+        return self.code, self.output
+
+
+class FakeInput:
+    def __init__(self) -> None:
+        self.log: list[tuple[str, Any]] = []
+
+    def type_text(self, text: str) -> None:
+        self.log.append(("type", text))
+
+    def press_keys(self, keys: list[str]) -> None:
+        self.log.append(("keys", keys))
+
+    def mouse(self, action: str, x: int | None, y: int | None, amount: int) -> None:
+        self.log.append(("mouse", (action, x, y, amount)))
+
+
 class FakeNotifier:
     def __init__(self) -> None:
         self.sent: list[tuple[str, str]] = []
@@ -120,7 +180,9 @@ class FakeNotifier:
 
 
 def make_config(tmp_path: Path, **sections: dict[str, Any]) -> Config:
+    """Config de test ; le garde-fou n'autorise que `tmp_path/home` (le « dossier perso »)."""
     data = Config().model_dump(mode="json", exclude={"secrets"})
+    data["guard"]["allowed_dirs"] = [str(tmp_path / "home")]
     for section, values in sections.items():
         data[section].update(values)
     config = Config.model_validate(data)
@@ -137,12 +199,21 @@ def make_ctx(
     http: Any = None,
     search_api_key: str | None = None,
     announce: Callable[[str], Any] | None = None,
+    trash: FakeTrash | None = None,
+    shell: Any = None,
+    input: Any = None,
 ) -> ToolContext:
     async def no_wait(seconds: float) -> None:
         await asyncio.sleep(0)
 
+    config = config or make_config(tmp_path)
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    guard = Guard(
+        config, home=home, trash=trash or FakeTrash(tmp_path / "Trash"), clock=lambda: NOW
+    )
     return ToolContext(
-        config or make_config(tmp_path),
+        config,
         desktop=desktop,
         audio=audio,
         notifier=FakeNotifier(),
@@ -152,4 +223,7 @@ def make_ctx(
         announce=announce,
         clock=lambda: NOW,
         sleep=no_wait,
+        guard=guard,
+        shell=shell,
+        input=input,
     )

@@ -19,10 +19,12 @@ from typing import Any, TypeVar
 from loguru import logger
 from pydantic import BaseModel, ValidationError
 
+from mikata.agent.guard import log_action
 from mikata.llm.base import ToolCallReq
-from mikata.tools.base import Tool, ToolContext, ToolError
+from mikata.tools.base import ActionCancelled, GuardDenied, Tool, ToolContext, ToolError
 
-FAMILIES = ("system", "apps", "web", "media", "ui", "memory_tools")  # phase 4 (§7, §11)
+# Phase 4 : system, apps, web, media, ui, memory ; phase 5 : input, files, shell (§7, §11).
+FAMILIES = ("system", "apps", "web", "media", "ui", "memory_tools", "input", "files", "shell")
 
 _REGISTRY: dict[str, type[Any]] = {}
 T = TypeVar("T", bound=type)
@@ -114,7 +116,13 @@ class ToolRegistry:
         }
 
     async def warm(self) -> None:
-        """Index des applications construit d'avance (premier « ouvre ... » sans attente)."""
+        """Index des applications construit d'avance (premier « ouvre ... » sans attente) ;
+        sauvegardes trop vieilles envoyées à la corbeille (phase 5)."""
+        if self.ctx.guard is not None:
+            try:
+                await asyncio.to_thread(self.ctx.guard.purge_backups)
+            except Exception as exc:
+                logger.warning("Purge des sauvegardes impossible : {}", exc)
         desktop = self.ctx.desktop
         if desktop is None:
             return
@@ -133,29 +141,43 @@ class ToolRegistry:
         tool = self.tools.get(name)
         return bool(tool is not None and tool.terminal)
 
+    def time_limit(self, tool: Tool) -> float:
+        limit = getattr(tool, "time_limit", None)
+        own = limit() if callable(limit) else None
+        return own or self.ctx.config.tools.timeout_s
+
     async def execute(self, call: ToolCallReq) -> ToolResult:
         start = time.monotonic()
         tool = self.tools.get(call.name)
         terminal = tool is not None and tool.terminal
+        status = "échec"
         if tool is None:
             ok, content = False, f"outil inconnu : {call.name}"
         else:
+            limit = self.time_limit(tool)
             try:
                 args = tool.params.model_validate(call.arguments)
-                async with asyncio.timeout(self.ctx.config.tools.timeout_s):
+                async with asyncio.timeout(limit):
                     content, ok = await tool.run(args), True
+                status = "ok"
             except ValidationError as exc:
                 ok, content = False, _validation_message(call.name, exc)
+            except GuardDenied as exc:
+                ok, content, status = False, f"refusé par le garde-fou : {exc}", "refusé"
+            except ActionCancelled as exc:
+                ok, content, status = False, str(exc), "annulé"
             except ToolError as exc:
                 ok, content = False, str(exc)
             except TimeoutError:
-                ok = False
-                content = f"{call.name} n'a pas répondu en {self.ctx.config.tools.timeout_s:.0f} s"
+                ok, status = False, "délai"
+                content = f"{call.name} n'a pas répondu en {limit:.0f} s"
             except asyncio.CancelledError:
+                log_action(call.name, call.arguments, "interrompu")
                 raise
             except Exception as exc:
                 logger.exception("Outil {} : erreur inattendue.", call.name)
                 ok, content = False, f"erreur inattendue dans {call.name} : {exc}"
+        log_action(call.name, call.arguments, status, content)
         limit = self.ctx.config.tools.result_max_chars
         if len(content) > limit:
             content = content[:limit] + " […tronqué]"
