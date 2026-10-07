@@ -174,8 +174,9 @@ def test_tool_calls_without_registry_are_not_run() -> None:
 
 
 def test_parallel_turns_do_not_block_each_other() -> None:
-    # 2 tours de 2 morceaux à 0,1 s : ~0,2 s en parallèle, ~0,4 s l'un après l'autre.
-    llm = ScriptedLLM(*[[TextDelta(f"Réponse {i}."), Done("stop")] for i in range(2)], delay=0.1)
+    # 2 tours de 2 morceaux à 0,25 s : ~0,5 s en parallèle, ~1 s l'un après l'autre. Écart
+    # large : une machine de CI chargée ajoute parfois 0,1 s sans que rien ne soit sérialisé.
+    llm = ScriptedLLM(*[[TextDelta(f"Réponse {i}."), Done("stop")] for i in range(2)], delay=0.25)
     agent = _agent(llm)
 
     async def scenario() -> float:
@@ -183,7 +184,7 @@ def test_parallel_turns_do_not_block_each_other() -> None:
         await asyncio.gather(*(agent.respond(f"commande {i}", Sink()) for i in range(2)))
         return asyncio.get_running_loop().time() - start
 
-    assert asyncio.run(scenario()) < 0.3
+    assert asyncio.run(scenario()) < 0.75
     assert len(agent.memory) == 2
 
 
