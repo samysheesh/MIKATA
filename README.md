@@ -22,7 +22,7 @@ interroge un LLM cloud, agit sur le PC et répond à voix haute dans le casque.
 | 5 | Outils puissants (clavier/souris, fichiers, PowerShell, extinction) + garde-fou | fusionnée |
 | 6 | Confort : fenêtre de suivi, barge-in, annulation, mémoire long terme | fusionnée |
 | 6b | Arrêt vocal sans mot d'activation, Whisper sur les suites courtes | livrée, à valider sur le PC |
-| 7 | Voir `docs/ARCHITECTURE.md` §11 | à faire |
+| 7 | Mot d'activation « MIKATA » (enregistrement, entraînement Colab, vérificateur de voix, benchmark), démarrage automatique, purge | livrée, à valider sur le PC |
 
 ## Développement
 
@@ -1259,3 +1259,316 @@ Select-String -Path data\logs\mikata.log -Pattern "Fenêtre de suivi" | Select-O
 ```
 
 Attendu : `Fenêtre de suivi : « Et à Tokyo ? » retenue (...)`, jamais `Yeah`.
+
+## Phase 7 — vérification sur le PC Windows
+
+Critères (§11) : moins de 0,2 faux déclenchement par heure et moins de 5 % de ratés sur le jeu
+d'évaluation, puis une semaine d'usage réel confortable.
+
+Le parcours, dans l'ordre :
+
+1. Collecter ta vie courante (au moins 6 h).
+2. Enregistrer tes « MIKATA ».
+3. Entraîner `mikata.onnx` sur Colab.
+4. Entraîner le vérificateur de ta voix sur ton PC.
+5. Mesurer avec le benchmark et choisir les seuils.
+6. Passer en production, puis installer le démarrage automatique.
+
+Comment ça marche :
+
+- **Deux étages** (§4) :
+  1. `models/mikata.onnx` (openWakeWord) donne un score toutes les 80 ms.
+  2. Quand ce score atteint `wake.threshold`, le **vérificateur de ta voix**
+     (`models/mikata_verifier.pkl`) donne la probabilité que ce soit toi. Sous
+     `wake.verifier_threshold`, la détection est refusée : un « MIKATA » dit dans une vidéo ou
+     par quelqu'un d'autre ne déclenche pas.
+  - Le vérificateur est un petit modèle scikit-learn : coût et délai quasi nuls.
+  - Le log de détection affiche les deux scores (`score 0.92, voix 0.88`). Un refus est
+    noté `Mot d'activation refusé par le vérificateur : modèle 0.81, voix 0.12`.
+- **Entraînement du modèle** (`scripts/train_wakeword.py`, sur Google Colab, GPU gratuit) :
+  - Positifs :
+    - tes « MIKATA », recopiés 30 fois, avec chaque fois un bruit, un écho et un égaliseur
+      différents ;
+    - ~17 000 « Mikata » synthétiques, dits par plus de 1 100 voix Piper : 130 françaises
+      (accent français) et des anglaises, avec les variantes « mi kata » et « mee kah tah ».
+  - Négatifs :
+    - tes mots proches et une trentaine d'autres, en voix synthétiques ;
+    - ~2 000 h de sons publics (ACAV100M) ;
+    - ta vie courante, qui sert aussi de bruit de fond mélangé aux positifs.
+  - Le jeu d'évaluation n'est jamais envoyé à Colab.
+- **Benchmark** (`scripts/eval_wakeword.py`) :
+  - Tes 30 prises « eval » sont chacune placées dans 1,5 s de vie courante. Les 3 h de vie
+    courante figées sont passées d'un bloc, comme en vrai.
+  - Les règles de déclenchement de MIKATA sont rejouées pour chaque seuil, 1 ou 2 trames,
+    avec et sans vérificateur.
+  - Résultat : la courbe faux déclenchements par heure, ratés et délai médian, puis le
+    **réglage conseillé** à copier dans `config.yaml`.
+  - Choix du réglage : le moins de faux déclenchements, puis le moins de ratés, un délai
+    ≤ 150 ms, puis le **milieu** de la plage qui tient les cibles (de la marge des deux
+    côtés).
+- **Démarrage automatique** (`scripts/install_autostart.ps1`) :
+  - Une tâche planifiée « MIKATA » à l'ouverture de ta session, 30 s après.
+  - Elle lance `.venv\Scripts\pythonw.exe -m mikata --supervise` : pas de console, avec tes
+    droits normaux. Ce n'est pas un service Windows (§10).
+  - `--supervise` relance MIKATA s'il plante, au plus 5 fois par heure, et pas après
+    « Quitter » ni après une config invalide. L'option « redémarrer en cas d'échec » du
+    Planificateur de tâches ne couvre qu'un échec au lancement.
+  - Journal des relances : `data\logs\supervise.log`.
+- **Purge** :
+  - Au démarrage puis toutes les 24 h, partent à la corbeille :
+    - les audios de détection de plus de 7 jours (`data\wake_logs`) ;
+    - les sauvegardes de plus de 14 jours (`data\backups`).
+  - Les logs tournent déjà : 5 Mo × 5.
+  - La collecte de vie courante s'arrête seule après `wake.negatives_max_hours` (12 h,
+    ~115 Mo par heure).
+
+### 1. Récupérer la branche, installer
+
+```powershell
+git fetch origin
+git checkout phase-7
+git pull
+uv sync
+uv run python scripts\download_models.py --no-whisper
+```
+
+### 2. Lint et tests
+
+```powershell
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
+uv run pytest tests\test_eval_wakeword.py tests\test_record_wakeword.py tests\test_train_wakeword.py tests\test_supervise.py tests\test_maintenance.py -v
+```
+
+Attendu : tout en `passed`.
+
+### 3. Collecter ta vie courante (au moins 6 h, sur plusieurs jours)
+
+C'est la donnée la plus précieuse (§4) : 3 h sont figées pour le benchmark, le reste sert à
+l'entraînement. Dans `config.yaml`, section `wake` :
+
+```yaml
+  collect_negatives: true
+```
+
+Lance MIKATA (`uv run python -m mikata`) et vis normalement : Discord, jeux, musique, vidéos,
+la pièce calme, toi qui parles. La collecte s'arrête seule à 12 h. Elle peut s'étaler sur
+plusieurs jours, et plusieurs situations valent mieux qu'une seule longue session.
+
+Ne dis **pas** « MIKATA » pendant la collecte (« hey jarvis » ne gêne pas).
+
+Pour suivre où tu en es :
+
+```powershell
+uv run python scripts\record_wakeword_samples.py plan
+```
+
+### 4. Enregistrer tes « MIKATA » (≈ 20 min)
+
+Avec ton micro RØDE NT-USB+ habituel, AirPods sur les oreilles, à ta place. Dis « MIKATA »
+comme tu le diras tous les jours, sans le surjouer.
+
+```powershell
+uv run python scripts\record_wakeword_samples.py record --set train
+uv run python scripts\record_wakeword_samples.py record --set hard
+```
+
+Ce que le script te demande :
+
+- **`train` : 100 « MIKATA »** pour l'entraînement.
+
+  | Situation | Prises | Consigne |
+  | --- | --- | --- |
+  | normal | 20 | voix normale, assis à ta place (~30 cm du micro) |
+  | bas | 10 | voix basse, presque chuchotée (comme la nuit) |
+  | fort | 10 | voix forte, comme pour appeler quelqu'un dans la pièce |
+  | fatigue | 10 | voix fatiguée, lente, traînante |
+  | sourire | 10 | en souriant, vite, avec énergie |
+  | loin | 10 | debout à environ 2 m du micro |
+  | cote | 10 | tête tournée sur le côté, ou dos au micro |
+  | bruit | 10 | en tapant au clavier, ou avec un ventilateur ou une vidéo en fond |
+  | phrase | 10 | d'une traite avec une commande : « MIKATA, ouvre Spotify »... (varie) |
+
+- **`hard` : 36 mots proches**, 3 prises chacun : mikado, Nikita, Akira, « il m'a quitté »,
+  mi-carré, Mika, « ma carte », « mi casa », Takata, chiquita, Michaela, Nakata.
+
+Chaque prise se déroule ainsi :
+1. Appuie sur Entrée, puis parle. L'enregistrement s'arrête quand tu te tais.
+2. Le script signale une prise vide, trop longue ou saturée.
+3. Entrée garde la prise ; `r` la refait (l'ancienne part à la corbeille) ; `q` quitte.
+
+Relancer reprend où tu t'étais arrêté. `--only loin` refait une seule situation.
+
+### 5. Un autre jour : 30 prises d'évaluation
+
+Un autre jour, pour que le benchmark mesure un vrai « autre jour » (voix, pièce, humeur) :
+
+```powershell
+uv run python scripts\record_wakeword_samples.py record --set eval
+uv run python scripts\record_wakeword_samples.py plan
+```
+
+C'est la même répartition, en plus petit : 6 « normal » et 3 de chaque autre situation. Ces
+prises ne servent **jamais** à l'entraînement. Attendu : `plan` dit « tout est prêt ».
+
+### 6. Entraîner `mikata.onnx` sur Google Colab (≈ 2 à 3 h)
+
+```powershell
+uv run python scripts\record_wakeword_samples.py pack
+```
+
+Ça crée `data\wakeword\mikata_wakeword_colab.zip` (~500 Mo avec 4 h de vie courante ;
+`--negative-hours 2` pour une archive plus petite). Ensuite :
+
+1. Ouvre <https://colab.research.google.com>, puis **Nouveau notebook**.
+2. **Exécution > Modifier le type d'exécution > GPU T4**.
+3. Envoie l'archive. Le plus fiable est de la déposer dans ton Google Drive (dossier
+   `Mon Drive`), puis de lancer dans une première cellule :
+
+   ```python
+   from google.colab import drive
+   drive.mount("/content/drive")
+   !cp /content/drive/MyDrive/mikata_wakeword_colab.zip /content/
+   ```
+
+   Ou glisse-la dans le panneau **Fichiers** de Colab, mais c'est lent pour 500 Mo.
+4. Lance les cellules suivantes, une par une :
+
+   ```python
+   !unzip -q -o /content/mikata_wakeword_colab.zip -d /content/mikata
+   !python /content/mikata/train_wakeword.py setup
+   !python /content/mikata/train_wakeword.py train
+   ```
+
+   - `setup` (~15 min) installe un Python 3.11 à part avec des versions épinglées et
+     télécharge ~17 Go de données publiques ainsi que les voix Piper.
+   - `train` prépare les clips, puis entraîne. Il finit par
+     `[mikata] modèle prêt : /content/mikata/out/mikata.onnx`. Un message d'erreur sur
+     TensorFlow ou tflite **après** cette ligne est normal : seul le `.onnx` sert.
+   - Si Colab se déconnecte, relance les mêmes cellules : chaque étape déjà faite est sautée.
+5. Récupère le modèle :
+
+   ```python
+   from google.colab import files
+
+   files.download("/content/mikata/out/mikata.onnx")
+   ```
+
+6. Copie `mikata.onnx` dans `models\` (à côté de `hey_jarvis.onnx`).
+
+Ce script n'a pas pu tourner en vrai dans la session cloud (ni GPU, ni accès à Hugging
+Face). Si une étape échoue, envoie-moi les dernières lignes de la cellule.
+
+### 7. Vérificateur de ta voix (≈ 1 min, sur ton PC)
+
+```powershell
+uv run python scripts\train_verifier.py
+```
+
+Il apprend à partir de tes 100 prises `train` (ta voix qui dit « MIKATA ») et de ta voix qui
+dit autre chose : les 36 mots proches, et tes phrases de `data\stt_eval` sauf celles qui
+contiennent « MIKATA ». Attendu : `Vérificateur : ...\models\mikata_verifier.pkl`.
+
+### 8. Le critère : benchmark (≈ 10 min pour 3 h)
+
+```powershell
+uv run python scripts\eval_wakeword.py --model models\mikata.onnx --verifier models\mikata_verifier.pkl
+```
+
+Attendu, pour chaque réglage (sans vérificateur, puis voix ≥ 0,3 / 0,5 / 0,7 / 0,9) : un
+tableau seuil, faux déclenchements par heure (FD/h), ratés et délai médian. Les cases
+marquées `*` tiennent les cibles. Puis la ligne `Réglage conseillé` avec les lignes à copier.
+
+**Critère validé** si un réglage tient **< 0,2 FD/h et < 5 % de ratés**. Sinon, le
+script donne le meilleur compromis et les ratés. Envoie-moi le tableau : on ajoute des prises
+ou de la vie courante et on réentraîne (`train --user-copies 50`, `--steps 80000`...).
+
+Pour comparer avec le modèle seul :
+
+```powershell
+uv run python scripts\eval_wakeword.py --model models\mikata.onnx --no-verifier
+```
+
+### 9. Passer en production
+
+Dans `config.yaml`, section `wake`, avec les valeurs du réglage conseillé :
+
+```yaml
+wake:
+  model: models/mikata.onnx
+  verifier: models/mikata_verifier.pkl
+  threshold: 0.50              # <- réglage conseillé
+  consecutive_frames: 1        # <- réglage conseillé
+  verifier_threshold: 0.70     # <- réglage conseillé
+  collect_negatives: false
+```
+
+Tu peux aussi retirer `"jarvis"` de `stt.wake_words`. Ensuite :
+
+```powershell
+uv run python -m mikata --check-config
+uv run python -m mikata
+```
+
+Dis 10 fois « MIKATA, quelle heure est-il ? » à ta place, puis 5 fois de loin. Attendu : un
+bip à chaque fois. Puis fais dire « MIKATA » par une vidéo ou quelqu'un d'autre : rien, ou
+une ligne `refusé par le vérificateur`. Dans un autre PowerShell :
+
+```powershell
+Select-String -Path data\logs\mikata.log -Pattern "Mot d'activation" | Select-Object -Last 20
+```
+
+Attendu : `Mot d'activation détecté (score 0.xx, voix 0.xx) : bip ≈ X ms après la fin du
+mot`, avec X < 150 en général.
+
+### 10. Démarrage automatique
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1 -StartNow
+powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1 -Status
+```
+
+Attendu : `Tâche « MIKATA » installée`, l'icône apparaît, et `-Status` affiche `Running`.
+Puis ferme ta session et rouvre-la : l'icône revient ~30 s après.
+
+Pour tester la relance après un plantage :
+
+```powershell
+Get-Process pythonw | Sort-Object StartTime | Select-Object -Last 1 | Stop-Process -Force
+Get-Content data\logs\supervise.log -Tail 5
+```
+
+Attendu : `MIKATA arrêté sur une erreur (code ..., après ... s) : relance dans 10 s`, puis
+l'icône revient. Avec **Quitter** dans le menu de l'icône, MIKATA ne revient pas. Pour retirer la
+tâche :
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1 -Uninstall
+```
+
+Si la création est refusée, relance une fois le script dans un PowerShell « Exécuter en tant
+qu'administrateur » : la tâche tournera quand même avec tes droits normaux.
+
+### 11. Purge (rien à faire)
+
+```powershell
+Select-String -Path data\logs\mikata.log -Pattern "Purge" | Select-Object -Last 5
+```
+
+Une ligne `Purge : N dans data/wake_logs...` apparaît quand il y a quelque chose de trop
+vieux.
+
+### 12. Une semaine d'usage réel
+
+Laisse tourner une semaine. Chaque soir :
+
+```powershell
+(Select-String -Path data\logs\mikata.log -Pattern "Mot d'activation détecté").Count
+(Select-String -Path data\logs\mikata.log -Pattern "refusé par le vérificateur").Count
+```
+
+Compare au nombre de fois où tu as vraiment dit « MIKATA ». Chaque détection a 2 s d'audio
+dans `data\wake_logs\` (le nom contient le score) : écoute celles que tu n'as pas
+provoquées. Si les faux déclenchements dépassent ~1 par jour, envoie-moi ces audios : on les
+ajoute aux négatifs pour le prochain entraînement.
