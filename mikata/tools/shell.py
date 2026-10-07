@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -48,17 +49,23 @@ def _decode(raw: bytes) -> str:
 
 
 class SubprocessRunner:
-    """Implémente `ProcessRunner` : processus sans fenêtre, tué au-delà du délai."""
+    """Implémente `ProcessRunner` : processus sans fenêtre, tué au-delà du délai.
+
+    Les scripts Python écrivent en UTF-8 (sinon cp1252 sous Windows quand la sortie est
+    redirigée, et les accents arrivent faux).
+    """
 
     async def run(
         self, argv: list[str], timeout_s: float, cwd: Path | None = None
     ) -> tuple[int, str]:
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
         process = await asyncio.create_subprocess_exec(
             *argv,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             cwd=cwd,
+            env=env,
             creationflags=CREATE_NO_WINDOW if sys.platform == "win32" else 0,
         )
         try:
