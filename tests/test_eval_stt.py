@@ -141,7 +141,7 @@ def test_prompt_modes() -> None:
     assert ev.prompt_for("none", cfg) == ""
     assert ev.prompt_for("config", cfg) is None
     apps = ev.prompt_for("apps", cfg, apps=lambda: ["Spotify", "Hades", "Balatro"])
-    assert apps == "MIKATA, Spotify. Applications : Balatro, Hades."
+    assert apps == "Applications : Balatro, Hades. MIKATA, Spotify"
     args = ev.parse_args(["run", "--prompt", "none", "apps"])
     assert args.prompt == ["none", "apps"]
     assert ev.parse_args(["run"]).prompt == ["config"]
@@ -155,3 +155,59 @@ def test_evaluate_passes_the_prompt() -> None:
     ev.evaluate(stt, dataset, "float16", 1)  # prompt de la config : rien d'imposé
     assert stt.prompts[-1] is None
     assert " none " in ev.format_results([result], 1)
+
+
+# -- phase 6b : phrases courtes et prompt recopié sur du bruit -------------------------------
+
+
+def test_short_phrase_list() -> None:
+    phrases = ev.load_phrases(ev.PROJECT_ROOT / "scripts" / "stt_phrases_courtes_fr.txt")
+    assert "et à Tokyo ?" in phrases and "et demain ?" in phrases
+    assert len(phrases) >= 15 and all(len(ev.normalize(p)) <= 4 for p in phrases)
+
+
+def test_prompt_leaks() -> None:
+    prompt = "Applications : Hades. MIKATA, Bloc-notes, VS Code. Et à Tokyo ? Et demain ?"
+    assert ev.prompt_leaks(prompt, "Et demain ?") == ["Et demain"]
+    assert ev.prompt_leaks(prompt, "ouvre vs code") == ["VS Code"]
+    assert ev.prompt_leaks(prompt, "Et à Paris ?") == []
+    assert ev.prompt_leaks(prompt, "Hades") == []  # un seul mot : trop courant pour compter
+    assert ev.prompt_leaks(prompt, "") == []
+
+
+def test_evaluate_counts_prompt_copied_on_noise() -> None:
+    dataset = [(np.full(1600, 1, dtype=np.int16), "et à Tokyo")]
+    noise = [
+        ("a.wav", np.full(1600, 2, dtype=np.int16)),
+        ("b.wav", np.full(1600, 3, dtype=np.int16)),
+        ("c.wav", np.full(1600, 4, dtype=np.int16)),
+    ]
+    stt = _FakeSTT({1: "Et à Tokyo ?", 2: "Et demain ?", 3: "", 4: "Bon, j'y vais."})
+    prompt = "MIKATA, Spotify. Et à Tokyo ? Et demain ?"
+    result = ev.evaluate(stt, dataset, "float16", 1, None, "config", noise, prompt)
+    assert result.wer == 0.0 and result.noise_clips == 3
+    assert result.noise_leaks == [("a.wav", "Et demain ?")]
+    report = ev.format_results([result], 1)
+    assert "1 extrait(s) sur 3 où le prompt est recopié" in report and "a.wav" in report
+
+
+def test_load_noise(tmp_path: Path) -> None:
+    from mikata.audio.wavfile import write_wav
+
+    write_wav(tmp_path / "1.wav", np.zeros(1600, dtype=np.int16), 16_000)
+    write_wav(tmp_path / "2.wav", np.zeros(4800, dtype=np.int16), 48_000)  # ignoré
+    write_wav(tmp_path / "3.wav", np.zeros(800, dtype=np.int16), 16_000)
+    clips = ev.load_noise(tmp_path)
+    assert [name for name, _ in clips] == ["1.wav", "3.wav"]
+    assert clips[0][1].dtype == np.int16 and len(clips[0][1]) == 1600
+    assert len(ev.load_noise(tmp_path, max_files=1)) == 1
+
+
+def test_run_options_for_short_phrases() -> None:
+    args = ev.parse_args(
+        ["--dir", "data/stt_eval_courtes", "run", "--prompt", "apps", "--initial-prompt", "MIKATA"]
+    )
+    assert args.dir == Path("data/stt_eval_courtes") and args.initial_prompt == "MIKATA"
+    assert args.noise is None and args.noise_max == ev.NOISE_MAX_FILES
+    args = ev.parse_args(["run", "--noise", "data/negatives", "--noise-max", "10"])
+    assert args.noise == Path("data/negatives") and args.noise_max == 10

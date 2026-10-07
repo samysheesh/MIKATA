@@ -184,19 +184,32 @@ def test_build_prompt_adds_short_app_names_first() -> None:
         "Steam",
     ]
     prompt = build_prompt(base, names, max_chars=500)
-    assert prompt == "MIKATA, Bloc-notes, Spotify. Applications : Counter-Strike 2, Discord, Steam."
+    # Applis d'abord, vocabulaire et amorces à la fin (juste avant ta phrase)
+    assert prompt == "Applications : Counter-Strike 2, Discord, Steam. MIKATA, Bloc-notes, Spotify"
     short = build_prompt(base, names, max_chars=len(base) + 30)
-    assert short == "MIKATA, Bloc-notes, Spotify. Applications : Steam."  # les plus courts
+    assert short == "Applications : Steam. MIKATA, Bloc-notes, Spotify"  # les plus courts
     assert build_prompt(base, [], 500) == base
     assert build_prompt("", ["Steam"], 500) == "Applications : Steam."
+
+
+def test_prompt_ends_with_short_follow_up_primers() -> None:
+    """Phase 6b : « et à Tokyo ? » lu « Yeah, Tokyo » ; les amorces de suites courtes
+    terminent le prompt, même avec des noms d'applications."""
+    from mikata.stt.whisper_local import build_prompt
+
+    base = SttConfig().initial_prompt
+    assert base.endswith("Et à Tokyo ? Et demain ?") and base.startswith("MIKATA")
+    prompt = build_prompt(base, ["Hades", "Balatro"], 500)
+    assert prompt == f"Applications : Balatro, Hades. {base}"
+    assert len(build_prompt(base, [f"Jeu {i}" for i in range(200)], 500)) <= 500
 
 
 def test_prompt_follows_installed_apps(fake_whisper: types.SimpleNamespace, tmp_path: Path) -> None:
     apps = ["Discord", "Hades"]  # Discord est déjà dans stt.initial_prompt
     stt = WhisperSTT(SttConfig(), download_root=tmp_path, vocabulary=lambda: apps)
-    assert stt.prompt.endswith("PowerShell. Applications : Hades.")
+    assert stt.prompt == f"Applications : Hades. {SttConfig().initial_prompt}"
     apps.append("Balatro")
-    assert stt.prompt.endswith("Applications : Balatro, Hades.")  # recalculé
+    assert stt.prompt.startswith("Applications : Balatro, Hades. MIKATA")  # recalculé
     stt.load()
     asyncio.run(stt.transcribe(np.zeros(1600, dtype=np.int16)))
     _, kwargs = FakeWhisperModel.instances[-1].calls[-1]

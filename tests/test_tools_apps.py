@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -281,7 +283,12 @@ def test_process_name_without_psutil_access(monkeypatch: pytest.MonkeyPatch) -> 
         raise psutil.AccessDenied(pid)
 
     monkeypatch.setattr(psutil, "Process", denied)
-    assert desktop_module._process_name(1234) == ""  # hors Windows : pas d'autre moyen
+    if sys.platform == "win32":  # repli QueryFullProcessImageNameW, sur un PID qui existe
+        assert desktop_module._process_name(os.getpid()).lower().startswith("python")
+    # Hors Windows : pas d'autre moyen. (Sous Windows, un PID au hasard peut exister : les
+    # 2 bits de poids faible sont ignorés, 1234 désignait le processus 1232 sur la CI.)
+    monkeypatch.setattr(desktop_module.sys, "platform", "linux")
+    assert desktop_module._process_name(1234) == ""
 
     class Proc:
         def __init__(self, pid: int) -> None:

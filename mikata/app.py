@@ -24,6 +24,11 @@ Phase 6 :
   une conversation à côté : une transcription peu fiable (`agent.follow_up_min_confidence`)
   est ignorée, puis le LLM juge si la phrase s'adresse à MIKATA
   (`agent.follow_up_use_llm_gate`). Phrase ignorée : bip de fin, aucune réponse.
+Phase 6b : **arrêt vocal** sans mot d'activation. Pendant qu'une réponse est jouée et que
+personne n'a le micro, le VAD tourne et `stt.voice_stop.VoiceStopSpotter` transcrit les
+phrases courtes ; « stop », « tais-toi »... (`agent.voice_stop_phrases`, phrase entière)
+coupent le son de cette réponse et arrêtent sa commande si elle travaille encore, comme
+« MIKATA, stop ». Toute autre parole est ignorée. Latence de coupure dans le log.
 
 Commandes en parallèle : chaque commande a son propre état (`_Request.state`). Il n'y a
 qu'un micro, donc une seule commande **écoute** à la fois (`_listening`) ; dès que sa fin de
@@ -65,6 +70,7 @@ from mikata.stt.text import (
     strip_wake_word,
     wake_word_pattern,
 )
+from mikata.stt.voice_stop import StopHeard, VoiceStopSpotter
 from mikata.vad.base import VAD
 from mikata.wake.base import WakeWordDetector
 from mikata.wake.recordings import (
@@ -90,6 +96,7 @@ FOLLOW_UP_SOURCE = "suivi"
 # Réponse orale d'une commande dont la réponse a été coupée : « non » à une confirmation,
 # « stop » à un compte à rebours (garde-fou : dans le doute, rien n'est fait).
 INTERRUPTED_ANSWER = "stop"
+VOICE_STOP_TARGET_MS = 300  # arrêt vocal : coupure visée après la fin de parole
 
 
 class State(StrEnum):
@@ -245,6 +252,18 @@ class App:
         self._tasks: list[asyncio.Task[None]] = []
         self._wake_audio: np.ndarray | None = None
         self.detections = 0
+        # Arrêt vocal (phase 6b) : actif seulement pendant qu'une réponse est jouée.
+        self._voice_stop: VoiceStopSpotter | None = None
+        self._voice_stop_armed = False
+        agent_cfg = config.agent
+        if agent_cfg.voice_stop and stt is not None and vad is not None and speaker is not None:
+            self._voice_stop = VoiceStopSpotter(
+                stt,
+                agent_cfg.voice_stop_phrases,
+                self._on_voice_stop,
+                silence_ms=agent_cfg.voice_stop_silence_ms,
+                max_s=agent_cfg.voice_stop_max_s,
+            )
 
     # -- cycle de vie ---------------------------------------------------------------------
 
@@ -344,6 +363,8 @@ class App:
             self._hotkeys = None
 
     async def _shutdown(self) -> None:
+        if self._voice_stop is not None:
+            self._voice_stop.reset()
         for request in self._active.values():
             if request.recorder is not None:
                 request.recorder.cancel()
@@ -408,6 +429,8 @@ class App:
                 recorder.add(captured.samples, speech, captured.captured_at)
                 if speech and request is not None and request.state is State.FOLLOW_UP:
                     self._set_request_state(request, State.LISTENING)  # tu parles
+            if self._voice_stop is not None:
+                await self._spot_voice_stop(request is None, captured)
             if self._detector is None:
                 continue
             score = await loop.run_in_executor(
@@ -419,6 +442,71 @@ class App:
                 self._wake_audio = self.ring.read_last(round(WAKE_LOG_S * SAMPLE_RATE))
                 self._wake_written = self._written
                 self.bus.publish(WakeDetected(score=score, ts=captured.captured_at))
+
+    async def _spot_voice_stop(self, mic_free: bool, captured: CapturedFrame) -> None:
+        """Arrêt vocal : VAD + découpe des phrases tant qu'une réponse est jouée et que le
+        micro ne sert à aucune commande (sinon c'est l'écoute qui entend « stop »)."""
+        assert self._voice_stop is not None and self._vad is not None
+        if not mic_free or self._playing_stream() is None:
+            if self._voice_stop_armed:
+                self._voice_stop_armed = False
+                self._voice_stop.reset()
+            return
+        loop = asyncio.get_running_loop()
+        if not self._voice_stop_armed:
+            self._voice_stop_armed = True
+            if self._wake_executor is not None:  # même thread que is_speech : ordre garanti
+                self._wake_executor.submit(self._vad.reset)
+        speech = await loop.run_in_executor(
+            self._wake_executor, self._vad.is_speech, captured.samples
+        )
+        self._voice_stop.add(captured.samples, speech, captured.captured_at)
+
+    def _on_voice_stop(self, heard: StopHeard) -> None:
+        """« stop » dit sans « MIKATA » pendant une réponse : coupe le son de la réponse en
+        train d'être jouée, et arrête sa commande si elle travaille encore (comme « MIKATA,
+        stop »). Les autres commandes continuent."""
+        stream = self._playing_stream()
+        if stream is None or self._listening is not None:
+            logger.info("Arrêt vocal : « {} » entendu, plus rien à couper.", heard.text)
+            return
+        stream.cancel()  # AudioPlayer.stop() : silence dès le bloc audio suivant
+        cut_at = time.monotonic()
+        owner = next((r for r in self._active.values() if r.stream is stream), None)
+        stopped = ""
+        if (
+            owner is not None
+            and "answered" not in owner.marks
+            and owner.task is not None
+            and not owner.task.done()
+        ):
+            owner.task.cancel()  # plus d'outil ni d'appel LLM pour une réponse coupée
+            stopped = " ; commande arrêtée"
+        out_ms = (self._player.output_latency_s if self._player else 0.0) * 1000
+        total_ms = (cut_at - heard.last_speech_at) * 1000 + out_ms
+        label = f"#{owner.id}" if owner is not None else stream.label or "annonce"
+        log = logger.info if total_ms < VOICE_STOP_TARGET_MS else logger.warning
+        log(
+            "Arrêt vocal : « {} » -> réponse {} coupée ≈ {:.0f} ms après la fin de parole "
+            "(silence {:.0f} + attente transcription {:.0f} + sortie {:.0f} ms ; Whisper "
+            "{:.0f} ms ; objectif < {} ms){}.",
+            heard.text,
+            label,
+            total_ms,
+            (heard.ended_at - heard.last_speech_at) * 1000,
+            (cut_at - heard.ended_at) * 1000,
+            out_ms,
+            heard.transcript.latency_s * 1000,
+            VOICE_STOP_TARGET_MS,
+            stopped,
+        )
+
+    def _playing_stream(self) -> SpeechStream | None:
+        """Réponse en train d'être jouée (premier son parti, pas coupée), ou None."""
+        stream = self._speaker.current if self._speaker is not None else None
+        if stream is None or stream.first_sound_at is None or stream.cancelled:
+            return None
+        return stream
 
     async def _handle(self, event: BusEvent) -> None:
         if isinstance(event, WakeDetected):
@@ -484,8 +572,8 @@ class App:
         """Coupe la réponse **en train d'être jouée** (et seulement elle) ; renvoie sa
         commande. Une réponse pas encore commencée n'est pas touchée : elle attendra la fin
         de l'écoute."""
-        stream = self._speaker.current if self._speaker is not None else None
-        if stream is None or stream.first_sound_at is None or stream.cancelled:
+        stream = self._playing_stream()
+        if stream is None:
             return None
         stream.cancel()  # AudioPlayer.stop() : silence dès le bloc audio suivant
         cut_at = time.monotonic()
@@ -763,6 +851,7 @@ class App:
             listen=functools.partial(self._listen_for, stream) if self._can_listen else None,
             follow_up=gated,
         )
+        request.marks["answered"] = time.monotonic()  # le LLM a fini ; reste à tout dire
         stream.close()
         await stream.wait()
         request.marks["done"] = time.monotonic()

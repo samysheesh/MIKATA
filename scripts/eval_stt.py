@@ -21,6 +21,15 @@
    none : sans prompt ; config : `stt.initial_prompt` seul ; apps : `stt.initial_prompt` +
    noms des applications installées (menu Démarrer), comme MIKATA le fait quand
    `stt.prompt_apps` vaut true. Le prompt utilisé est affiché.
+
+4. Phrases courtes (ajout phase 6b : « et à Tokyo ? » lu « Yeah, Tokyo ») : jeu à part
+   enregistré avec `--dir data/stt_eval_courtes record --phrases
+   scripts/stt_phrases_courtes_fr.txt`, puis `run` sur ce dossier (commandes exactes dans le
+   README, phase 6b).
+
+   `--initial-prompt` remplace `stt.initial_prompt` le temps de la mesure. `--noise DOSSIER`
+   transcrit aussi des extraits sans commande (data/negatives, data/wake_logs) et compte
+   ceux où Whisper recopie un morceau du prompt (« Et demain ? » inventé sur du bruit).
 """
 
 from __future__ import annotations
@@ -33,7 +42,7 @@ import statistics
 import sys
 import time
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -42,6 +51,7 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DIR = PROJECT_ROOT / "data" / "stt_eval"
 DEFAULT_PHRASES = PROJECT_ROOT / "scripts" / "stt_phrases_fr.txt"
+NOISE_MAX_FILES = 50
 RECORD_MAX_S = 8.0
 RECORD_END_SILENCE_MS = 700
 RECORD_START_TIMEOUT_S = 5.0
@@ -95,6 +105,18 @@ def percentile(values: Sequence[float], q: float) -> float:
 def load_phrases(path: Path) -> list[str]:
     lines = path.read_text(encoding="utf-8").splitlines()
     return [line.strip() for line in lines if line.strip() and not line.lstrip().startswith("#")]
+
+
+def prompt_leaks(prompt: str, text: str) -> list[str]:
+    """Morceaux du prompt d'au moins 2 mots (« Et demain », « VS Code ») recopiés tels quels
+    dans `text` : Whisper reprend parfois son prompt quand il n'entend que du bruit."""
+    padded = f" {' '.join(normalize(text))} "
+    found = []
+    for piece in re.split(r"[,.;:?!]", prompt):
+        words = normalize(piece)
+        if len(words) >= 2 and f" {' '.join(words)} " in padded:
+            found.append(piece.strip())
+    return found
 
 
 def load_dataset(directory: Path) -> list[tuple[Path, str]]:
@@ -204,6 +226,9 @@ class RunResult:
     load_s: float
     worst: list[tuple[float, str, str]]  # (erreurs / mots, référence, hypothèse)
     prompt: str = "config"  # none | config | apps
+    # Ajout phase 6b : extraits sans commande (--noise) et ceux où le prompt est recopié.
+    noise_clips: int = 0
+    noise_leaks: list[tuple[str, str]] = field(default_factory=list)  # (fichier, texte)
 
 
 class _SyncSTT(Protocol):
@@ -219,25 +244,35 @@ def evaluate(
     beam_size: int,
     prompt: str | None = None,
     prompt_mode: str = "config",
+    noise: Sequence[tuple[str, np.ndarray]] = (),
+    prompt_text: str = "",
 ) -> RunResult:
-    """`prompt` : prompt initial imposé ("" = aucun) ; None = celui de la config."""
+    """`prompt` : prompt initial imposé ("" = aucun) ; None = celui de la config.
+    `noise` : extraits (nom, audio) sans commande ; `prompt_text` : prompt réellement donné
+    à Whisper, cherché dans leurs transcriptions."""
     from mikata.stt.text import clean_transcript
 
     start = time.perf_counter()
     stt.load()
     load_s = time.perf_counter() - start
-    pairs, latencies, worst = [], [], []
+    pairs, latencies, worst, leaks = [], [], [], []
+
+    def transcribe(audio: np.ndarray) -> Any:
+        return stt.transcribe_sync(audio) if prompt is None else stt.transcribe_sync(audio, prompt)
+
     try:
         for audio, reference in dataset:
-            result = (
-                stt.transcribe_sync(audio) if prompt is None else stt.transcribe_sync(audio, prompt)
-            )
+            result = transcribe(audio)
             hypothesis = clean_transcript(result.text)
             pairs.append((reference, hypothesis))
             latencies.append(result.latency_s)
             errors, words = word_errors(reference, hypothesis)
             if errors:
                 worst.append((errors / max(words, 1), reference, hypothesis))
+        for name, audio in noise:
+            text = clean_transcript(transcribe(audio).text)
+            if prompt_text and prompt_leaks(prompt_text, text):
+                leaks.append((name, text))
     finally:
         stt.close()
     worst.sort(key=lambda item: item[0], reverse=True)
@@ -250,6 +285,8 @@ def evaluate(
         load_s=load_s,
         worst=worst[:5],
         prompt=prompt_mode,
+        noise_clips=len(noise),
+        noise_leaks=leaks,
     )
 
 
@@ -273,6 +310,13 @@ def format_results(results: Sequence[RunResult], count: int) -> str:
                 f"  {e * 100:4.0f}%  « {ref} » -> " + (f"« {hyp} »" if hyp else "(rien)")
                 for e, ref, hyp in r.worst
             ]
+    for r in results:
+        if r.noise_clips:
+            lines.append(
+                f"\nBruit ({r.compute_type}, beam {r.beam_size}, prompt {r.prompt}) : "
+                f"{len(r.noise_leaks)} extrait(s) sur {r.noise_clips} où le prompt est recopié"
+            )
+            lines += [f"  {name} : « {text} »" for name, text in r.noise_leaks[:5]]
     return "\n".join(lines)
 
 
@@ -297,6 +341,18 @@ def prompt_for(mode: str, stt_cfg: Any, apps: Any = installed_apps) -> str | Non
     return build_prompt(stt_cfg.initial_prompt, apps(), stt_cfg.prompt_max_chars)
 
 
+def load_noise(directory: Path, max_files: int = NOISE_MAX_FILES) -> list[tuple[str, np.ndarray]]:
+    """Extraits sans commande (.wav 16 kHz) : les `max_files` premiers, dans l'ordre."""
+    from mikata.audio.wavfile import float_to_int16, read_wav
+
+    clips = []
+    for wav in sorted(directory.glob("*.wav"))[:max_files]:
+        pcm, rate = read_wav(wav)
+        if rate == 16_000:
+            clips.append((wav.name, float_to_int16(pcm)))
+    return clips
+
+
 def _run(args: argparse.Namespace) -> int:
     from mikata.audio.wavfile import float_to_int16, read_wav
     from mikata.config import load_config
@@ -315,15 +371,21 @@ def _run(args: argparse.Namespace) -> int:
         dataset.append((float_to_int16(pcm), reference))
 
     config = load_config(args.config)
-    prompts = {mode: prompt_for(mode, config.stt) for mode in args.prompt}
-    for mode, prompt in prompts.items():
-        shown = config.stt.initial_prompt if prompt is None else prompt
-        print(f"Prompt {mode} ({len(shown)} caractères) : « {shown} »")
+    stt_base = config.stt
+    if args.initial_prompt is not None:
+        stt_base = stt_base.model_copy(update={"initial_prompt": args.initial_prompt})
+    noise = load_noise(args.noise, args.noise_max) if args.noise else []
+    if args.noise:
+        print(f"{len(noise)} extrait(s) sans commande dans {args.noise}")
+    prompts = {mode: prompt_for(mode, stt_base) for mode in args.prompt}
+    shown = {mode: stt_base.initial_prompt if p is None else p for mode, p in prompts.items()}
+    for mode, text in shown.items():
+        print(f"Prompt {mode} ({len(text)} caractères) : « {text} »")
     results = []
     for compute_type, beam_size, mode in itertools.product(
         args.compute_type, args.beam_size, args.prompt
     ):
-        stt_cfg = config.stt.model_copy(
+        stt_cfg = stt_base.model_copy(
             update={
                 "model": args.model or config.stt.model,
                 "compute_type": compute_type,
@@ -332,7 +394,9 @@ def _run(args: argparse.Namespace) -> int:
         )
         print(f"{stt_cfg.model} {compute_type} beam {beam_size} prompt {mode}...")
         stt = WhisperSTT(stt_cfg, download_root=config.resolve("models/whisper"))
-        results.append(evaluate(stt, dataset, compute_type, beam_size, prompts[mode], mode))
+        results.append(
+            evaluate(stt, dataset, compute_type, beam_size, prompts[mode], mode, noise, shown[mode])
+        )
     print("\n" + format_results(results, len(dataset)))
     return 0
 
@@ -355,6 +419,18 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         default=["config"],
         help="prompt initial : none, config (stt.initial_prompt), apps (+ applis installées)",
     )
+    run.add_argument(
+        "--initial-prompt",
+        default=None,
+        help="remplace stt.initial_prompt pour cette mesure (comparer avec un autre prompt)",
+    )
+    run.add_argument(
+        "--noise",
+        type=Path,
+        default=None,
+        help="dossier d'extraits sans commande (.wav 16 kHz) : prompt recopié sur du bruit ?",
+    )
+    run.add_argument("--noise-max", type=int, default=NOISE_MAX_FILES)
     return parser.parse_args(argv)
 
 

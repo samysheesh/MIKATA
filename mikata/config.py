@@ -83,7 +83,12 @@ class SttConfig(_Section):
     device: Literal["cuda", "cpu"] = "cuda"
     compute_type: Literal["float16", "int8_float16", "int8", "float32"] = "int8_float16"
     beam_size: int = Field(default=1, ge=1)
-    initial_prompt: str = "MIKATA, Bloc-notes, Spotify, Discord, Steam, Chrome, VS Code, PowerShell"
+    # Vocabulaire, puis amorces de suites courtes (phase 6b : « et à Tokyo ? » était lu
+    # « Yeah, Tokyo »). La langue est forcée à « fr » dans stt/whisper_local.py.
+    initial_prompt: str = (
+        "MIKATA, Bloc-notes, Spotify, Discord, Steam, Chrome, VS Code, PowerShell. "
+        "Et à Tokyo ? Et demain ?"
+    )
     # Ajouts phase 6 : noms des applications installées ajoutés au prompt de Whisper, dans
     # la limite de prompt_max_chars (Whisper ne garde que ~220 tokens de prompt).
     prompt_apps: bool = True
@@ -199,6 +204,17 @@ class AgentConfig(_Section):
             "non merci", "pas grave",
         ]
     )  # fmt: skip
+    # Ajouts phase 6b : arrêt vocal **sans** mot d'activation pendant que MIKATA parle. Une
+    # phrase courte qui est entièrement l'une de voice_stop_phrases coupe la réponse en
+    # cours ; toute autre parole est ignorée. Liste plus courte que cancel_phrases : un
+    # « non » ou un « c'est bon » dit à quelqu'un d'autre ne doit pas couper MIKATA.
+    voice_stop: bool = True
+    voice_stop_phrases: list[str] = Field(
+        default_factory=lambda: ["stop", "arrête", "arrête-toi", "tais-toi", "ça suffit", "chut"],
+        min_length=1,
+    )
+    voice_stop_silence_ms: int = Field(default=160, ge=80, le=1000)  # fin de la phrase d'arrêt
+    voice_stop_max_s: float = Field(default=2.0, gt=0, le=10)  # au-delà : pas un « stop »
 
 
 class GuardConfig(_Section):

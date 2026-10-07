@@ -10,6 +10,12 @@ Ajout phase 6 : le prompt initial de Whisper (`stt.initial_prompt`, vocabulaire 
 (`stt.prompt_apps`), dans la limite de `stt.prompt_max_chars` : Whisper écrit plus souvent
 « Spotify » ou « Counter-Strike 2 » que « spot if aï ». Effet mesurable avec
 `scripts/eval_stt.py run --prompt none config apps`.
+
+Phase 6b : la langue reste forcée (`language="fr"`, jamais de détection automatique), et
+`stt.initial_prompt` finit par des amorces de suites courtes (« Et à Tokyo ? Et demain ? ») :
+sur deux mots, Whisper lisait « Yeah, Tokyo ». Les noms d'applications passent donc
+**avant** `stt.initial_prompt` : la fin du prompt est ce que Whisper lit juste avant ta
+phrase, et ce qu'il garde si le prompt est trop long (il coupe le début).
 """
 
 from __future__ import annotations
@@ -39,10 +45,11 @@ _APP_NAME_SKIP = re.compile(r"[\\/:]|https?|\.exe\b|\(x86\)|\bx64\b", re.IGNOREC
 
 
 def build_prompt(base: str, app_names: Sequence[str] = (), max_chars: int = 500) -> str:
-    """Prompt initial de Whisper : `base`, puis des noms d'applications tant qu'ils tiennent
-    dans `max_chars` (les noms courts d'abord : ce sont ceux qu'on dit).
+    """Prompt initial de Whisper : des noms d'applications tant qu'ils tiennent dans
+    `max_chars` (les noms courts d'abord : ce sont ceux qu'on dit), puis `base`.
 
-    Whisper ne garde que ~220 tokens de prompt : au-delà, le début serait coupé.
+    `base` est à la fin : c'est le texte le plus proche de ta phrase (amorces « Et à
+    Tokyo ? »), et Whisper ne garde que les ~220 derniers tokens de prompt.
     """
     prompt = base.strip()
     seen = {name.casefold() for name in re.split(r"[,.;]\s*", prompt) if name}
@@ -67,8 +74,8 @@ def build_prompt(base: str, app_names: Sequence[str] = (), max_chars: int = 500)
     if not picked:
         return prompt
     picked.sort(key=str.casefold)
-    head = prompt.rstrip(" .") + ". " if prompt else ""
-    return f"{head}Applications : {', '.join(picked)}."
+    apps = f"Applications : {', '.join(picked)}."
+    return f"{apps} {prompt}" if prompt else apps
 
 
 class SttUnavailableError(StartupError):

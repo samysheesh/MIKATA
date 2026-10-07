@@ -1,0 +1,22 @@
+# Suites courtes pour scripts/eval_stt.py (phase 6b), à dire comme dans la fenêtre de suivi :
+# deux ou trois mots, juste après une réponse. « et à Tokyo ? » était lu « Yeah, Tokyo ».
+# « et à Tokyo ? » et « et demain ? » sont dans le prompt : les autres mesurent si l'effet
+# se généralise.
+et à Tokyo ?
+et demain ?
+et à Paris ?
+et ce soir ?
+et à New York ?
+et après ?
+et maintenant ?
+et toi ?
+et en dollars ?
+et la semaine prochaine ?
+et Lyon ?
+pourquoi ?
+combien ?
+plus fort
+encore
+la suivante
+vas-y
+c'est loin ?
