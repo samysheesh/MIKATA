@@ -212,3 +212,37 @@ def test_cancel_is_safe(reason_pattern: str) -> None:
         recorder.cancel()
 
     asyncio.run(scenario())
+
+
+def test_slow_pre_roll_check_is_awaited_after_timeout() -> None:
+    """GPU très chargé : le délai sans parole expire avant la fin de la vérification."""
+
+    async def scenario(text: str) -> tuple[list[EndReason], CommandRecorder]:
+        ends: list[EndReason] = []
+        recorder = _recorder(FakeSTT(text, delay=0.05), ends)
+        await _feed(recorder, "." * 60)  # 4 s d'audio d'un coup, avant la fin du calcul
+        assert ends == []
+        await asyncio.sleep(0.1)
+        return ends, recorder
+
+    ends, recorder = asyncio.run(scenario("Hey Jarvis, pause."))
+    assert ends == [EndReason.PRE_ROLL]
+    assert len(recorder.audio) == 32_000 + 50 * 1280  # trames ignorées après le délai
+    ends, _ = asyncio.run(scenario("Hey Jarvis."))
+    assert ends == [EndReason.NO_SPEECH]
+
+
+def test_failed_pre_roll_check_after_timeout_ends_listening() -> None:
+    class BrokenSTT(FakeSTT):
+        async def transcribe(self, audio: np.ndarray) -> Transcript:
+            await asyncio.sleep(0.05)
+            raise RuntimeError("GPU perdu")
+
+    async def scenario() -> list[EndReason]:
+        ends: list[EndReason] = []
+        recorder = _recorder(BrokenSTT("x"), ends)
+        await _feed(recorder, "." * 60)
+        await asyncio.sleep(0.1)
+        return ends
+
+    assert asyncio.run(scenario()) == [EndReason.NO_SPEECH]

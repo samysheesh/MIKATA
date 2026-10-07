@@ -122,7 +122,8 @@ def test_command_said_in_one_breath_starts_from_pre_roll(config_file: Path) -> N
     assert ids == list(range(ids[0], ids[0] + len(ids)))  # aucune trame perdue ni doublée
     assert ids[0] == 31 - 24  # 2 s pleines avant la trame de détection : « Hey Jarvis » inclus
     assert tray.states == [State.IDLE, State.LISTENING, State.TRANSCRIBING, State.IDLE]
-    assert app._detector.calls >= 50  # type: ignore[union-attr]  # capture jamais bloquée
+    # La détection a continué pendant l'écoute : toutes les trames transcrites y sont passées.
+    assert app._detector.calls >= ids[-1]  # type: ignore[union-attr]
 
 
 def test_nothing_said_returns_to_idle_with_end_beep(config_file: Path) -> None:

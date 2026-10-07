@@ -10,7 +10,9 @@ Fin de parole (VAD sur les trames reçues après la détection) :
 - aucune parole après la détection pendant `end_silence_ms` : la commande a peut-être été
   dite d'une traite et finie avant le bip (« MIKATA, pause »). On transcrit le pré-roll :
   s'il reste du texte après le mot d'activation, c'est la commande ; sinon on attend
-  (« MIKATA… [bip] ouvre Spotify ») jusqu'à `no_speech_timeout_s`.
+  (« MIKATA… [bip] ouvre Spotify ») jusqu'à `no_speech_timeout_s`. Si la transcription du
+  pré-roll n'est pas finie à ce moment-là (GPU très chargé), on attend son verdict au lieu
+  de perdre la commande.
 - `max_utterance_s` atteint : fin forcée.
 """
 
@@ -73,6 +75,7 @@ class CommandRecorder:
         self._silent_frames = 0
         self._speech_seen = False
         self._check_pre_roll = check_pre_roll
+        self._timed_out = False  # délai sans parole atteint, verdict du pré-roll attendu
         self._pre_roll_task: asyncio.Task[Transcript] | None = None
         self._spec_task: asyncio.Task[Transcript] | None = None
         self._spec_valid = False  # aucune parole depuis le lancement du spéculatif
@@ -97,7 +100,7 @@ class CommandRecorder:
     # -- trames -------------------------------------------------------------------------
 
     def add(self, frame: np.ndarray, is_speech: bool) -> None:
-        if self.finished:
+        if self.finished or self._timed_out:
             return
         self._chunks.append(frame)
         self._samples += len(frame)
@@ -123,7 +126,10 @@ class CommandRecorder:
                 )
                 self._pre_roll_task.add_done_callback(self._pre_roll_done)
             if self._frames >= self._no_speech_frames:
-                self._finish(EndReason.NO_SPEECH)
+                if self._pre_roll_task is not None and not self._pre_roll_task.done():
+                    self._timed_out = True  # `_pre_roll_done` tranchera
+                else:
+                    self._finish(EndReason.NO_SPEECH)
 
     def _speculate(self) -> None:
         if self._spec_task is not None and not self._spec_task.done():
@@ -137,11 +143,15 @@ class CommandRecorder:
             return
         if task.exception() is not None:
             logger.warning("Transcription du pré-roll impossible : {}", task.exception())
+            if self._timed_out:
+                self._finish(EndReason.NO_SPEECH)
             return
         text, found = strip_wake_word(clean_transcript(task.result().text), self._wake_pattern)
         logger.debug("Pré-roll : « {} » (mot d'activation trouvé : {})", text, found)
         if found and text and not self._speech_seen:
             self._finish(EndReason.PRE_ROLL)
+        elif self._timed_out:
+            self._finish(EndReason.NO_SPEECH)
 
     def _finish(self, reason: EndReason) -> None:
         if self.finished:
