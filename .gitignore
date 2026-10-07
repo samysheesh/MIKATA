@@ -1,0 +1,22 @@
+# Python / uv
+__pycache__/
+*.py[cod]
+.venv/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Secrets
+.env
+
+# Données locales (logs, mémoire, enregistrements)
+data/*
+!data/.gitkeep
+# Logs écrits à côté d'une config de test (ex. tests/fixtures/config_invalide.yaml)
+tests/**/data/
+
+# Modèles (lourds, téléchargés ou entraînés localement)
+models/*
+!models/.gitkeep

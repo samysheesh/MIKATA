@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  checks:
+    name: ruff + pytest (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Linux : environnement des sessions cloud. Windows : plateforme cible
+        # (vérifie aussi l'installation des dépendances marquées sys_platform == 'win32').
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Installer Python 3.11 et les dépendances (uv.lock)
+        run: uv sync --locked
+
+      - name: ruff (lint)
+        run: uv run ruff check .
+
+      - name: ruff (format)
+        run: uv run ruff format --check .
+
+      - name: pytest
+        run: uv run pytest

@@ -36,3 +36,8 @@ On l'active en disant « MIKATA », il écoute, transcrit, demande à un LLM clo
 - Une phase de la section 11 par session, sur une branche `phase-N`.
 - Ne modifie pas le code des autres phases sauf nécessité, et dis pourquoi.
 - À la fin de chaque phase, mets à jour `README.md` avec la liste exacte des commandes que l'utilisateur doit lancer sur son PC Windows pour vérifier les critères d'acceptation de la phase.
+
+## Git
+
+- Commits et PR au nom de l'utilisateur uniquement : aucune mention de Claude
+  (pas de `Co-Authored-By`, `Claude-Session`, « Generated with Claude Code », ni auteur « Claude »).

@@ -1,0 +1,1 @@
+"""Détection d'activité vocale."""

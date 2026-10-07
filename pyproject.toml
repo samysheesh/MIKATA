@@ -1,0 +1,61 @@
+[project]
+name = "mikata"
+version = "0.0.1"
+description = "MIKATA — assistant vocal local pour PC Windows"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+# Dépendances ajoutées phase par phase (docs/ARCHITECTURE.md §9 et §11).
+# Les versions exactes sont épinglées dans uv.lock.
+dependencies = [
+    "loguru>=0.7.2",
+    "numpy>=2.1",
+    "pillow>=11.0",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "pyyaml>=6.0.2",
+    "sounddevice>=0.5.1",
+    # Windows uniquement : importées paresseusement, mockées dans les tests.
+    "pystray>=0.19.5; sys_platform == 'win32'",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["mikata"]
+
+[tool.uv]
+# Résolution limitée aux plateformes visées : PC Windows + CI Linux.
+environments = [
+    "sys_platform == 'win32'",
+    "sys_platform == 'linux'",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# Document de référence : ses exemples de code ne sont pas reformatés.
+extend-exclude = ["docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "ANN", "RUF"]
+ignore = [
+    "ANN401",  # Any autorisé quand c'est voulu
+    "RUF001",  # caractères « ambigus » : normaux en français
+    "RUF002",
+    "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ANN"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
