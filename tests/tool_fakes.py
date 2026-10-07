@@ -31,6 +31,9 @@ class FakeDesktop:
                 AppEntry("Steam", r"C:\Start\Steam\Steam.lnk"),
                 AppEntry("Google Chrome", r"C:\Start\Google Chrome.lnk"),
                 AppEntry("Chrome Remote Desktop", r"C:\Start\Chrome Remote Desktop.lnk"),
+                AppEntry("Photos", "shell:AppsFolder\\Microsoft.Windows.Photos!App"),
+                AppEntry("Visual Studio Code", r"C:\Start\Visual Studio Code.lnk"),
+                AppEntry("Counter-Strike 2", r"C:\Start\Steam\Counter-Strike 2.url"),
             ]
         )
         self.late_apps = late_apps or []  # apparaissent au rafraîchissement de l'index

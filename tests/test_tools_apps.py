@@ -39,9 +39,21 @@ def _run(tmp_path: Path, desktop: FakeDesktop, tool: str, **arguments: Any) -> T
         ("spotify.exe", "Spotify"),
         ("brave", "Brave"),
         ("Steam", "Steam"),
-        ("chrome", "Google Chrome"),  # le plus court des noms presque égaux
-        ("Spotifaille", "Spotify"),
+        ("chrome", "Google Chrome"),  # le moins de mots en trop
+        ("spotfy", "Spotify"),  # faute de frappe sur un mot long
+        ("Spotify Music", "Spotify"),  # mot générique en trop
+        ("l'application Brave", "Brave"),
+        ("visual studio code", "Visual Studio Code"),
+        ("vs code", "Visual Studio Code"),  # sigle
+        ("VSCode", "Visual Studio Code"),
+        ("cs2", "Counter-Strike 2"),
+        ("photo", "Photos"),
+        # Bug de la phase 4 : « ouvre Photoshop » (non installé) ouvrait Photos.
         ("Photoshop", None),
+        ("Adobe Photoshop", None),
+        ("Steam VR", None),  # mot en trop non générique : autre appli
+        ("Spotifaille", None),  # déformation : le LLM corrige avant d'appeler l'outil
+        ("Chromium", None),
         ("", None),
     ],
 )
@@ -130,7 +142,7 @@ def test_start_menu_dirs(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_open_app_launches_best_match(tmp_path: Path) -> None:
     desktop = FakeDesktop()
-    result = _run(tmp_path, desktop, "open_app", name="spotifaille")
+    result = _run(tmp_path, desktop, "open_app", name="spotify music")
     assert result.ok and result.content == "Spotify ouvert." and result.terminal
     assert desktop.log == [("list_apps", False), ("launch", "Spotify")]
 
@@ -139,11 +151,15 @@ def test_open_app_refreshes_index_before_giving_up(tmp_path: Path) -> None:
     desktop = FakeDesktop(late_apps=[AppEntry("Discord", "Discord.lnk")])
     result = _run(tmp_path, desktop, "open_app", name="Discord")
     assert result.ok and desktop.log[-2:] == [("list_apps", True), ("launch", "Discord")]
-    missing = _run(tmp_path, FakeDesktop(), "open_app", name="Photoshop")
-    assert (
-        not missing.ok
-        and missing.content == "aucune application « Photoshop » dans le menu Démarrer"
-    )
+
+
+def test_open_app_never_opens_a_lookalike(tmp_path: Path) -> None:
+    """« ouvre Photoshop » sans Photoshop installé : refus, Photos n'est pas lancé."""
+    desktop = FakeDesktop()
+    missing = _run(tmp_path, desktop, "open_app", name="Photoshop")
+    assert not missing.ok and missing.content == "application introuvable : Photoshop"
+    assert not [entry for entry in desktop.log if entry[0] == "launch"]
+    assert desktop.log == [("list_apps", False), ("list_apps", True)]  # index rafraîchi
 
 
 def test_find_windows_by_process_then_title() -> None:
@@ -152,11 +168,14 @@ def test_find_windows_by_process_then_title() -> None:
         WindowInfo(2, "Nouvel onglet - Brave", "brave"),
         WindowInfo(3, "Discussion - Brave", "brave"),
         WindowInfo(4, "main.py - Visual Studio Code", "Code"),
+        WindowInfo(5, "Photos", "Photos"),
     ]
     assert [w.handle for w in find_windows("Brave", windows)] == [2, 3]
     assert [w.handle for w in find_windows("visual studio code", windows)] == [4]
+    assert [w.handle for w in find_windows("vs code", windows)] == [4]
     assert find_windows("Discord", windows) == []
-    assert open_apps(windows) == ["Spotify", "brave", "Code"]
+    assert find_windows("Photoshop", windows) == []  # « ferme Photoshop » ne ferme pas Photos
+    assert open_apps(windows) == ["Spotify", "brave", "Code", "Photos"]
 
 
 def test_close_focus_and_list_windows(tmp_path: Path) -> None:

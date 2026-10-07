@@ -1,8 +1,16 @@
 """Outils applications et fenêtres (§7) : open_app ★, close_app ★, focus_window ★,
 list_windows.
 
-Les noms dits à voix haute sont approximatifs : correspondance floue (`rapidfuzz`) avec
-l'index du menu Démarrer (`tools.desktop`) ou les fenêtres ouvertes.
+Correspondance des noms **stricte, par mots** (corrigée en phase 5 : « ouvre Photoshop »
+ouvrait Photos). Le LLM corrige déjà les erreurs de transcription ; ici, un nom n'est
+retenu que si :
+- il est identique (sans casse, accents ni ponctuation), ou collé (« vscode ») ;
+- chaque mot demandé est un mot du nom (« chrome » -> Google Chrome), à une faute de
+  frappe près pour les mots de 5 lettres et plus (« spotfy »), ou un sigle de mots qui se
+  suivent (« vs code » -> Visual Studio Code, « cs2 » -> Counter-Strike 2) ;
+- ou l'inverse : chaque mot du nom est dans la demande (« Spotify Music » -> Spotify) ;
+- ou les deux textes sont presque identiques (ratio ≥ 90).
+Sinon : aucun candidat, « application introuvable : X ».
 """
 
 from __future__ import annotations
@@ -16,10 +24,21 @@ from pydantic import BaseModel, Field
 from mikata.tools.base import AppEntry, BaseTool, NoParams, ToolError, WindowInfo
 from mikata.tools.registry import register_tool
 
-APP_CUTOFF = 75.0
-PROCESS_CUTOFF = 80.0
-TITLE_CUTOFF = 90.0
-TIE_MARGIN = 3.0  # scores presque égaux : le nom le plus court gagne (« Google Chrome »)
+# Mots de liaison dits autour d'un nom (« ouvre l'application Spotify »).
+FILLERS = frozenset(
+    {"l", "la", "le", "les", "de", "du", "des", "d", "app", "appli", "application", "logiciel",
+     "programme", "jeu", "fenetre"}
+)  # fmt: skip
+# Mots en trop tolérés dans la demande quand le nom est plus court (« Spotify Music »,
+# « Microsoft Word ») ; tout autre mot en trop (« Steam VR ») est une autre appli.
+GENERIC = frozenset(
+    {"microsoft", "adobe", "google", "music", "musique", "browser", "navigateur", "desktop",
+     "pc", "windows", "for", "pour", "player", "lecteur", "client", "launcher", "officiel"}
+)  # fmt: skip
+WORD_TYPO_MIN_LEN = 5
+WORD_TYPO_RATIO = 85.0
+WHOLE_RATIO = 90.0
+TITLE_SCORE = 80.0
 
 
 def fold(text: str) -> str:
@@ -30,43 +49,99 @@ def fold(text: str) -> str:
     return re.sub(r"[^\w]+", " ", text).strip()
 
 
-def find_app(query: str, apps: Sequence[AppEntry], cutoff: float = APP_CUTOFF) -> AppEntry | None:
-    """Application la plus proche de `query` : nom exact, sinon meilleur score flou."""
-    from rapidfuzz import fuzz, process
+def _query_words(text: str) -> list[str]:
+    return [word for word in fold(text).split() if word not in FILLERS]
 
-    wanted = fold(query)
-    if not wanted or not apps:
+
+def _same_word(asked: str, word: str) -> bool:
+    from rapidfuzz import fuzz
+
+    if asked == word:
+        return True
+    shortest = min(len(asked), len(word))
+    return shortest >= WORD_TYPO_MIN_LEN and fuzz.ratio(asked, word) >= WORD_TYPO_RATIO
+
+
+def _covered(asked: Sequence[str], words: Sequence[str]) -> int | None:
+    """Nombre de mots de `words` utilisés si chaque mot de `asked` y trouve sa place (mot
+    identique, faute de frappe, ou sigle de mots consécutifs), sinon None."""
+    used: set[int] = set()
+    for item in asked:
+        for i, word in enumerate(words):
+            if i not in used and _same_word(item, word):
+                used.add(i)
+                break
+        else:
+            span = _acronym_span(item, words, used)
+            if span is None:
+                return None
+            used.update(span)
+    return len(used)
+
+
+def _acronym_span(item: str, words: Sequence[str], used: set[int]) -> range | None:
+    """Mots consécutifs dont les initiales forment `item` (« vs » -> visual studio), ou
+    initiales suivies d'un mot entier (« vscode » -> visual studio code)."""
+    if len(item) < 2:
         return None
-    names = [fold(app.name) for app in apps]
-    for app, name in zip(apps, names, strict=True):
-        if name == wanted:
-            return app
-    matches = process.extract(wanted, names, scorer=fuzz.WRatio, limit=8, score_cutoff=cutoff)
-    if not matches:
+    for start in range(len(words)):
+        for end in range(start + 1, len(words) + 1):
+            span = range(start, end)
+            if used & set(span):
+                break
+            initials = "".join(words[i][0] for i in span)
+            last_full = "".join(words[i][0] for i in span[:-1]) + words[end - 1]
+            if len(span) >= 2 and item in (initials, last_full):
+                return span
+    return None
+
+
+def name_score(query: str, name: str) -> float | None:
+    """Score (plus haut = meilleur) si `name` correspond vraiment à `query`, sinon None."""
+    from rapidfuzz import fuzz
+
+    asked, words = _query_words(query), fold(name).split()
+    if not asked or not words:
         return None
-    best = max(score for _, score, _ in matches)
-    close = [index for _, score, index in matches if score >= best - TIE_MARGIN]
-    return apps[min(close, key=lambda index: (len(names[index]), index))]
+    if asked == words or "".join(asked) == "".join(words):
+        return 100.0
+    used = _covered(asked, words)
+    if used is not None:  # la demande est dans le nom ; moins de mots en trop = mieux
+        return 95.0 - 2 * (len(words) - used)
+    if _covered(words, asked) is not None:  # le nom est dans la demande (« Spotify Music »)
+        extra = [w for w in asked if not any(_same_word(w, word) for word in words)]
+        if all(w in GENERIC for w in extra):
+            return 85.0 - 2 * len(extra)
+    ratio = fuzz.ratio(" ".join(asked), " ".join(words))
+    return ratio - 10.0 if ratio >= WHOLE_RATIO else None
+
+
+def find_app(query: str, apps: Sequence[AppEntry]) -> AppEntry | None:
+    """Application qui correspond à `query` ; à score égal, le nom le plus court."""
+    scored = [
+        (score, -len(app.name), -i, app)
+        for i, app in enumerate(apps)
+        if (score := name_score(query, app.name)) is not None
+    ]
+    return max(scored, key=lambda item: item[:3])[3] if scored else None
 
 
 def find_windows(query: str, windows: Sequence[WindowInfo]) -> list[WindowInfo]:
-    """Fenêtres de l'appli la plus proche de `query` (nom du processus, sinon titre)."""
-    from rapidfuzz import fuzz
-
-    wanted = fold(query)
-    if not wanted or not windows:
-        return []
+    """Fenêtres de l'appli qui correspond à `query` : par nom de processus, sinon par titre
+    (tous les mots demandés présents dans le titre)."""
+    best: tuple[float, list[WindowInfo]] | None = None
     by_process: dict[str, list[WindowInfo]] = {}
     for window in windows:
-        by_process.setdefault(fold(window.process), []).append(window)
-    scored = [(fuzz.WRatio(wanted, name), name) for name in by_process if name]
-    if scored:
-        score, name = max(scored)
-        if score >= PROCESS_CUTOFF:
-            return by_process[name]
-    titled = [(fuzz.partial_ratio(wanted, fold(w.title)), i) for i, w in enumerate(windows)]
-    score, index = max(titled)
-    return [windows[index]] if score >= TITLE_CUTOFF and len(wanted) >= 3 else []
+        by_process.setdefault(window.process, []).append(window)
+    for process, group in by_process.items():
+        score = name_score(query, process) if process else None
+        if score is not None and (best is None or score > best[0]):
+            best = (score, group)
+    asked = _query_words(query)
+    titled = [w for w in windows if asked and _covered(asked, fold(w.title).split()) is not None]
+    if titled and (best is None or best[0] < TITLE_SCORE):
+        best = (TITLE_SCORE, titled[:1])
+    return best[1] if best is not None else []
 
 
 def open_apps(windows: Sequence[WindowInfo], limit: int = 8) -> list[str]:
@@ -100,7 +175,7 @@ class OpenApp(BaseTool[AppName]):
         if app is None:  # installée depuis le dernier index ?
             app = find_app(args.name, await self.ctx.run_blocking(desktop.list_apps, True))
         if app is None:
-            raise ToolError(f"aucune application « {args.name} » dans le menu Démarrer")
+            raise ToolError(f"application introuvable : {args.name}")
         await self.ctx.run_blocking(desktop.launch, app)
         return f"{app.name} ouvert."
 

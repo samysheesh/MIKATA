@@ -14,11 +14,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from mikata.tools.apps import fold
+from mikata.tools.apps import name_score
 from mikata.tools.base import BaseTool, ToolError
 from mikata.tools.registry import register_tool
 
-DEVICE_CUTOFF = 70.0
 MEDIA_ACTIONS = {
     "play": "play_pause",
     "pause": "play_pause",
@@ -148,16 +147,13 @@ class Mute(BaseTool[MuteParams]):
 
 
 def find_device(query: str, devices: list[tuple[str, str]]) -> tuple[str, str] | None:
-    from rapidfuzz import fuzz
-
-    wanted = fold(query)
-    if not wanted or not devices:
-        return None
+    """Sortie dont le nom correspond à `query` (mêmes règles strictes que les applis)."""
     scored = [
-        (fuzz.WRatio(wanted, fold(name)), -len(name), i) for i, (_, name) in enumerate(devices)
+        (score, -len(name), -i)
+        for i, (_, name) in enumerate(devices)
+        if (score := name_score(query, name)) is not None
     ]
-    score, _, index = max(scored)
-    return devices[index] if score >= DEVICE_CUTOFF else None
+    return devices[-max(scored)[2]] if scored else None
 
 
 class OutputParams(BaseModel):

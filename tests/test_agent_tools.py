@@ -224,7 +224,10 @@ def test_failed_tool_raises_reasoning_to_low(tmp_path: Path) -> None:
         [TextDelta("Je ne trouve pas cette application."), Done("stop")],
     )
     result = _respond(_agent(llm, make_ctx(tmp_path, desktop=FakeDesktop())), "ouvre machin")
-    assert not result.tool_results[0].ok and "menu Démarrer" in result.tool_results[0].content
+    assert (
+        not result.tool_results[0].ok
+        and "application introuvable" in result.tool_results[0].content
+    )
     assert llm.efforts == ["none", "low"]
     # Réflexion activée pour le 2e appel : DeepSeek veut `reasoning_content` sur l'appel
     # d'outil de la commande, même si le 1er appel (sans réflexion) n'en avait pas.
