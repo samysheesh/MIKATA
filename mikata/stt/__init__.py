@@ -1,0 +1,1 @@
+"""Transcription de la parole."""
