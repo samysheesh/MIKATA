@@ -83,7 +83,12 @@ class SttConfig(_Section):
     device: Literal["cuda", "cpu"] = "cuda"
     compute_type: Literal["float16", "int8_float16", "int8", "float32"] = "int8_float16"
     beam_size: int = Field(default=1, ge=1)
-    initial_prompt: str = "MIKATA, Bloc-notes, Spotify, Discord, Steam, Chrome, VS Code, PowerShell"
+    # Vocabulaire, puis amorces de suites courtes (phase 6b : « et à Tokyo ? » était lu
+    # « Yeah, Tokyo »). La langue est forcée à « fr » dans stt/whisper_local.py.
+    initial_prompt: str = (
+        "MIKATA, Bloc-notes, Spotify, Discord, Steam, Chrome, VS Code, PowerShell. "
+        "Et à Tokyo ? Et demain ?"
+    )
     # Ajouts phase 6 : noms des applications installées ajoutés au prompt de Whisper, dans
     # la limite de prompt_max_chars (Whisper ne garde que ~220 tokens de prompt).
     prompt_apps: bool = True

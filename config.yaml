@@ -28,9 +28,11 @@ stt:
   device: cuda
   compute_type: int8_float16
   beam_size: 1
-  # Vocabulaire donné à Whisper (noms propres, mots de MIKATA) ; voir eval_stt.py --prompt.
-  initial_prompt: "MIKATA, Bloc-notes, Spotify, Discord, Steam, Chrome, VS Code, PowerShell"
-  prompt_apps: true                # + noms des applications installées (menu Démarrer)
+  # Vocabulaire donné à Whisper (noms propres, mots de MIKATA), puis amorces de suites
+  # courtes (« et à Tokyo ? » lu « Yeah, Tokyo » sans elles) ; voir eval_stt.py --prompt.
+  # Langue forcée à « fr » dans le code : jamais de détection automatique.
+  initial_prompt: "MIKATA, Bloc-notes, Spotify, Discord, Steam, Chrome, VS Code, PowerShell. Et à Tokyo ? Et demain ?"
+  prompt_apps: true                # + noms des applications installées, placés avant
   prompt_max_chars: 500            # taille max du prompt (Whisper en garde ~220 tokens)
   # Formes du mot d'activation retirées du texte (tout ce qui précède part aussi).
   wake_words: ["mikata", "mi kata", "micata", "mikado", "jarvis"]
