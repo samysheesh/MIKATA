@@ -20,7 +20,8 @@ interroge un LLM cloud, agit sur le PC et répond à voix haute dans le casque.
 | 3 | LLM en streaming + voix (Piper / Kokoro), commandes en parallèle | fusionnée |
 | 4 | Outils (system, apps, web, media, ui, memory), réflexion choisie à la voix, coût par commande | fusionnée |
 | 5 | Outils puissants (clavier/souris, fichiers, PowerShell, extinction) + garde-fou | fusionnée |
-| 6 | Confort : fenêtre de suivi, barge-in, annulation, mémoire long terme | livrée, à valider sur le PC |
+| 6 | Confort : fenêtre de suivi, barge-in, annulation, mémoire long terme | fusionnée |
+| 6b | Arrêt vocal sans mot d'activation, Whisper sur les suites courtes | livrée, à valider sur le PC |
 | 7 | Voir `docs/ARCHITECTURE.md` §11 | à faire |
 
 ## Développement
@@ -1090,3 +1091,171 @@ Attendu : `Réussies : 23/23`.
   marche un frigo » n'appellent aucun outil et sont dites en 3 à 5 phrases (de 1 à 5 pour la
   blague).
 
+## Phase 6b — vérification sur le PC Windows
+
+Critères (tes deux demandes avant la phase 7) :
+
+1. Pendant que MIKATA parle, « stop », « arrête », « arrête-toi », « tais-toi », « ça suffit »
+   ou « chut », **sans** « MIKATA », coupent la réponse en moins de 300 ms ; la latence est
+   écrite dans le log. Toute autre parole est ignorée : « arrête de dire stop » et
+   « non merci » ne coupent rien.
+2. « et à Tokyo ? » n'est plus lu « Yeah, Tokyo ».
+
+Comment ça marche :
+
+- **Arrêt vocal** (`mikata/stt/voice_stop.py`) :
+  - Actif seulement pendant qu'une réponse ou une annonce (minuteur, rappel) est jouée, et si
+    MIKATA ne t'écoute pas déjà. Au repos, le micro ne sert qu'au mot d'activation, comme
+    avant.
+  - Le VAD Silero découpe ta parole en phrases. Une phrase de plus de
+    `agent.voice_stop_max_s` (2 s) n'est même pas transcrite : ce n'est pas un « stop ».
+  - Une phrase courte est transcrite par Whisper dès la première trame de silence (80 ms).
+    Après `agent.voice_stop_silence_ms` (160 ms) de silence, si la phrase **entière** est
+    dans `agent.voice_stop_phrases`, le son est coupé.
+  - La comparaison ignore la casse, les accents, la ponctuation, les répétitions
+    (« stop stop »), « euh » et « merci ».
+  - Couper, c'est comme « MIKATA, stop » : la réponse se tait, et sa commande s'arrête si
+    elle travaillait encore (outil, LLM). Il n'y a ni bip ni fenêtre de suivi. Les autres
+    commandes en parallèle continuent, et leurs réponses sont dites.
+  - Garde-fou de la phase 6 : une annonce d'extinction, de redémarrage ou de veille coupée
+    par « stop » annule l'action.
+  - `agent.cancel_phrases` ne change pas : elle sert toujours après « MIKATA ».
+    `voice_stop_phrases` est plus courte, car un « non » ou un « c'est bon » dit à quelqu'un
+    d'autre ne doit pas couper MIKATA.
+  - Réglages dans `config.yaml`, section `agent` :
+    - `voice_stop` (`false` le désactive) ;
+    - `voice_stop_phrases` ;
+    - `voice_stop_silence_ms` (une valeur plus haute coupe un peu plus tard mais se trompe
+      moins) ;
+    - `voice_stop_max_s`.
+  - Log : `Arrêt vocal : « Stop ! » -> réponse #N coupée ≈ X ms après la fin de parole
+    (silence 160 + attente transcription ... + sortie ... ms ; Whisper ... ms ; objectif
+    < 300 ms)`. Si X ≥ 300, la ligne passe en avertissement (`WARNING`).
+  - X part de la dernière trame de 80 ms où le VAD entend ta voix. Les quelques dizaines de
+    ms que le VAD met à voir la fin du mot ne sont pas comptées.
+- **Whisper et les phrases courtes** :
+  - La langue est **forcée** : `language="fr"` dans `mikata/stt/whisper_local.py`, sans
+    détection automatique. Il n'existe pas de clé `stt.language`. C'est vérifié par le test
+    `test_load_and_transcribe`, et `scripts\eval_stt.py` passe par le même code.
+  - `stt.initial_prompt` finit maintenant par des amorces de suites courtes :
+    `"MIKATA, Bloc-notes, Spotify, Discord, Steam, Chrome, VS Code, PowerShell. Et à Tokyo ?
+    Et demain ?"`.
+  - **Changement du code de la phase 6** : les noms des applications installées passent
+    désormais **avant** ce texte (`Applications : .... MIKATA, ... Et demain ?`). La fin du
+    prompt est ce que Whisper lit juste avant ta phrase. C'est aussi ce qu'il garde si le
+    prompt est trop long, car il coupe le début.
+  - Risque à mesurer : sur du bruit, Whisper recopie parfois son prompt (« Et demain ? »
+    inventé). `eval_stt.py --noise` compte ces cas (section 4).
+
+### 1. Récupérer la branche, installer
+
+```powershell
+git fetch origin
+git checkout phase-6b
+git pull
+uv sync
+```
+
+### 2. Lint et tests
+
+```powershell
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
+uv run pytest tests\test_voice_stop.py tests\test_app_voice_stop.py -v
+```
+
+Attendu : tout en `passed`. Ce que vérifient ces tests :
+- `test_stop_without_wake_word_cuts_the_answer` : « stop » et « tais-toi » coupent la
+  réponse simulée en moins de 300 ms, sans appel LLM, sans bip ni fenêtre de suivi.
+- `test_other_speech_does_not_cut` : « arrête de dire stop », « non merci » et « arrête la
+  musique » sont transcrits puis ignorés, et la réponse va au bout.
+- `test_pause_inside_a_phrase_discards_the_early_transcription` : « arrête… de dire stop »,
+  avec une courte pause, ne coupe pas non plus.
+- `test_stop_cuts_only_the_answer_being_played`, `test_stop_cuts_an_announcement`,
+  `test_voice_stop_can_be_disabled`...
+
+### 3. Arrêt vocal (avec le micro)
+
+```powershell
+uv run python -m mikata
+```
+
+1. « hey jarvis, raconte-moi une longue histoire ». Pendant la réponse, **sans** « hey
+   jarvis » : « stop ». Attendu : la voix se tait aussitôt, sans bip. Recommence avec
+   « tais-toi », « ça suffit », « arrête-toi » et « chut ». Dans un autre PowerShell :
+
+   ```powershell
+   Select-String -Path data\logs\mikata.log -Pattern "Arrêt vocal" | Select-Object -Last 5
+   ```
+
+   Attendu : `Arrêt vocal : « Stop ! » -> réponse #N coupée ≈ X ms après la fin de parole
+   (...)` avec **X < 300**.
+2. Même histoire. Pendant la réponse, dis « arrête de dire stop », puis « non merci », puis
+   une phrase quelconque à voix normale. Attendu : la réponse continue jusqu'au bout.
+3. Lance de la musique dans Spotify. « hey jarvis, raconte-moi une histoire », puis
+   « stop » pendant la réponse. Attendu : la voix se tait et la musique continue. Au repos,
+   « stop » tout seul ne fait rien, car MIKATA n'écoute pas sans le mot d'activation.
+4. Garde-fou : « hey jarvis, mets le PC en veille ». Pendant « Mise en veille dans 5
+   secondes... », dis « stop ». Attendu : le PC ne se met **pas** en veille.
+5. Mets `voice_stop: false` dans `config.yaml` (section `agent`) et relance MIKATA. Attendu :
+   « stop » ne coupe plus, seul « hey jarvis » coupe. Remets ensuite `true`.
+
+Si « stop » ne coupe jamais, passe `logging.level: DEBUG` et cherche `Arrêt vocal : parole
+de plus de 25 trames ignorée`. Ce message veut dire que le micro entend la voix de MIKATA
+dans les AirPods. Baisse leur volume ou rapproche-toi du micro. Si c'est
+`Arrêt vocal : « ... » ignoré`, envoie-moi ce que Whisper a entendu.
+
+### 4. Whisper sur les phrases courtes
+
+Enregistre d'abord le jeu de phrases courtes (une fois, 18 phrases). Dis chaque phrase comme
+une suite, en deux ou trois mots, d'un ton naturel et à ta distance habituelle du micro :
+
+```powershell
+uv run python scripts\eval_stt.py --dir data\stt_eval_courtes record --phrases scripts\stt_phrases_courtes_fr.txt
+```
+
+Puis mesure le nouveau prompt, sans prompt et avec les applis :
+
+```powershell
+uv run python scripts\eval_stt.py --dir data\stt_eval_courtes run --compute-type int8_float16 --prompt none config apps --noise data\negatives
+```
+
+Et l'ancien prompt de la phase 6, pour comparer :
+
+```powershell
+uv run python scripts\eval_stt.py --dir data\stt_eval_courtes run --compute-type int8_float16 --prompt config apps --initial-prompt "MIKATA, Bloc-notes, Spotify, Discord, Steam, Chrome, VS Code, PowerShell" --noise data\negatives
+```
+
+`--noise` prend des extraits sans commande. `data\negatives` existe si tu as utilisé
+`wake.collect_negatives` (phase 1) ; sinon, prends `data\wake_logs`, ou enlève l'option.
+
+Ce qu'on attend :
+- avec le nouveau prompt, « et à Tokyo ? » devient `Et à Tokyo ?`, et le WER de la ligne
+  `apps` est inférieur ou égal à celui de l'ancien prompt ;
+- « et à Paris ? », « et ce soir ? »... ne sont pas dans le prompt : ils disent si l'effet
+  se généralise ;
+- la ligne `Bruit ... : 0 extrait(s) sur N où le prompt est recopié` (ou presque 0).
+
+Si le nouveau prompt invente « Et demain ? » sur du bruit ou fait monter le WER, envoie-moi
+les deux tableaux.
+
+Non-régression sur les commandes normales (jeu de la phase 2), nouveau puis ancien prompt :
+
+```powershell
+uv run python scripts\eval_stt.py run --compute-type int8_float16 --prompt apps
+uv run python scripts\eval_stt.py run --compute-type int8_float16 --prompt apps --initial-prompt "MIKATA, Bloc-notes, Spotify, Discord, Steam, Chrome, VS Code, PowerShell"
+```
+
+Attendu : un WER à peu près identique.
+
+### 5. Suites courtes en vrai (avec le micro)
+
+« hey jarvis, quelle heure est-il ? », puis dans la fenêtre de suivi : « et à Tokyo ? ».
+Recommence 5 fois, avec aussi « et demain ? » et « et à Paris ? ».
+
+```powershell
+Select-String -Path data\logs\mikata.log -Pattern "Fenêtre de suivi" | Select-Object -Last 10
+```
+
+Attendu : `Fenêtre de suivi : « Et à Tokyo ? » retenue (...)`, jamais `Yeah`.
