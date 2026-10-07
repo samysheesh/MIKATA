@@ -30,6 +30,8 @@ DEVICES: list[dict[str, Any]] = [
      "max_output_channels": 0, "default_samplerate": 48000.0},
     {"name": "Haut-parleurs (Realtek)", "hostapi": 1, "max_input_channels": 0,
      "max_output_channels": 2, "default_samplerate": 48000.0},
+    {"name": "Microphone (RØDE NT-USB+)", "hostapi": 1, "max_input_channels": 2,
+     "max_output_channels": 0, "default_samplerate": 48000.0},
 ]  # fmt: skip
 
 
@@ -42,10 +44,10 @@ def _fake_sd() -> types.ModuleType:
 
 def test_collect_and_filter() -> None:
     devices = lad.collect_devices(_fake_sd())
-    assert len(devices) == 5
+    assert len(devices) == 6
     assert devices[0].host_api == "MME"
     wasapi = lad.filter_host_api(devices, lad.PREFERRED_HOST_API)
-    assert [d.index for d in wasapi] == [1, 2, 3, 4]
+    assert [d.index for d in wasapi] == [1, 2, 3, 4, 5]
     assert lad.filter_host_api(devices, "ASIO") == devices  # API absente : tout garder
 
 
@@ -81,8 +83,8 @@ def test_main_with_repo_config(
     assert lad.main(["--config", str(config_file)]) == 0
     out = capsys.readouterr().out
     assert "MME" not in out  # WASAPI seulement par défaut
-    assert "[OK] audio.input_device = 'Focusrite'" in out
-    assert "[OK] audio.output_device = 'Casque'" in out
+    assert "[OK] audio.input_device = 'NT-USB'" in out
+    assert "[OK] audio.output_device = 'default'" in out
 
     assert lad.main(["--config", str(config_file), "--all"]) == 0
     assert "MME" in capsys.readouterr().out

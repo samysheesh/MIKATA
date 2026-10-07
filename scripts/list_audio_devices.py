@@ -119,6 +119,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         ("audio.input_device", config.audio.input_device, "input"),
         ("audio.output_device", config.audio.output_device, "output"),
     ):
+        if substring.casefold() == "default":
+            print(f"[OK] {key} = 'default' -> périphérique par défaut de Windows")
+            continue
         ok, line = describe_match(key, substring, match_devices(candidates, substring, kind))
         all_ok &= ok
         print(line)
