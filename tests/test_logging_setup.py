@@ -33,7 +33,8 @@ def test_level_filters(tmp_path: Path) -> None:
 
 def test_without_console(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("sys.stderr", None)  # cas de pythonw.exe
-    log_file = setup_logging(LoggingConfig(file=tmp_path / "abs.log"), base_dir=Path("/ailleurs"))
+    cfg = LoggingConfig(file=tmp_path / "abs.log", actions_file=tmp_path / "actions.log")
+    log_file = setup_logging(cfg, base_dir=Path("/ailleurs"))  # chemins absolus : base ignorée
     logger.info("sans console")
     shutdown_logging()
     assert log_file == tmp_path / "abs.log"
