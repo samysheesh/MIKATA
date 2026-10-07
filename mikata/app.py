@@ -5,6 +5,7 @@ Phase 1 : capture continue → tampon circulaire → mot d'activation (executor 
 Phase 2 : écoute depuis le début du pré-roll (VAD Silero) → transcription (Whisper,
 spéculative) → texte sans le mot d'activation.
 Phase 3 : réflexion (LLM en streaming) → parole (TTS par fragments) ; son de réflexion.
+Phase 4 : outils (état ACTING), annonces des minuteurs et rappels (`announce`).
 
 Commandes en parallèle : chaque commande a son propre état (`_Request.state`). Il n'y a
 qu'un micro, donc une seule commande **écoute** à la fois (`_listening`) ; dès que sa fin de
@@ -50,7 +51,7 @@ from mikata.wake.recordings import (
 from mikata.wake.trigger import WakeTrigger
 
 if TYPE_CHECKING:
-    from mikata.agent.loop import Agent
+    from mikata.agent.loop import Agent, TurnResult
     from mikata.audio.player import Speaker, SpeechStream
 
 WAKE_LOG_S = 2.0
@@ -523,17 +524,43 @@ class App:
         request.stream = stream
         stream.on_first_sound = functools.partial(self._on_first_sound, request)
         self._spawn(self._thinking_sound(request), f"réflexion #{request.id}")
-        result = await self._agent.respond(text, stream)
+        result = await self._agent.respond(
+            text,
+            stream,
+            label=f"#{request.id}",
+            on_phase=functools.partial(self._on_agent_phase, request),
+        )
         stream.close()
         await stream.wait()
         request.marks["done"] = time.monotonic()
         if result.answer:
             self.answers.append(result.answer)
-        self._log_response(request, result.first_token_at, result.outcome, result.answer)
+        self._log_response(request, result)
 
     def _on_first_sound(self, request: _Request) -> None:
         request.marks["first_sound"] = time.monotonic()
         self._set_request_state(request, State.SPEAKING)
+
+    def _on_agent_phase(self, request: _Request, phase: str) -> None:
+        """Outils en cours (ACTING), puis retour au LLM (THINKING, ou SPEAKING s'il a déjà
+        parlé)."""
+        if phase == "acting":
+            self._set_request_state(request, State.ACTING)
+        elif request.stream is not None and request.stream.first_sound_at is not None:
+            self._set_request_state(request, State.SPEAKING)
+        else:
+            self._set_request_state(request, State.THINKING)
+
+    async def announce(self, text: str) -> None:
+        """Annonce hors commande (minuteur, rappel) : son « timer » puis phrase dite, à la
+        suite des réponses en cours."""
+        self._play("timer")
+        if self._speaker is None:
+            return
+        stream = self._speaker.open(label="annonce")
+        stream.say(text)
+        stream.close()
+        await stream.wait()
 
     async def _thinking_sound(self, request: _Request) -> None:
         """Petit son si rien n'est joué `thinking_sound_after_s` après la fin de parole (§2)."""
@@ -543,9 +570,7 @@ class App:
         if request.id in self._active and stream is not None and stream.first_sound_at is None:
             self._play("thinking")
 
-    def _log_response(
-        self, request: _Request, first_token_at: float | None, outcome: str, answer: str
-    ) -> None:
+    def _log_response(self, request: _Request, result: TurnResult) -> None:
         def since_end(t: float | None) -> str:
             return "—" if t is None else f"+{(t - request.end_at) * 1000:.0f} ms"
 
@@ -557,18 +582,21 @@ class App:
             else "—"
         )
         logger.info(
-            "Réponse #{} : premier son ≈ {} après la dernière syllabe (depuis fin_parole : "
-            "stt_prêt {}, llm_premier_token {}, premier_son {}, total {}) ; issue : {}.",
+            "Réponse #{} : premier son ≈ {} après la dernière syllabe, réflexion {} (depuis "
+            "fin_parole : stt_prêt {}, llm_premier_token {}, premier_son {}, total {}) ; "
+            "chemin : {} ; issue : {}.",
             request.id,
             after_syllable,
+            result.effort_label,
             since_end(request.marks.get("stt_ready")),
-            since_end(first_token_at),
+            since_end(result.first_token_at),
             since_end(first_sound),
             since_end(request.marks.get("done")),
-            outcome,
+            result.path,
+            result.outcome,
         )
-        if answer:
-            logger.info("Réponse #{} : « {} »", request.id, answer)
+        if result.answer:
+            logger.info("Réponse #{} : « {} »", request.id, result.answer)
 
     def _finish(self, request: _Request) -> None:
         if self._listening is request:

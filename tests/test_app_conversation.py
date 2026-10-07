@@ -19,7 +19,11 @@ from mikata.config import load_config
 from mikata.llm.base import Done, LLMEvent, TextDelta
 from mikata.llm.client import LlmError
 
-ALL_EARCONS = {**EARCONS, "thinking": np.full(10, 9, dtype=np.float32)}
+ALL_EARCONS = {
+    **EARCONS,
+    "thinking": np.full(10, 9, dtype=np.float32),
+    "timer": np.full(10, 42, dtype=np.float32),
+}
 
 
 class AudioOut:
@@ -78,7 +82,10 @@ class ContentLLM:
         self.prewarmed += 1
 
     async def stream(
-        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        reasoning_effort: str | None = None,
     ) -> AsyncIterator[LLMEvent]:
         command = messages[-1]["content"].split("« ")[-1].rstrip(" »")
         start = time.monotonic()

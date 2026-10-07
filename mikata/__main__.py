@@ -27,6 +27,7 @@ from mikata.ui.tray import TrayIcon
 if TYPE_CHECKING:
     from mikata.agent.loop import Agent
     from mikata.audio.player import Speaker
+    from mikata.tools.base import ToolContext
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -83,7 +84,13 @@ def log_config_summary(config: Config) -> None:
     if config.llm.is_placeholder:
         logger.warning("LLM non renseigné dans config.yaml (llm.base_url / llm.model).")
     else:
-        logger.info("LLM : {} @ {}", config.llm.model, config.llm.base_url)
+        logger.info(
+            "LLM : {} @ {} (réflexion par défaut : {})",
+            config.llm.model,
+            config.llm.base_url,
+            config.llm.reasoning_effort or "choix du fournisseur",
+        )
+    logger.info("Recherche web : {}", config.web.search_provider)
     for name, value in (
         ("LLM_API_KEY", config.secrets.llm_api_key),
         ("SEARCH_API_KEY", config.secrets.search_api_key),
@@ -95,6 +102,8 @@ WHISPER_DIR = "models/whisper"  # cache des modèles faster-whisper (scripts/dow
 
 
 TTS_CACHE_DIR = "data/tts_cache"
+USAGE_FILE = "data/llm_usage.json"  # cumul des tokens et du coût
+MEMORY_FILE = "data/memory.json"  # faits mémorisés (remember / forget)
 
 
 def build_speaker(config: Config, player: Any) -> Speaker:
@@ -107,13 +116,64 @@ def build_speaker(config: Config, player: Any) -> Speaker:
     return Speaker(tts, player, PhraseCache(tts, config.resolve(TTS_CACHE_DIR), voice_id))
 
 
-def build_agent(config: Config, phrases: Any = None) -> Agent:
-    """Client LLM + boucle agent. Refuse (ConfigError) sans clé API ou sans endpoint."""
+def build_tool_context(config: Config) -> ToolContext:
+    """Services des outils : bureau Windows, volume, notifications, web, mémoire."""
+    from mikata.agent.memory import LongTermMemory
+    from mikata.tools.base import ToolContext
+    from mikata.tools.web import create_http_client
+
+    ctx = ToolContext(
+        config,
+        http=create_http_client(),
+        memory=LongTermMemory(config.resolve(MEMORY_FILE)),
+    )
+    key = config.secrets.search_api_key
+    ctx.search_api_key = key.get_secret_value() if key is not None else None
+    if sys.platform == "win32":
+        from mikata.tools.desktop import WindowsDesktop
+        from mikata.tools.media import PycawAudio
+        from mikata.ui.notify import ToastNotifier
+
+        ctx.desktop, ctx.audio, ctx.notifier = WindowsDesktop(), PycawAudio(), ToastNotifier()
+    else:
+        logger.warning("Hors Windows : outils du bureau, du volume et des notifications inactifs.")
+    return ctx
+
+
+def build_agent(config: Config, phrases: Any = None, *, tools: bool = True) -> Agent:
+    """Client LLM + outils + boucle agent. Refuse (ConfigError) sans clé API ou endpoint."""
     from mikata.agent.loop import Agent
     from mikata.llm.client import OpenAICompatClient, check_llm_config
+    from mikata.llm.usage import UsageTracker
 
     api_key = check_llm_config(config.llm, config.secrets)
-    return Agent(OpenAICompatClient(config.llm, api_key), config, phrases=phrases)
+    usage = UsageTracker(config.llm, config.resolve(USAGE_FILE))
+    llm = OpenAICompatClient(config.llm, api_key)
+    if not tools:
+        return Agent(llm, config, phrases=phrases, usage=usage)
+
+    from mikata.tools.apps import open_apps
+    from mikata.tools.registry import ToolRegistry
+
+    ctx = build_tool_context(config)
+    registry = ToolRegistry(ctx)
+    if config.secrets.search_api_key is None:
+        logger.warning("SEARCH_API_KEY absente (.env) : web_search répondra « indisponible ».")
+    desktop = ctx.desktop
+
+    async def running_apps() -> list[str]:
+        assert desktop is not None
+        return open_apps(await ctx.run_blocking(desktop.windows))
+
+    return Agent(
+        llm,
+        config,
+        phrases=phrases,
+        tools=registry,
+        long_memory=ctx.memory,
+        usage=usage,
+        open_apps=running_apps if desktop is not None else None,
+    )
 
 
 def find_output_device(config: Config) -> Any:
@@ -180,7 +240,7 @@ def build_app(config: Config, *, tray: bool, audio: bool, llm: bool = True) -> A
     agent = build_agent(config, speaker.cache if speaker else None) if llm else None
     if not llm:
         logger.warning("Mode --no-llm : les commandes sont transcrites et journalisées seulement.")
-    return App(
+    app = App(
         config,
         tray=icon,
         audio=AudioCapture(mic, channel=config.audio.input_channel),
@@ -196,6 +256,9 @@ def build_app(config: Config, *, tray: bool, audio: bool, llm: bool = True) -> A
         agent=agent,
         speaker=speaker,
     )
+    if agent is not None and agent.tools is not None:
+        agent.tools.ctx.announce = app.announce  # minuteurs et rappels dits dans le casque
+    return app
 
 
 async def ask(config: Config, question: str, *, audio: bool) -> str:
@@ -214,24 +277,30 @@ async def ask(config: Config, question: str, *, audio: bool) -> str:
         await asyncio.to_thread(speaker.load)
     agent = build_agent(config, speaker.cache if speaker else None)
     try:
+        # Comme au mot d'activation : connexion TLS ouverte et index des applis prêt avant
+        # que la commande parte (le temps mesuré est celui d'un vrai usage).
+        await agent.prewarm()
         start = time.monotonic()
         if speaker is None:
             from mikata.agent.loop import SilentSpeech
 
-            result = await agent.respond(question, SilentSpeech())
+            result = await agent.respond(question, SilentSpeech(), label="--ask")
             first_sound = None
         else:
             stream = speaker.open("ask")
-            result = await agent.respond(question, stream)
+            result = await agent.respond(question, stream, label="--ask")
             stream.close()
             await stream.wait()
             first_sound = stream.first_sound_at
         token_ms = (result.first_token_at - start) * 1000 if result.first_token_at else None
         sound_ms = (first_sound - start) * 1000 if first_sound else None
         logger.info(
-            "--ask : premier token {} ms, premier son {} ms, issue : {}.",
+            "--ask : premier token {} ms, premier son {} ms, réflexion {} ; chemin : {} ; "
+            "issue : {}.",
             f"{token_ms:.0f}" if token_ms is not None else "—",
             f"{sound_ms:.0f}" if sound_ms is not None else "—",
+            result.effort_label,
+            result.path,
             result.outcome,
         )
         return result.answer

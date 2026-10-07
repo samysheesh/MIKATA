@@ -68,3 +68,16 @@ def test_reset_command(text: str, expected: bool) -> None:
 def test_estimate_tokens() -> None:
     assert estimate_tokens("") == 4
     assert 25 <= estimate_tokens("x" * 100) <= 35
+
+
+def test_exchange_keeps_tool_steps() -> None:
+    memory = ShortTermMemory(max_tokens=6000)
+    steps = [
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "a", "type": "function",
+         "function": {"name": "open_app", "arguments": '{"name": "Spotify"}'}}]},
+        {"role": "tool", "tool_call_id": "a", "content": "Spotify ouvert."},
+    ]  # fmt: skip
+    memory.add("ouvre Spotify", "C'est fait.", steps)
+    assert [m["role"] for m in memory.messages()] == ["user", "assistant", "tool", "assistant"]
+    assert memory.messages()[1]["tool_calls"][0]["id"] == "a"
+    assert memory.tokens > ShortTermMemory().tokens + 20  # les étapes comptent dans le plafond

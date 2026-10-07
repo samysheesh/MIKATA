@@ -17,7 +17,8 @@ SOUNDS = PROJECT_ROOT / "assets" / "sounds"
 def test_synthesized_sounds_are_short_and_safe(name: str) -> None:
     pcm = synthesize(name)
     assert pcm.dtype == np.float32
-    assert 0.05 < len(pcm) / DEFAULT_RATE < 0.4
+    max_s = 1.0 if name == "timer" else 0.4  # le minuteur doit s'entendre
+    assert 0.05 < len(pcm) / DEFAULT_RATE < max_s
     assert np.abs(pcm).max() <= 1.0
     assert abs(pcm[0]) < 0.01 and abs(pcm[-1]) < 0.01  # pas de clic
 
@@ -46,7 +47,7 @@ def test_volume_and_resampling(tmp_path: Path) -> None:
 def test_missing_files_fall_back_to_synthesis(tmp_path: Path) -> None:
     earcons = Earcons(tmp_path, DEFAULT_RATE, 1.0)
     assert "wake" in earcons and "inconnu" not in earcons
-    assert sorted(earcons) == sorted(EARCON_NAMES) and len(earcons) == 4
+    assert sorted(earcons) == sorted(EARCON_NAMES) and len(earcons) == len(EARCON_NAMES)
     assert np.allclose(earcons["end"], synthesize("end"), atol=1e-4)
     with pytest.raises(KeyError):
         earcons["inconnu"]

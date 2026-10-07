@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import re
+import asyncio
+import sys
 import threading
 import types
 from collections.abc import Callable
@@ -8,6 +9,7 @@ from pathlib import Path
 from typing import ClassVar
 
 import pytest
+from conftest import edit_config
 
 import mikata.__main__ as entry
 from mikata.app import State
@@ -109,11 +111,7 @@ def no_priority_change(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _with_audio(config_file: Path, **audio: object) -> Path:
-    text = config_file.read_text(encoding="utf-8")
-    for key, value in audio.items():
-        text = re.sub(rf"(?m)^  {key}: .*$", f"  {key}: {value}", text)
-    config_file.write_text(text, encoding="utf-8")
-    return config_file
+    return edit_config(config_file, audio=audio)
 
 
 def test_missing_models_exit_with_hint(
@@ -126,13 +124,13 @@ def test_missing_models_exit_with_hint(
 
 
 def test_unknown_device_exit(config_file: Path, fake_sd: object, no_priority_change: None) -> None:
-    _with_audio(config_file, input_device='"Rode NT-USB"')
+    _with_audio(config_file, input_device="Rode NT-USB")
     assert entry.main(["--config", str(config_file), "--no-tray", "--no-llm"]) == entry.EXIT_CONFIG
     assert "aucun périphérique" in _log(config_file)
 
 
 def test_channel_out_of_range(config_file: Path, fake_sd: object, no_priority_change: None) -> None:
-    _with_audio(config_file, input_channel="3")
+    _with_audio(config_file, input_channel=3)
     assert entry.main(["--config", str(config_file), "--no-tray", "--no-llm"]) == entry.EXIT_CONFIG
     assert "audio.input_channel = 3" in _log(config_file)
 
@@ -203,10 +201,9 @@ def test_gpu_unavailable_exit_code(config_file: Path, monkeypatch: pytest.Monkey
 
 
 def _with_llm(config_file: Path, key: str | None = "sk-test") -> Path:
-    text = config_file.read_text(encoding="utf-8")
-    text = text.replace('base_url: "https://..."', 'base_url: "https://api.example.test/v1"')
-    text = text.replace('model: "..."', 'model: "deepseek-flash"')
-    config_file.write_text(text, encoding="utf-8")
+    edit_config(
+        config_file, llm={"base_url": "https://api.example.test/v1", "model": "deepseek-flash"}
+    )
     if key is not None:
         (config_file.parent / ".env").write_text(f"LLM_API_KEY={key}\n", encoding="utf-8")
     return config_file
@@ -251,6 +248,29 @@ def test_build_app_with_llm_and_voice(
     assert app._speaker.tts.model == config_file.parent / "models" / "fr_FR-siwis-medium.onnx"  # type: ignore[attr-defined]
     assert app._speaker.player is app._player  # même flux de sortie que les bips
     assert app._agent.phrases is app._speaker.cache
+    # Phase 4 : outils, minuteurs annoncés dans le casque, coût, mémoire long terme.
+    tools = app._agent.tools
+    assert tools is not None and tools.ctx.announce == app.announce
+    assert {"open_app", "set_volume", "get_weather"} <= set(tools.tools)
+    assert tools.ctx.desktop is None and tools.ctx.audio is None  # hors Windows
+    assert tools.ctx.search_api_key is None
+    assert app._agent.usage is not None
+    assert app._agent.usage.path == config_file.parent / "data" / "llm_usage.json"
+    assert app._agent.long_memory is tools.ctx.memory
+    assert app._agent.long_memory.path == config_file.parent / "data" / "memory.json"
+
+
+def test_tool_context_on_windows(config_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from mikata.tools.desktop import WindowsDesktop
+    from mikata.tools.media import PycawAudio
+    from mikata.ui.notify import ToastNotifier
+
+    (config_file.parent / ".env").write_text("SEARCH_API_KEY=tvly-abc\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "platform", "win32")
+    ctx = entry.build_tool_context(entry.load_config(config_file))
+    assert isinstance(ctx.desktop, WindowsDesktop) and isinstance(ctx.audio, PycawAudio)
+    assert isinstance(ctx.notifier, ToastNotifier) and ctx.search_api_key == "tvly-abc"
+    asyncio.run(ctx.aclose())
 
 
 def test_ask_without_audio_prints_answer(
@@ -260,18 +280,22 @@ def test_ask_without_audio_prints_answer(
     from mikata.llm.base import Done, TextDelta
 
     class FakeLLM:
-        async def stream(self, messages: list, tools: list):  # type: ignore[no-untyped-def]
+        async def stream(self, messages: list, tools: list, reasoning_effort=None):  # type: ignore[no-untyped-def]
             assert "quelle heure" in messages[-1]["content"]
             yield TextDelta("Il est midi.")
             yield Done("stop")
 
-    monkeypatch.setattr(entry, "build_agent", lambda config, phrases=None: Agent(FakeLLM(), config))
+    monkeypatch.setattr(
+        entry, "build_agent", lambda config, phrases=None, **_: Agent(FakeLLM(), config)
+    )
     code = entry.main(
         ["--config", str(_with_llm(config_file)), "--ask", "quelle heure", "--no-audio"]
     )
     assert code == entry.EXIT_OK
     assert capsys.readouterr().out.strip() == "Il est midi."
-    assert "premier token" in _log(config_file)
+    log = _log(config_file)
+    assert "premier token" in log and "réflexion none" in log
+    assert "chemin : réponse directe, 1 appel(s) LLM" in log
 
 
 def test_ask_refuses_without_key(config_file: Path) -> None:

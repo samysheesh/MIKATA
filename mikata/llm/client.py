@@ -21,11 +21,12 @@ from loguru import logger
 from pydantic import SecretStr
 
 from mikata.config import ConfigError, LlmConfig, Secrets
-from mikata.llm.base import Done, LLMEvent, TextDelta, ToolCallReq
+from mikata.llm.base import Done, LLMEvent, TextDelta, ToolCallReq, Usage
 
 PREWARM_TIMEOUT_S = 5.0
 PREWARM_MIN_INTERVAL_S = 10.0  # inutile de réveiller une connexion encore chaude
 KEEPALIVE_S = 120.0
+USE_CONFIG = "config"  # stream() : niveau de réflexion de llm.reasoning_effort
 
 
 class LlmNotConfiguredError(ConfigError):
@@ -74,6 +75,37 @@ class _PendingCall:
         )
 
 
+def _reasoning_text(delta: Any) -> str:
+    """Texte de réflexion d'un morceau : `reasoning_content` (DeepSeek) ou `reasoning`."""
+    extra = getattr(delta, "model_extra", None) or {}
+    value = extra.get("reasoning_content") or extra.get("reasoning")
+    return value if isinstance(value, str) else ""
+
+
+def _field(obj: Any, name: str) -> Any:
+    if obj is None:
+        return None
+    value = getattr(obj, name, None)
+    if value is None:
+        value = (getattr(obj, "model_extra", None) or {}).get(name)
+    return value
+
+
+def _usage(raw: Any) -> Usage:
+    """Décompte OpenAI (`prompt_tokens_details.cached_tokens`) ou DeepSeek natif
+    (`prompt_cache_hit_tokens`)."""
+    cached = _field(_field(raw, "prompt_tokens_details"), "cached_tokens")
+    if cached is None:
+        cached = _field(raw, "prompt_cache_hit_tokens")
+    reasoning = _field(_field(raw, "completion_tokens_details"), "reasoning_tokens")
+    return Usage(
+        prompt=int(_field(raw, "prompt_tokens") or 0),
+        completion=int(_field(raw, "completion_tokens") or 0),
+        cached=int(cached or 0),
+        reasoning=int(reasoning or 0),
+    )
+
+
 class OpenAICompatClient:
     """Implémente l'interface `LLMClient`."""
 
@@ -120,22 +152,47 @@ class OpenAICompatClient:
             logger.debug("Préchauffage LLM impossible : {}", exc)
 
     async def stream(
-        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        reasoning_effort: str | None = USE_CONFIG,
     ) -> AsyncIterator[LLMEvent]:
+        """`reasoning_effort` (ajout phase 4) : niveau de réflexion de cet appel ; par défaut
+        celui de la config ; None = paramètre non envoyé."""
         import openai
 
         kwargs: dict[str, Any] = {"model": self.cfg.model, "messages": messages, "stream": True}
         if tools:
             kwargs["tools"] = tools
+        if self.cfg.include_usage:
+            kwargs["stream_options"] = {"include_usage": True}
+        effort = self.cfg.reasoning_effort if reasoning_effort == USE_CONFIG else reasoning_effort
+        if effort is not None:
+            kwargs["reasoning_effort"] = effort
         calls: dict[int, _PendingCall] = {}
         finish_reason = "stop"
+        usage: Usage | None = None
+        reasoning: list[str] = []
+        start = time.monotonic()
+        reasoning_end: float | None = None
         try:
             response = await self._client.chat.completions.create(**kwargs)
             async for chunk in response:
+                if chunk.usage is not None:
+                    usage = _usage(chunk.usage)
                 if not chunk.choices:
                     continue
                 choice = chunk.choices[0]
                 delta = choice.delta
+                if delta is not None and (thought := _reasoning_text(delta)):
+                    reasoning.append(thought)
+                elif (
+                    reasoning
+                    and reasoning_end is None
+                    and delta is not None
+                    and (delta.content or delta.tool_calls)
+                ):
+                    reasoning_end = time.monotonic()  # fin de la réflexion : premier mot
                 if delta is not None and delta.content:
                     yield TextDelta(delta.content)
                 for call in (delta.tool_calls if delta is not None else None) or []:
@@ -154,10 +211,18 @@ class OpenAICompatClient:
         except openai.APIConnectionError as exc:
             raise LlmError(f"serveur injoignable ({exc})") from exc
         except openai.APIStatusError as exc:
-            raise LlmError(f"erreur HTTP {exc.status_code} du serveur LLM") from exc
+            detail = str(getattr(exc, "message", "") or "")[:200]
+            raise LlmError(f"erreur HTTP {exc.status_code} du serveur LLM : {detail}") from exc
         for index in sorted(calls):
             yield calls[index].build()
-        yield Done(finish_reason)
+        if reasoning and reasoning_end is None:
+            reasoning_end = time.monotonic()
+        yield Done(
+            finish_reason,
+            usage=usage,
+            reasoning_s=reasoning_end - start if reasoning_end is not None else None,
+            reasoning="".join(reasoning),
+        )
 
     async def aclose(self) -> None:
         await self._client.close()
