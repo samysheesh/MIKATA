@@ -65,6 +65,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=None,
         help="pose une question au LLM, la dit dans le casque et quitte (sans micro)",
     )
+    parser.add_argument(
+        "--supervise",
+        action="store_true",
+        help="relance MIKATA s'il plante (démarrage automatique, scripts/install_autostart.ps1)",
+    )
     parser.add_argument("--version", action="version", version=f"MIKATA {__version__}")
     return parser.parse_args(argv)
 
@@ -272,8 +277,17 @@ def build_app(config: Config, *, tray: bool, audio: bool, llm: bool = True) -> A
         )
     player = AudioPlayer(headset)
     verifier = config.resolve(config.wake.verifier) if config.wake.verifier else None
-    detector = OpenWakeWordDetector(config.resolve(config.wake.model), verifier)
-    logger.info("Mot d'activation chargé : {}", detector.name)
+    detector = OpenWakeWordDetector(
+        config.resolve(config.wake.model),
+        verifier,
+        threshold=config.wake.threshold,
+        verifier_threshold=config.wake.verifier_threshold,
+    )
+    logger.info(
+        "Mot d'activation chargé : {}{}",
+        detector.name,
+        f" + vérificateur {verifier.name}" if verifier is not None else " (sans vérificateur)",
+    )
     vad = SileroVAD(config.resolve(config.vad.model), config.vad.threshold)
     speaker = build_speaker(config, player) if llm else None
     agent = build_agent(config, speaker.cache if speaker else None) if llm else None
@@ -356,6 +370,16 @@ async def ask(config: Config, question: str, *, audio: bool) -> str:
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     config_path = resolve_config_path(args.config)
+    if args.supervise:  # ajout phase 7 : processus de relance, MIKATA tourne dans un enfant
+        from mikata.supervise import child_command, setup_supervisor_log, supervise
+
+        setup_supervisor_log(config_path.parent / "data" / "logs")
+        try:
+            return supervise(child_command(sys.argv[1:] if argv is None else argv))
+        except KeyboardInterrupt:
+            return EXIT_OK
+        finally:
+            shutdown_logging()
     # Logs provisoires (valeurs par défaut) pour tracer une éventuelle erreur de config,
     # y compris sous pythonw.exe où il n'y a pas de console.
     setup_logging(LoggingConfig(), base_dir=config_path.parent)

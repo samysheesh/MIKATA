@@ -28,6 +28,7 @@ class Event:
 class WakeDetected(Event):
     score: float
     source: Literal["wake_word", "hotkey"] = "wake_word"
+    verifier: float | None = None  # ajout phase 7 : probabilité « ta voix » (vérificateur)
 
 
 @dataclass(frozen=True, eq=False)

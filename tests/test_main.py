@@ -144,8 +144,8 @@ def test_build_app_wires_real_components(
     class Detector:
         name = "hey_jarvis"
 
-        def __init__(self, model: Path, verifier: Path | None) -> None:
-            self.model = model
+        def __init__(self, model: Path, verifier: Path | None, **thresholds: float) -> None:
+            self.model, self.thresholds = model, thresholds
 
     class Vad:
         def __init__(self, model: Path, threshold: float) -> None:
@@ -159,6 +159,7 @@ def test_build_app_wires_real_components(
     assert app._audio.device.name == "Microphone (RØDE NT-USB+)"  # type: ignore[union-attr]
     assert app._player.device.name == "Casque (HyperX Cloud)"  # type: ignore[union-attr]
     assert app._detector.model == config_file.parent / "models" / "hey_jarvis.onnx"  # type: ignore[union-attr]
+    assert app._detector.thresholds == {"threshold": 0.5, "verifier_threshold": 0.5}  # type: ignore[union-attr]
     assert app._earcons["wake"].dtype.name == "float32"
     assert app._hotkeys is not None and app._cpu is not None
     assert app._vad.model == config_file.parent / "models" / "silero_vad.onnx"  # type: ignore[union-attr]
@@ -170,7 +171,7 @@ def test_missing_vad_model_exit(
     config_file: Path, fake_sd: object, no_priority_change: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        "mikata.wake.oww.OpenWakeWordDetector", lambda *a: types.SimpleNamespace(name="x")
+        "mikata.wake.oww.OpenWakeWordDetector", lambda *a, **k: types.SimpleNamespace(name="x")
     )
     assert entry.main(["--config", str(config_file), "--no-tray", "--no-llm"]) == entry.EXIT_CONFIG
     assert "silero_vad.onnx" in _log(config_file)
@@ -237,7 +238,7 @@ def test_build_app_with_llm_and_voice(
     config_file: Path, fake_sd: object, no_priority_change: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        "mikata.wake.oww.OpenWakeWordDetector", lambda *a: types.SimpleNamespace(name="x")
+        "mikata.wake.oww.OpenWakeWordDetector", lambda *a, **k: types.SimpleNamespace(name="x")
     )
     monkeypatch.setattr("mikata.vad.silero.SileroVAD", lambda *a: object())
     config = entry.load_config(_with_llm(config_file))

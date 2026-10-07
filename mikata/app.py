@@ -29,6 +29,9 @@ personne n'a le micro, le VAD tourne et `stt.voice_stop.VoiceStopSpotter` transc
 phrases courtes ; « stop », « tais-toi »... (`agent.voice_stop_phrases`, phrase entière)
 coupent le son de cette réponse et arrêtent sa commande si elle travaille encore, comme
 « MIKATA, stop ». Toute autre parole est ignorée. Latence de coupure dans le log.
+Phase 7 : score du vérificateur de voix dans le log de détection, purge quotidienne
+(`maintenance.run_maintenance`), collecte de la vie courante bornée à
+`wake.negatives_max_hours`.
 
 Commandes en parallèle : chaque commande a son propre état (`_Request.state`). Il n'y a
 qu'un micro, donc une seule commande **écoute** à la fois (`_listening`) ; dès que sa fin de
@@ -60,6 +63,8 @@ from mikata.audio.capture import CapturedFrame
 from mikata.audio.ringbuffer import RingBuffer
 from mikata.config import Config
 from mikata.events import BusEvent, EventBus, Shutdown, WakeDetected
+from mikata.maintenance import INTERVAL_S as MAINTENANCE_INTERVAL_S
+from mikata.maintenance import run_maintenance
 from mikata.stt.base import STT
 from mikata.stt.speculative import CommandRecorder, EndReason
 from mikata.stt.text import (
@@ -74,6 +79,7 @@ from mikata.stt.voice_stop import StopHeard, VoiceStopSpotter
 from mikata.vad.base import VAD
 from mikata.wake.base import WakeWordDetector
 from mikata.wake.recordings import (
+    NEGATIVE_CLIP_S,
     NegativeCollector,
     estimate_tail_silence_s,
     purge_older_than,
@@ -247,6 +253,7 @@ class App:
         self._collector = NegativeCollector() if wake.collect_negatives else None
         self._wake_logs_dir = config.resolve("data/wake_logs")
         self._negatives_dir = config.resolve("data/negatives")
+        self._negatives_saved = 0  # extraits de vie courante sur le disque (phase 7)
         self._wake_executor: Executor | None = None
         self._io_executor: Executor | None = None
         self._tasks: list[asyncio.Task[None]] = []
@@ -330,11 +337,16 @@ class App:
                 self._start_hotkeys()
             if self._cpu is not None and self.config.logging.stats_interval_s > 0:
                 self._tasks.append(asyncio.create_task(self._stats_loop(), name="stats"))
-            self._submit_io(self._purge_wake_logs)
+            self._tasks.append(asyncio.create_task(self._maintenance_loop(), name="maintenance"))
             if self._collector is not None:
+                self._negatives_saved = sum(1 for _ in self._negatives_dir.rglob("*.wav"))
                 logger.warning(
-                    "Mode collect_negatives actif : extraits dans {}", self._negatives_dir
+                    "Mode collect_negatives actif : extraits dans {} ({:.1f} h sur {:.0f} h).",
+                    self._negatives_dir,
+                    self._negatives_saved * NEGATIVE_CLIP_S / 3600,
+                    self.config.wake.negatives_max_hours,
                 )
+                self._check_negatives_cap()
 
             self._set_state(State.IDLE)
             logger.info("MIKATA démarré, en attente.")
@@ -421,6 +433,7 @@ class App:
                 clip = self._collector.add(captured.samples)
                 if clip is not None:
                     self._submit_io(self._save_negative, clip, datetime.now())
+                    self._count_negative()
             recorder = request.recorder if request is not None else None
             if recorder is not None and not recorder.finished and self._vad is not None:
                 speech = await loop.run_in_executor(
@@ -441,7 +454,8 @@ class App:
             if self._trigger.update(score, captured.captured_at):
                 self._wake_audio = self.ring.read_last(round(WAKE_LOG_S * SAMPLE_RATE))
                 self._wake_written = self._written
-                self.bus.publish(WakeDetected(score=score, ts=captured.captured_at))
+                voice = getattr(self._detector, "last_verifier_score", None)
+                self.bus.publish(WakeDetected(score=score, ts=captured.captured_at, verifier=voice))
 
     async def _spot_voice_stop(self, mic_free: bool, captured: CapturedFrame) -> None:
         """Arrêt vocal : VAD + découpe des phrases tant qu'une réponse est jouée et que le
@@ -546,19 +560,22 @@ class App:
             self._wake_executor.submit(self._detector.reset)
         audio, self._wake_audio = self._wake_audio, None
         tail_s = estimate_tail_silence_s(audio) if audio is not None else None
+        scores = f"score {event.score:.2f}"
+        if event.verifier is not None:
+            scores += f", voix {event.verifier:.2f}"
         if tail_s is None:
             logger.info(
-                "Mot d'activation détecté (score {:.2f}) : bip {:.0f} ms après la trame "
+                "Mot d'activation détecté ({}) : bip {:.0f} ms après la trame "
                 "(+ sortie {:.0f} ms).",
-                event.score,
+                scores,
                 pipeline_ms,
                 out_ms,
             )
         else:
             logger.info(
-                "Mot d'activation détecté (score {:.2f}) : bip ≈ {:.0f} ms après la fin du mot "
+                "Mot d'activation détecté ({}) : bip ≈ {:.0f} ms après la fin du mot "
                 "(détection {:.0f} + traitement {:.0f} + sortie {:.0f} ms).",
-                event.score,
+                scores,
                 tail_s * 1000 + pipeline_ms + out_ms,
                 tail_s * 1000,
                 pipeline_ms,
@@ -967,6 +984,35 @@ class App:
         count = purge_older_than(self._wake_logs_dir, self.config.wake.log_days)
         if count:
             logger.info("{} ancien(s) audio(s) de détection mis à la corbeille.", count)
+
+    async def _maintenance_loop(self) -> None:
+        """Purge au démarrage puis toutes les 24 h : MIKATA tourne sans redémarrer (phase 7)."""
+        while True:
+            self._submit_io(self._maintenance)
+            await asyncio.sleep(MAINTENANCE_INTERVAL_S)
+
+    def _maintenance(self) -> None:
+        counts = run_maintenance(self.config)
+        done = {name: n for name, n in counts.items() if n}
+        if done:
+            details = ", ".join(f"{n} dans {name}" for name, n in done.items())
+            logger.info("Purge : {} mis à la corbeille.", details)
+
+    def _count_negative(self) -> None:
+        self._negatives_saved += 1
+        self._check_negatives_cap()
+
+    def _check_negatives_cap(self) -> None:
+        """Collecte bornée à `wake.negatives_max_hours` : au-delà, elle s'arrête d'elle-même."""
+        limit = self.config.wake.negatives_max_hours
+        if self._collector is not None and self._negatives_saved * NEGATIVE_CLIP_S >= limit * 3600:
+            self._collector = None
+            logger.warning(
+                "Collecte de la vie courante arrêtée : {:.0f} h dans {} "
+                "(wake.negatives_max_hours). Remets wake.collect_negatives: false.",
+                limit,
+                self._negatives_dir,
+            )
 
     def _save_negative(self, clip: np.ndarray, now: datetime) -> None:
         from mikata.audio.wavfile import write_wav
