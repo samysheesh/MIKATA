@@ -4,6 +4,12 @@ Piège Windows n°1 : CTranslate2 a besoin des DLL CUDA 12 cuBLAS et cuDNN 9. El
 des paquets pip `nvidia-cublas-cu12` et `nvidia-cudnn-cu12` (dossiers `nvidia/*/bin`), qu'on
 ajoute au chemin de recherche des DLL **avant** d'importer faster-whisper.
 Aucune bascule CPU automatique (décision §1) : sans GPU, erreur claire au démarrage.
+
+Ajout phase 6 : le prompt initial de Whisper (`stt.initial_prompt`, vocabulaire fixe :
+« MIKATA », Bloc-notes, minuteur...) est complété par les noms des applications installées
+(`stt.prompt_apps`), dans la limite de `stt.prompt_max_chars` : Whisper écrit plus souvent
+« Spotify » ou « Counter-Strike 2 » que « spot if aï ». Effet mesurable avec
+`scripts/eval_stt.py run --prompt none config apps`.
 """
 
 from __future__ import annotations
@@ -11,8 +17,10 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import os
+import re
 import sys
 import time
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -26,6 +34,41 @@ from mikata.stt.base import Transcript
 
 CUDA_PACKAGES = ("cublas", "cudnn")
 WARMUP_S = 1.0
+APP_NAME_MAX_WORDS = 4  # « Microsoft Flight Simulator 2024 » ; plus long : rarement dit tel quel
+_APP_NAME_SKIP = re.compile(r"[\\/:]|https?|\.exe\b|\(x86\)|\bx64\b", re.IGNORECASE)
+
+
+def build_prompt(base: str, app_names: Sequence[str] = (), max_chars: int = 500) -> str:
+    """Prompt initial de Whisper : `base`, puis des noms d'applications tant qu'ils tiennent
+    dans `max_chars` (les noms courts d'abord : ce sont ceux qu'on dit).
+
+    Whisper ne garde que ~220 tokens de prompt : au-delà, le début serait coupé.
+    """
+    prompt = base.strip()
+    seen = {name.casefold() for name in re.split(r"[,.;]\s*", prompt) if name}
+    names = []
+    for name in app_names:
+        name = " ".join(name.split())
+        key = name.casefold()
+        if key in seen or not name or _APP_NAME_SKIP.search(name):
+            continue
+        if len(name.split()) > APP_NAME_MAX_WORDS:
+            continue
+        seen.add(key)
+        names.append(name)
+    names.sort(key=lambda n: (len(n.split()), len(n), n.casefold()))
+    picked: list[str] = []
+    size = len(prompt) + len(". Applications : ")
+    for name in names:
+        if size + len(name) + 2 > max_chars:
+            break
+        picked.append(name)
+        size += len(name) + 2
+    if not picked:
+        return prompt
+    picked.sort(key=str.casefold)
+    head = prompt.rstrip(" .") + ". " if prompt else ""
+    return f"{head}Applications : {', '.join(picked)}."
 
 
 class SttUnavailableError(StartupError):
@@ -92,15 +135,56 @@ def gpu_memory_used_mb() -> float | None:
         return None
 
 
+def _reliability(segments: Sequence[Any]) -> tuple[float | None, float | None]:
+    """(no_speech_prob le plus haut, avg_logprob moyen pondéré par la longueur du texte)."""
+    no_speech = [
+        s.no_speech_prob for s in segments if getattr(s, "no_speech_prob", None) is not None
+    ]
+    weighted = [
+        (s.avg_logprob, max(1, len(s.text.strip())))
+        for s in segments
+        if getattr(s, "avg_logprob", None) is not None
+    ]
+    total = sum(weight for _, weight in weighted)
+    logprob = sum(value * weight for value, weight in weighted) / total if total else None
+    return (max(no_speech) if no_speech else None), logprob
+
+
 class WhisperSTT:
     """Implémente l'interface `STT`. Un executor dédié à 1 worker (§3) : un seul calcul GPU
     à la fois, la boucle asyncio n'est jamais bloquée."""
 
-    def __init__(self, cfg: SttConfig, download_root: Path) -> None:
+    def __init__(
+        self,
+        cfg: SttConfig,
+        download_root: Path,
+        vocabulary: Callable[[], Sequence[str]] | None = None,
+    ) -> None:
+        """`vocabulary` (ajout phase 6) : noms des applications installées, lus à chaque
+        transcription (liste en mémoire, jamais bloquante) si `stt.prompt_apps`."""
         self.cfg = cfg
         self.download_root = download_root
+        self.vocabulary = vocabulary
         self._model: Any = None
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mikata-stt")
+        self._prompt_key: tuple[str, ...] | None = None
+        self._prompt = cfg.initial_prompt
+
+    @property
+    def prompt(self) -> str:
+        """Prompt initial de la prochaine transcription (recalculé si les applis changent)."""
+        if not self.cfg.prompt_apps or self.vocabulary is None:
+            return self.cfg.initial_prompt
+        try:
+            names = tuple(self.vocabulary())
+        except Exception as exc:  # vocabulaire facultatif
+            logger.debug("Noms d'applications indisponibles pour Whisper : {!r}", exc)
+            return self._prompt
+        if names != self._prompt_key:
+            self._prompt_key = names
+            self._prompt = build_prompt(self.cfg.initial_prompt, names, self.cfg.prompt_max_chars)
+            logger.debug("Prompt Whisper ({} caractères) : {}", len(self._prompt), self._prompt)
+        return self._prompt
 
     @property
     def loaded(self) -> bool:
@@ -157,8 +241,9 @@ class WhisperSTT:
             vram,
         )
 
-    def transcribe_sync(self, audio: np.ndarray) -> Transcript:
-        """Transcription bloquante (int16 ou float32 mono 16 kHz) ; hors de la boucle asyncio."""
+    def transcribe_sync(self, audio: np.ndarray, prompt: str | None = None) -> Transcript:
+        """Transcription bloquante (int16 ou float32 mono 16 kHz) ; hors de la boucle asyncio.
+        `prompt` : prompt initial (défaut : `stt.initial_prompt`)."""
         if self._model is None:
             raise RuntimeError("Whisper n'est pas chargé")
         start = time.perf_counter()
@@ -171,18 +256,23 @@ class WhisperSTT:
             without_timestamps=True,
             condition_on_previous_text=False,
             vad_filter=False,  # le découpage est déjà fait par Silero
-            initial_prompt=self.cfg.initial_prompt or None,
+            initial_prompt=(self.cfg.initial_prompt if prompt is None else prompt) or None,
         )
-        text = "".join(segment.text for segment in segments).strip()  # décodage ici
+        decoded = list(segments)  # décodage ici
+        text = "".join(segment.text for segment in decoded).strip()
+        no_speech, logprob = _reliability(decoded)
         return Transcript(
             text=text,
             duration_s=len(audio) / SAMPLE_RATE,
             latency_s=time.perf_counter() - start,
+            no_speech_prob=no_speech,
+            avg_logprob=logprob,
         )
 
     async def transcribe(self, audio: np.ndarray) -> Transcript:
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(self._executor, self.transcribe_sync, audio)
+        prompt = self.prompt  # lu dans la boucle asyncio, pas dans le thread STT
+        return await loop.run_in_executor(self._executor, self.transcribe_sync, audio, prompt)
 
     def close(self) -> None:
         self._executor.shutdown(wait=True, cancel_futures=True)

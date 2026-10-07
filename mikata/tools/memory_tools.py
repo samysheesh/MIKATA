@@ -1,14 +1,17 @@
-"""Outils de mémoire long terme (§6, §7) : remember ★, forget ★.
+"""Outils de mémoire long terme (§6, §7) : remember ★, forget ★, set_history_duration.
 
 Les faits sont gardés dans `data/memory.json` (`agent.memory.LongTermMemory`, 30 au plus)
 et injectés dans le prompt système à chaque commande.
+
+Ajout phase 6 : `set_history_duration` change, à la voix, la durée pendant laquelle la
+conversation est gardée sans interaction (« garde la conversation un mois »).
 """
 
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from mikata.agent.memory import LongTermMemory, MemoryFullError
+from mikata.agent.memory import LongTermMemory, MemoryFullError, ShortTermMemory
 from mikata.tools.base import BaseTool, ToolContext, ToolError
 from mikata.tools.registry import register_tool
 
@@ -61,3 +64,53 @@ class Forget(BaseTool[ForgetParams]):
         if removed is None:
             raise ToolError(f"aucun fait mémorisé ne correspond à « {args.fact} »")
         return f"Oublié : {removed}"
+
+
+MAX_HISTORY_HOURS = 24 * 366  # un an
+
+
+def format_keep_duration(hours: float) -> str:
+    """« 1 heure », « 12 heures », « 3 jours », « 2 semaines », « 1 mois »."""
+    for size, singular, plural in (
+        (24 * 365, "an", "ans"),
+        (24 * 30, "mois", "mois"),
+        (24 * 7, "semaine", "semaines"),
+        (24, "jour", "jours"),
+        (1, "heure", "heures"),
+    ):
+        count = hours / size
+        if count >= 1 and abs(count - round(count)) < 1e-6:
+            n = round(count)
+            return f"{n} {singular if n == 1 else plural}"
+    return f"{hours:g} heures"
+
+
+class HistoryDurationParams(BaseModel):
+    hours: float = Field(
+        gt=0,
+        le=MAX_HISTORY_HOURS,
+        description="Durée en heures (1 jour = 24, 1 semaine = 168, 1 mois = 720, 1 an = 8760)",
+    )
+
+
+@register_tool
+class SetHistoryDuration(BaseTool[HistoryDurationParams]):
+    name = "set_history_duration"
+    description = (
+        "Change combien de temps la conversation est gardée sans échange (« garde la "
+        "conversation un mois »)."
+    )
+    params = HistoryDurationParams
+
+    async def run(self, args: HistoryDurationParams) -> str:
+        history = self.ctx.history
+        if not isinstance(history, ShortTermMemory):
+            raise ToolError("historique de conversation indisponible")
+        history.set_keep(args.hours * 3600)
+        duration = format_keep_duration(args.hours)
+        if history.path is None:
+            return (
+                f"Conversation gardée {duration} sans échange, jusqu'au redémarrage "
+                "(agent.history_persist est désactivé)."
+            )
+        return f"Conversation gardée {duration} sans échange, même après un redémarrage."

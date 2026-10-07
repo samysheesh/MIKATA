@@ -1,4 +1,4 @@
-"""scripts/eval_prompt.py : 20 phrases approximatives, vraie boucle agent, actions simulées.
+"""scripts/eval_prompt.py : 23 phrases approximatives, vraie boucle agent, actions simulées.
 
 Ici le LLM est simulé (pas de réseau en CI) : on vérifie le banc d'essai lui-même, avec un
 « bon » LLM (tout réussit) et un « mauvais » (PowerShell, question, réponse bavarde). Le vrai
@@ -41,6 +41,20 @@ GOOD: dict[str, tuple[str, dict[str, Any]]] = {
     "mets un minuteur de cinq minutes": ("set_timer", {"seconds": 300}),
     "quel temps il fait à Lyon": ("get_weather", {"city": "Lyon"}),
     "verrouille l'ordi": ("lock", {}),
+    # Phase 6 : réponses dites, sans outil
+    "raconte-moi une longue histoire": (
+        "Il était une fois un petit robot qui rêvait de voir la mer. Un matin, il quitta son "
+        "atelier. Il traversa des forêts et des villes. Le soir, il entendit enfin les vagues."
+    ),
+    "raconte-moi une blague": (
+        "Pourquoi les plongeurs plongent-ils en arrière ? Parce que sinon ils tombent dans le "
+        "bateau."
+    ),
+    "explique-moi comment marche un frigo": (
+        "Un frigo fait circuler un fluide qui s'évapore à l'intérieur. En s'évaporant, il "
+        "absorbe la chaleur des aliments. Un compresseur le renvoie ensuite à l'arrière, où il "
+        "rejette cette chaleur dans la pièce."
+    ),
 }
 
 
@@ -95,9 +109,9 @@ def _run(llm: PhraseLLM, tmp_path: Path) -> list[Any]:
     return asyncio.run(ev.run_cases(llm, config, list(enumerate(ev.CASES, 1))))
 
 
-def test_twenty_phrases_including_the_notepad_ones() -> None:
+def test_twenty_three_phrases_including_the_notepad_ones() -> None:
     phrases = [case.phrase for case in ev.CASES]
-    assert len(phrases) == 20 and len(set(phrases)) == 20
+    assert len(phrases) == 23 and len(set(phrases)) == 23
     assert phrases[:3] == ["stop process name notepad", "arrête notepad", "ferme le bloc-notes"]
     assert set(phrases) == set(GOOD)
 
@@ -113,7 +127,8 @@ def test_a_good_llm_passes_everything_without_touching_the_pc(
     assert by_phrase["mets le son à trente"].llm_calls == 1
     assert by_phrase["quel temps il fait à Lyon"].llm_calls == 2
     text = ev.report(outcomes)
-    assert "Réussies : 20/20" in text and "en un seul appel LLM : 19" in text
+    assert "Réussies : 23/23" in text and "en un seul appel LLM : 22" in text
+    assert by_phrase["raconte-moi une longue histoire"].calls == []
 
 
 def test_a_literal_llm_fails_with_reasons(tmp_path: Path, no_network: None) -> None:
@@ -121,6 +136,9 @@ def test_a_literal_llm_fails_with_reasons(tmp_path: Path, no_network: None) -> N
     bad["stop process name notepad"] = ("run_powershell", {"command": "Stop-Process -Name notepad"})
     bad["arrête notepad"] = "Tu veux que je ferme le Bloc-notes ?"
     bad["ouvre spotifaille"] = ("open_app", {"name": "Spotifaille"})
+    # Phase 6 : l'histoire collée dans le Bloc-notes, une blague-roman
+    bad["raconte-moi une longue histoire"] = ("open_app", {"name": "Bloc-notes"})
+    bad["raconte-moi une blague"] = "Ha. " * 3 + "Bon. " * 4
     bad["met pause"] = (
         "J'ai utilisé PowerShell pour envoyer la touche pause au lecteur multimédia, qui "
         "devrait maintenant être en pause si tout s'est bien passé comme prévu ce soir."
@@ -132,7 +150,11 @@ def test_a_literal_llm_fails_with_reasons(tmp_path: Path, no_network: None) -> N
         "arrête notepad",
         "ouvre spotifaille",
         "met pause",
+        "raconte-moi une longue histoire",
+        "raconte-moi une blague",
     }
+    assert any("aucun outil attendu" in r for r in failed["raconte-moi une longue histoire"])
+    assert failed["raconte-moi une blague"] == ["7 phrase(s) dite(s), attendu 1 à 5"]
     assert "outil à éviter : run_powershell" in failed["stop process name notepad"]
     assert "pose une question au lieu d'agir" in failed["arrête notepad"]
     assert failed["ouvre spotifaille"] == ["attendu open_app/focus_window (Spotify)"]
@@ -146,3 +168,9 @@ def test_main_refuses_without_llm_key(monkeypatch: pytest.MonkeyPatch, tmp_path:
     path = write_test_config(tmp_path / "config.yaml")
     monkeypatch.setenv("MIKATA_CONFIG", str(path))
     assert ev.main([]) == 2  # LLM non configuré : message clair, rien de lancé
+
+
+def test_count_sentences() -> None:
+    assert ev.count_sentences("Pourquoi ? Parce que. Voilà !") == 3
+    assert ev.count_sentences("Il est 3.5 fois plus grand.") == 1
+    assert ev.count_sentences("") == 0

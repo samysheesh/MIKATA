@@ -73,3 +73,67 @@ def test_punctuation_only_fragments_are_dropped() -> None:
 )
 def test_normalize_for_speech(raw: str, spoken: str) -> None:
     assert normalize_for_speech(raw) == spoken
+
+
+@pytest.mark.parametrize(
+    ("text", "spoken"),
+    [
+        ("Il est 3 h 40.", "Il est trois heures quarante."),
+        ("Rendez-vous à 14h05.", "Rendez-vous à quatorze heures cinq."),
+        ("Il est 9 h.", "Il est neuf heures."),
+        ("Il est 1 h 01.", "Il est une heure une."),
+        ("Départ à 21 h 31.", "Départ à vingt et une heures trente et une."),
+        ("Il est 12 h 00.", "Il est douze heures."),
+        ("Le train part à 18:45.", "Le train part à dix-huit heures quarante-cinq."),
+        ("Il est 0 h 30.", "Il est zéro heure trente."),
+        # pas des heures
+        ("Trois heures de route.", "Trois heures de route."),
+        ("La version 3.5 et 2,5 h.", "La version 3.5 et 2,5 heures."),  # durées
+        ("Il fait 36 h de vol.", "Il fait 36 heures de vol."),
+    ],
+)
+def test_times_are_spoken_in_words(text: str, spoken: str) -> None:
+    """Phase 6 : « trois h quarante » était lu au lieu de « trois heures quarante »."""
+    assert normalize_for_speech(text) == spoken
+
+
+@pytest.mark.parametrize(
+    ("text", "spoken"),
+    [
+        ("Roule à 90 km/h.", "Roule à 90 kilomètres heure."),
+        ("Encore 1 min.", "Encore une minute."),
+        ("Encore 5 min et 30 s.", "Encore 5 minutes et 30 secondes."),
+        ("Pendant 1 s.", "Pendant une seconde."),
+        ("Il fait 22 °C.", "Il fait 22 degrés."),
+        ("Il fait 1 °C.", "Il fait un degré."),
+        ("Il fera -5 °C.", "Il fera moins 5 degrés."),
+        ("Il fait 18°.", "Il fait 18 degrés."),
+        ("À 1,5 km, 12 km et 80 %.", "À 1,5 kilomètre, 12 kilomètres et 80 pour cent."),
+        ("Ça pèse 2 kg et coûte 5 €.", "Ça pèse 2 kilogrammes et coûte 5 euros."),
+        ("Latence : 250 ms.", "Latence : 250 millisecondes."),
+        ("Il reste 3 sur 5.", "Il reste 3 sur 5."),  # « s » d'un mot : pas une unité
+    ],
+)
+def test_units_after_a_number(text: str, spoken: str) -> None:
+    assert normalize_for_speech(text) == spoken
+
+
+def test_number_to_words() -> None:
+    from mikata.tts.normalize import number_to_words
+
+    cases = {
+        0: "zéro", 1: "un", 17: "dix-sept", 21: "vingt et un", 70: "soixante-dix",
+        71: "soixante et onze", 80: "quatre-vingts", 81: "quatre-vingt-un",
+        91: "quatre-vingt-onze", 200: "deux cents", 201: "deux cent un", 1000: "mille",
+        2000: "deux mille", 80000: "quatre-vingt mille", 1_000_000: "un million",
+        -3: "moins trois",
+    }  # fmt: skip
+    assert {n: number_to_words(n) for n in cases} == cases
+    assert number_to_words(21, feminine=True) == "vingt et une"
+
+
+def test_time_split_across_stream_chunks() -> None:
+    assert _stream("Il est 14h05 à Paris. Bonne journée.", step=1) == [
+        "Il est quatorze heures cinq à Paris.",
+        "Bonne journée.",
+    ]

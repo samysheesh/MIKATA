@@ -19,8 +19,9 @@ interroge un LLM cloud, agit sur le PC et répond à voix haute dans le casque.
 | 2 | VAD Silero + Whisper GPU, transcription spéculative, retrait du mot d'activation | fusionnée |
 | 3 | LLM en streaming + voix (Piper / Kokoro), commandes en parallèle | fusionnée |
 | 4 | Outils (system, apps, web, media, ui, memory), réflexion choisie à la voix, coût par commande | fusionnée |
-| 5 | Outils puissants (clavier/souris, fichiers, PowerShell, extinction) + garde-fou | livrée, à valider sur le PC |
-| 6 à 7 | Voir `docs/ARCHITECTURE.md` §11 | à faire |
+| 5 | Outils puissants (clavier/souris, fichiers, PowerShell, extinction) + garde-fou | fusionnée |
+| 6 | Confort : fenêtre de suivi, barge-in, annulation, mémoire long terme | livrée, à valider sur le PC |
+| 7 | Voir `docs/ARCHITECTURE.md` §11 | à faire |
 
 ## Développement
 
@@ -806,3 +807,286 @@ Attendu, pour chaque phrase :
 puis `Réussies : 20/20 ; en un seul appel LLM : 19 ; coût ≈ 0.01 $` (la météo demande deux
 appels). Une phrase en échec affiche `problème : ...`. Pour en rejouer quelques-unes :
 `--only 1 2 3`. Pour garder le détail : `--json data\eval_prompt.json`.
+
+## Phase 6 — vérification sur le PC Windows
+
+Critère d'acceptation : dire MIKATA pendant une réponse la coupe en moins de 300 ms ; une
+question de suivi passe sans redire le mot d'activation.
+
+Comment ça marche :
+
+- **Fenêtre de suivi** : après une réponse, si plus rien n'est en cours, MIKATA écoute
+  `agent.follow_up_s` secondes (6 s) sans mot d'activation (icône en état « suivi »). Ce que
+  tu dis devient une nouvelle commande, avec l'historique (« et à Tokyo ? »). Si tu ne dis
+  rien : bip descendant, retour au repos. Pas de fenêtre tant qu'une autre commande tourne :
+  c'est la dernière réponse qui l'ouvre. `follow_up_s: 0` la désactive.
+- **Fenêtre de suivi dans le bruit** (retour de test) : ce qui est entendu sans « MIKATA »
+  passe deux filtres, et une phrase écartée ne reçoit **aucune réponse** : juste le bip de
+  fin, puis le repos. MIKATA ne dit jamais « j'ai pas bien entendu » dans la fenêtre de
+  suivi.
+  1. **Transcription** : hésitation seule (« euh », « hmm »), texte de moins de 2 lettres ou
+     incohérent (« la la la la »), ou confiance de Whisper sous
+     `agent.follow_up_min_confidence` (0,2). La confiance va de 0 à 1 : probabilité moyenne
+     des mots × probabilité qu'il y ait de la parole.
+  2. **Jugement du LLM** (`agent.follow_up_use_llm_gate: true`) : on lui dit que la phrase a
+     été entendue sans mot d'activation. Si elle ne s'adresse pas clairement à MIKATA
+     (conversation avec tes amis, vidéo), il répond le marqueur `[IGNORER]`. Ce marqueur
+     n'est jamais dit, et rien n'est fait ni gardé dans l'historique.
+  La décision est toujours écrite dans le log : `Fenêtre de suivi : « ... » retenue
+  (confiance 0.82 : ...)` ou `... ignorée (...)`.
+- **Heures et unités lues correctement** (retour de test) : « 3 h 40 » est lu « trois heures
+  quarante », « 14h05 » « quatorze heures cinq », « 9 h » « neuf heures », « 18:45 »
+  « dix-huit heures quarante-cinq ». Après un nombre : km/h, km, min, s, ms, h (durée), °C,
+  %, kg, Go, Mo, € et $ en toutes lettres, au singulier ou au pluriel (« 1 min » -> « une
+  minute »).
+- **Réponses longues dites, pas écrites** (retour de test : l'histoire avait été collée dans
+  le Bloc-notes) : histoire, blague, explication sont racontées à voix haute, en version
+  courte de 3 à 5 phrases. MIKATA n'ouvre une appli et n'écrit dans une fenêtre ou un
+  fichier que si tu le demandes explicitement (« écris-la dans un fichier »). Trois exemples
+  ont été ajoutés au prompt, et trois phrases à `scripts\eval_prompt.py` (23 en tout).
+- **Barge-in** : « MIKATA » (ou Ctrl+Alt+M) pendant qu'une réponse est jouée coupe **le son de
+  cette réponse** tout de suite, et MIKATA t'écoute. Les autres commandes en parallèle
+  continuent (décision de la phase 3) ; leurs réponses attendent que tu aies fini de parler au
+  lieu de parler par-dessus toi. Le log donne la latence de coupure (`Barge-in : réponse #N
+  coupée ≈ X ms après la fin du mot`).
+- **Annulation** : une commande qui n'est que « stop », « annule », « laisse tomber »,
+  « tais-toi », « c'est bon »... (`agent.cancel_phrases`) ne part pas au LLM. Elle annule la
+  commande dont tu viens de couper la réponse si elle tourne encore, sinon la dernière commande
+  en cours (LLM, recherche web...), avec un bip de fin. Dans la fenêtre de suivi, elle la
+  ferme. Au repos, sans rien à annuler, « MIKATA, stop » reste une commande normale (pause de
+  la musique). Une phrase plus longue (« annule le minuteur ») va toujours au LLM.
+- **Garde-fou** : si tu coupes une annonce d'extinction, de redémarrage ou de mise en veille,
+  l'action est **annulée** (tu ne l'as pas entendue) ; une question de confirmation coupée vaut
+  « non ».
+- **Mémoire long terme** (faite en phase 4, inchangée) : « retiens que... », « oublie que... »,
+  jusqu'à 30 faits dans `data\memory.json`, donnés au LLM à chaque commande.
+- Points restés ouverts en phase 5 :
+  1. **Whisper** : le prompt initial (`stt.initial_prompt`, avec « MIKATA », Bloc-notes,
+     PowerShell...) est complété par les noms des applications installées (menu Démarrer,
+     les noms courts d'abord, `stt.prompt_max_chars` = 500 caractères au plus, Whisper n'en
+     gardant que ~220 tokens). `stt.prompt_apps: false` revient au prompt fixe. Mesure :
+     section 4.
+  2. **« Appel LLM en échec (1/2) : pas de réponse en 20 s »** : la relance existait, mais
+     elle n'arrivait qu'après 20 s d'attente, et sur la même connexion HTTP/2. Cause
+     probable : une connexion restée ouverte pendant l'inactivité mais coupée en route
+     (box, serveur). Désormais, si le serveur n'envoie rien en `llm.first_chunk_timeout_s`
+     (8 s ; réflexion none ou low seulement, « réfléchis bien » garde 20 s), l'appel échoue
+     tout de suite, la connexion est **recréée** et la relance part dessus. Le log le dit :
+     `Connexion LLM recréée (...)`, puis `Appel LLM réussi à la tentative 2/2.`.
+  3. **Bloc-notes de Windows 11** : `close_app`, `close_window`, `focus_window` et `open_app`
+     connaissent les noms français des applis Windows et ceux de leurs processus (Bloc-notes
+     ↔ notepad, Calculatrice ↔ CalculatorApp, Paramètres ↔ SystemSettings, Word ↔ WINWORD,
+     Paint ↔ mspaint...). Le nom du processus est relu autrement quand psutil n'y arrive pas,
+     et une appli du Store affichée par `ApplicationFrameHost` prend le nom de son vrai
+     processus. Si aucune fenêtre ne correspond, l'erreur donne au LLM la liste des fenêtres
+     ouvertes pour qu'il réessaie avec le bon nom.
+  4. **« lance Team »** : le prompt dit maintenant que seules comptent les applications
+     installées : si une seule ressemble au nom entendu (Steam), MIKATA l'ouvre sans demander
+     « Teams ou Steam ? ».
+  5. **`type_text`** : ton correctif (collage par le presse-papiers) est gardé tel quel.
+- **Conversation gardée sur disque** (activé, comme demandé) :
+  - `agent.history_persist: true` : l'historique est écrit dans `data\history.json` à chaque
+    échange et relu au démarrage.
+  - Il est gardé `agent.history_persist_h` = 168 heures (7 jours) sans commande, au lieu de
+    10 min. La durée se change aussi à la voix (« garde la conversation un mois », outil
+    `set_history_duration`) ; ce réglage est gardé dans `history.json` et prime sur
+    `config.yaml`.
+  - Le plafond `history_max_tokens` (6 000) reste. Quand il est atteint, les échanges les
+    plus anciens ne sont plus supprimés : le LLM les **résume** en arrière-plan
+    (`agent.history_summarize`), et ce résumé ouvre l'historique envoyé.
+  - « nouvelle conversation » vide tout : échanges et résumé (pas la durée choisie).
+
+### 1. Récupérer la branche, installer
+
+```powershell
+git fetch origin
+git checkout phase-6
+git pull
+uv sync
+```
+
+### 2. Lint et tests (dont le critère)
+
+```powershell
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
+uv run pytest tests\test_app_phase6.py -v
+```
+
+Attendu : tout en `passed`. `test_app_phase6.py` rejoue le critère avec micro, casque et LLM
+simulés :
+- `test_barge_in_cuts_the_answer_in_under_300_ms` : la réponse est coupée en moins de 300 ms,
+  la suivante est dite ;
+- `test_follow_up_question_without_wake_word` : « et à Tokyo » sans mot d'activation part au
+  LLM avec l'historique, puis bip de fin après le silence ;
+- `test_barge_in_does_not_cancel_other_commands`, `test_cancel_command_cancels_the_running_command`,
+  `test_stop_after_barge_in_does_not_reach_the_llm`,
+  `test_barge_in_on_a_shutdown_announcement_cancels_it`...
+
+### 3. Bloc-notes de Windows 11 (sans micro)
+
+```powershell
+notepad
+uv run python -c "from mikata.tools.desktop import WindowsDesktop; [print(w) for w in WindowsDesktop().windows()]"
+uv run python -m mikata --ask "stop process name notepad"
+notepad
+uv run python -m mikata --ask "ferme le bloc-notes"
+```
+
+Attendu : la première commande liste une ligne `WindowInfo(handle=..., title='Sans titre -
+Bloc-notes', process='Notepad')` (un nom de processus non vide). Les deux `--ask` ferment le
+Bloc-notes (« C'est fait »), avec `Outil close_app(name='Bloc-notes') -> ok` dans la sortie (le LLM peut aussi choisir `close_window`).
+Si le Bloc-notes demande d'enregistrer, c'est la croix normale : rien n'est tué.
+
+### 4. Prompt de Whisper : mesure
+
+Avec le jeu de test enregistré en phase 2 (`data\stt_eval`) :
+
+```powershell
+uv run python scripts\eval_stt.py run --compute-type int8_float16 --prompt none config apps
+```
+
+Attendu : les trois prompts affichés (le dernier avec `Applications : ...`), puis un tableau
+avec une ligne par prompt (WER, latence médiane et p95) et les pires phrases de chacun.
+`apps` devrait avoir un WER inférieur ou égal à `config` sur les noms d'applis, pour une
+latence à peu près égale. Si `apps` est moins bon, mets `stt.prompt_apps: false` dans
+`config.yaml` (et dis-le moi avec le tableau).
+
+### 5. Fenêtre de suivi (avec le micro)
+
+```powershell
+uv run python -m mikata
+```
+
+1. « hey jarvis, quelle heure est-il ? ». Après la réponse, **sans** « hey jarvis » : « et à
+   Tokyo ? ». Attendu : l'heure de Tokyo. Puis ne dis rien : bip descendant après 6 s.
+2. « hey jarvis, ouvre Spotify ». Après « C'est fait », dans les 6 s : « mets le son à
+   trente ». Attendu : le volume change.
+3. « hey jarvis, quelle heure est-il ? », puis dans la fenêtre : « stop ». Attendu : un bip,
+   rien d'autre (pas d'appel LLM : aucune ligne `Appel LLM` dans la console).
+
+### 6. Barge-in et annulation (avec le micro)
+
+1. « hey jarvis, raconte-moi une longue histoire ». Pendant la réponse : « hey jarvis ».
+   Attendu : la voix se tait aussitôt, bip, MIKATA écoute ; « quelle heure est-il ? » est
+   répondu. Dans un autre PowerShell :
+
+   ```powershell
+   Select-String -Path data\logs\mikata.log -Pattern "Barge-in" | Select-Object -Last 3
+   ```
+
+   Attendu : `Barge-in : réponse #N coupée ≈ X ms après la fin du mot (détection ... +
+   traitement ... + sortie ... ms)` avec **X < 300**.
+2. Lance de la musique dans Spotify. « hey jarvis, raconte-moi une histoire », puis pendant la
+   réponse « hey jarvis, stop ». Attendu : la voix se tait, un bip, et la musique continue
+   (« stop » n'est pas parti au LLM). Au repos, « hey jarvis, stop » met bien la musique en
+   pause.
+3. « hey jarvis, cherche les dernières nouvelles sur la conquête spatiale », puis tout de
+   suite « hey jarvis, annule ». Attendu : bip, pas de réponse, et dans le log
+   `« annule » -> commande #N annulée`.
+4. En parallèle : « hey jarvis, cherche la météo à Tokyo cette semaine », et pendant que
+   MIKATA cherche, « hey jarvis, quelle heure est-il ? ». Puis pendant que l'une des réponses
+   est dite, « hey jarvis » : seule la réponse en cours est coupée, l'autre commande est dite
+   ensuite.
+5. Garde-fou : « hey jarvis, mets le PC en veille », et pendant « Mise en veille dans 5
+   secondes... » : « hey jarvis, quelle heure est-il ? ». Attendu : l'heure, et le PC ne se met
+   **pas** en veille (`Réponse coupée avant l'écoute : vaut « stop »` dans le log).
+
+### 7. Relance du LLM
+
+Rien à provoquer : si l'avertissement revient, le log montre maintenant la suite.
+
+```powershell
+Select-String -Path data\logs\mikata.log -Pattern "Appel LLM en échec|Connexion LLM recréée|réussi à la tentative" | Select-Object -Last 10
+```
+
+Attendu : après `Appel LLM en échec (1/2) : pas de réponse en 8 s`, une ligne `Connexion LLM
+recréée (aucune réponse)` puis `Appel LLM réussi à la tentative 2/2.`, le tout en moins de
+10 s au lieu de 20.
+
+### 8. Mémoire long terme et conversation gardée sur disque
+
+```powershell
+uv run python -m mikata --ask "retiens que mon chat s'appelle Mochi"
+uv run python -m mikata --ask "comment s'appelle mon chat ?"
+Get-Content data\memory.json
+```
+
+Attendu : « Mochi » (le fait est relu à chaque démarrage), et le fait dans `memory.json`.
+
+La conversation est maintenant gardée sur disque par défaut :
+
+```powershell
+uv run python -m mikata --ask "nouvelle conversation"
+uv run python -m mikata --ask "quelle est la capitale du Japon ?"
+uv run python -m mikata --ask "et combien d'habitants ?"
+uv run python -m mikata --ask "garde la conversation un mois"
+Get-Content data\history.json
+```
+
+Attendu :
+- la troisième réponse parle de Tokyo, alors que MIKATA a redémarré entre les deux ;
+- la quatrième confirme « un mois » ;
+- `history.json` contient `"keep_s": 2592000.0` et les échanges.
+
+Le résumé se voit dans le log quand le plafond est atteint, après une longue conversation :
+`Historique : N ancien(s) échange(s) résumé(s)`, puis un champ `"summary"` dans
+`history.json`.
+
+### 9. Heures et unités dites à voix haute
+
+```powershell
+uv run python -m mikata --ask "dis exactement : il est 3 h 40, rendez-vous à 14h05, 90 km/h pendant 1 min et il fait -5 °C"
+uv run python -m mikata --ask "quelle heure est-il ?"
+```
+
+Attendu, dans le casque : « il est trois heures quarante, rendez-vous à quatorze heures cinq,
+90 kilomètres heure pendant une minute et il fait moins 5 degrés ». L'heure actuelle est
+dite « ... heures ... », jamais « h ».
+
+### 10. Fenêtre de suivi dans le bruit (avec le micro)
+
+```powershell
+uv run python -m mikata
+```
+
+1. « hey jarvis, quelle heure est-il ? ». Pendant la fenêtre de suivi, tousse, tape sur le
+   bureau ou fais « euh... ». Attendu : bip de fin, aucune réponse. Dans le log :
+   `Fenêtre de suivi : « ... » ignorée (...)`, ou `Rien compris`.
+2. « hey jarvis, quelle heure est-il ? ». Pendant la fenêtre, parle à quelqu'un d'autre
+   (« tu viens manger ce soir ? »). Attendu : bip de fin, aucune réponse, et dans le log
+   `Fenêtre de suivi : « tu viens manger ce soir » ignorée (le LLM juge que la phrase ne
+   s'adresse pas à MIKATA)`.
+3. « hey jarvis, quelle heure est-il ? », puis « et à Tokyo ? ». Attendu : l'heure de Tokyo,
+   et `Fenêtre de suivi : « Et à Tokyo ? » retenue (confiance 0.xx : ...)` dans le log.
+
+Pour régler : relève les confiances des phrases retenues et ignorées
+(`Select-String -Path data\logs\mikata.log -Pattern "Fenêtre de suivi" | Select-Object -Last
+20`). Puis place `agent.follow_up_min_confidence` entre les deux. Une valeur plus haute
+écarte plus de bruit, mais aussi plus de vraies questions. `agent.follow_up_use_llm_gate:
+false` coupe le jugement du LLM.
+
+### 11. Réponses longues dites à voix haute
+
+```powershell
+uv run python -m mikata --ask "raconte-moi une longue histoire"
+uv run python -m mikata --ask "explique-moi comment marche un frigo"
+```
+
+Attendu : 3 à 5 phrases dites dans le casque, aucune ligne `Outil ...` dans la sortie (le
+Bloc-notes ne s'ouvre pas). Avec « raconte-moi une histoire et écris-la dans un fichier
+histoire.txt sur le bureau », le fichier est créé (`Outil write_file(...) -> ok`).
+
+### 12. Non-régression du prompt
+
+```powershell
+uv run python scripts\eval_prompt.py
+```
+
+Attendu : `Réussies : 23/23`.
+- « lance Team » ouvre Steam sans poser de question.
+- « raconte-moi une longue histoire », « raconte-moi une blague » et « explique-moi comment
+  marche un frigo » n'appellent aucun outil et sont dites en 3 à 5 phrases (de 1 à 5 pour la
+  blague).
+

@@ -259,3 +259,37 @@ def test_long_term_memory_survives_a_broken_file(tmp_path: Path) -> None:
     assert LongTermMemory(path).facts == []
     path.write_text('{"facts": [{"text": "ok"}, {"pas": "de texte"}, "x"]}', encoding="utf-8")
     assert LongTermMemory(path).facts == ["ok"]
+
+
+@pytest.mark.parametrize(
+    ("hours", "spoken"),
+    [(1, "1 heure"), (12, "12 heures"), (24, "1 jour"), (72, "3 jours"), (168, "1 semaine"),
+     (720, "1 mois"), (8760, "1 an"), (1.5, "1.5 heures")],
+)  # fmt: skip
+def test_format_keep_duration(hours: float, spoken: str) -> None:
+    from mikata.tools.memory_tools import format_keep_duration
+
+    assert format_keep_duration(hours) == spoken
+
+
+def test_set_history_duration(tmp_path: Path) -> None:
+    """Phase 6 : « garde la conversation un mois »."""
+    from mikata.agent.memory import ShortTermMemory
+
+    ctx = make_ctx(tmp_path)
+    ctx.history = ShortTermMemory(path=tmp_path / "history.json")
+    registry = ToolRegistry(ctx)
+    result = asyncio.run(registry.execute(ToolCallReq("1", "set_history_duration", {"hours": 720})))
+    assert result.ok and not result.terminal  # le LLM confirme lui-même la durée
+    assert result.content == "Conversation gardée 1 mois sans échange, même après un redémarrage."
+    assert ctx.history.reset_after_s == 720 * 3600
+    ctx.history = ShortTermMemory()
+    result = asyncio.run(registry.execute(ToolCallReq("2", "set_history_duration", {"hours": 24})))
+    assert "jusqu'au redémarrage" in result.content
+    too_long = asyncio.run(
+        registry.execute(ToolCallReq("3", "set_history_duration", {"hours": 1e6}))
+    )
+    assert not too_long.ok
+    ctx.history = None
+    missing = asyncio.run(registry.execute(ToolCallReq("4", "set_history_duration", {"hours": 2})))
+    assert not missing.ok and "indisponible" in missing.content

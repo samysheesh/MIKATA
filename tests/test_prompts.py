@@ -50,10 +50,11 @@ def test_prompt_keeps_speech_short_and_never_talks_syntax() -> None:
 
 
 def test_prompt_examples() -> None:
-    """3 à 5 exemples : transcription fautive -> action attendue."""
+    """5 exemples d'actions (transcription fautive -> outil) et, depuis la phase 6, 3 de
+    réponses dites à voix haute, sans outil."""
     examples = SYSTEM_PROMPT.split("EXEMPLES", 1)[1]
     lines = [line for line in examples.splitlines() if line.startswith("- « ")]
-    assert 3 <= len(lines) <= 5
+    assert len(lines) == 8
     flat = _flat(examples)
     assert '« stop process name notepad » -> close_app(name="Bloc-notes")' in flat
     assert '« ouvre spotifaille » -> open_app(name="Spotify")' in flat
@@ -117,3 +118,15 @@ def test_system_prompt_tool_guidance() -> None:
     assert "« C'est fait » est dit automatiquement" in PROMPT
     assert "get_weather" in PROMPT and "show_text" in PROMPT
     assert "dans la même réponse" in PROMPT  # actions indépendantes en parallèle
+
+
+def test_long_answers_are_spoken_never_written() -> None:
+    """Phase 6 : « raconte-moi une longue histoire » avait été collée dans le Bloc-notes."""
+    flat = _flat(SYSTEM_PROMPT)
+    assert "en version courte de 3 à 5 phrases" in flat
+    assert "N'ouvre jamais d'appli et n'écris jamais dans une fenêtre ou un fichier" in flat
+    assert "« écris-la dans un fichier »" in flat
+    assert "« raconte-moi une longue histoire » -> aucun outil" in flat
+    assert "« raconte-moi une blague » -> aucun outil" in flat
+    assert "« explique-moi comment marche un frigo » -> aucun outil" in flat
+    assert "show_text" not in flat.split("PARLER", 1)[1].split("N'ouvre jamais")[0]

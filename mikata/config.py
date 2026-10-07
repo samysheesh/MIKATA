@@ -83,7 +83,11 @@ class SttConfig(_Section):
     device: Literal["cuda", "cpu"] = "cuda"
     compute_type: Literal["float16", "int8_float16", "int8", "float32"] = "int8_float16"
     beam_size: int = Field(default=1, ge=1)
-    initial_prompt: str = "MIKATA, Spotify, Discord, Steam, Chrome, VS Code"
+    initial_prompt: str = "MIKATA, Bloc-notes, Spotify, Discord, Steam, Chrome, VS Code, PowerShell"
+    # Ajouts phase 6 : noms des applications installées ajoutés au prompt de Whisper, dans
+    # la limite de prompt_max_chars (Whisper ne garde que ~220 tokens de prompt).
+    prompt_apps: bool = True
+    prompt_max_chars: int = Field(default=500, ge=50, le=800)
     # Ajout phase 2 : formes du mot d'activation retirées du texte transcrit (§3).
     # « jarvis » couvre le modèle de développement hey_jarvis (retirable en phase 7).
     wake_words: list[str] = Field(
@@ -100,6 +104,9 @@ class LlmConfig(_Section):
     max_tool_rounds: int = Field(default=8, ge=1)
     request_timeout_s: float = Field(default=20, gt=0)
     turn_timeout_s: float = Field(default=60, gt=0)  # ajout phase 3 : §6, 60 s par requête
+    # Ajout phase 6 : rien reçu du serveur dans ce délai -> échec immédiat, nouvelle connexion
+    # et relance (au lieu d'attendre request_timeout_s).
+    first_chunk_timeout_s: float = Field(default=8, gt=0)
     # Ajouts phase 4. Niveau de réflexion du modèle (`reasoning_effort`) : « none » par
     # défaut (premier mot plus tôt) ; null = paramètre non envoyé (choix du fournisseur).
     reasoning_effort: ReasoningLevel | None = "none"
@@ -171,6 +178,27 @@ class AgentConfig(_Section):
     session_reset_min: float = Field(default=10, gt=0)
     thinking_sound_after_s: float = Field(default=1.2, ge=0)
     history_max_tokens: int = Field(default=6000, ge=500)  # ajout phase 3 : §6, ~6 000 tokens
+    # Ajouts phase 6. Historique gardé sur disque (data/history.json) entre deux démarrages,
+    # et `history_persist_h` heures sans interaction au lieu de session_reset_min (durée
+    # modifiable à la voix). Au-delà de history_max_tokens, les plus anciens échanges sont
+    # résumés par le LLM (history_summarize) au lieu d'être supprimés.
+    history_persist: bool = True
+    history_persist_h: float = Field(default=168, gt=0)
+    history_summarize: bool = True
+    # Fenêtre de suivi dans le bruit : une phrase dont la transcription est moins fiable que
+    # ce seuil (0 à 1) est ignorée sans réponse ; puis le LLM juge si elle s'adresse à MIKATA.
+    follow_up_min_confidence: float = Field(default=0.2, ge=0, le=1)
+    follow_up_use_llm_gate: bool = True
+    # Commande entière qui annule (dite après « MIKATA » pendant une réponse ou pendant la
+    # fenêtre de suivi) : jamais envoyée au LLM.
+    cancel_phrases: list[str] = Field(
+        default_factory=lambda: [
+            "stop", "arrête", "arrête-toi", "annule", "annule ça", "annule tout",
+            "laisse tomber", "oublie", "oublie ça", "tais-toi", "chut", "silence",
+            "c'est bon", "ça ira", "ça suffit", "c'est tout", "non", "non rien", "rien",
+            "non merci", "pas grave",
+        ]
+    )  # fmt: skip
 
 
 class GuardConfig(_Section):

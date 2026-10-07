@@ -8,6 +8,22 @@ Phase 3 : réflexion (LLM en streaming) → parole (TTS par fragments) ; son de 
 Phase 4 : outils (état ACTING), annonces des minuteurs et rappels (`announce`).
 Phase 5 : écoute courte sans mot d'activation (`listen_once`) pour les confirmations
 orales du garde-fou et le « stop » avant extinction.
+Phase 6 :
+- **barge-in** : « MIKATA » (ou le raccourci) pendant qu'une réponse est jouée coupe le son
+  de **cette** réponse tout de suite (`SpeechStream.cancel`) et lance l'écoute. Les autres
+  commandes continuent (décision de la phase 3) ; leurs réponses attendent que tu aies fini
+  de parler (`Speaker.hold`).
+- **annulation** : une commande qui n'est qu'un « stop », « annule », « laisse tomber »...
+  (`agent.cancel_phrases`) n'est pas envoyée au LLM. Elle annule la commande dont la
+  réponse vient d'être coupée si elle tourne encore, sinon la dernière commande en cours ;
+  en fenêtre de suivi, elle la ferme. Sans rien à annuler ni réponse coupée, « stop » part
+  au LLM comme une commande normale (pause de la musique).
+- **fenêtre de suivi** : après une réponse, si rien d'autre n'est en cours, le micro écoute
+  `agent.follow_up_s` secondes sans mot d'activation (état FOLLOW_UP) ; ce qui est dit
+  devient une nouvelle commande, avec l'historique. Sinon : bip de fin. Dans le bruit ou
+  une conversation à côté : une transcription peu fiable (`agent.follow_up_min_confidence`)
+  est ignorée, puis le LLM juge si la phrase s'adresse à MIKATA
+  (`agent.follow_up_use_llm_gate`). Phrase ignorée : bip de fin, aucune réponse.
 
 Commandes en parallèle : chaque commande a son propre état (`_Request.state`). Il n'y a
 qu'un micro, donc une seule commande **écoute** à la fois (`_listening`) ; dès que sa fin de
@@ -41,7 +57,14 @@ from mikata.config import Config
 from mikata.events import BusEvent, EventBus, Shutdown, WakeDetected
 from mikata.stt.base import STT
 from mikata.stt.speculative import CommandRecorder, EndReason
-from mikata.stt.text import clean_transcript, strip_wake_word, wake_word_pattern
+from mikata.stt.text import (
+    clean_transcript,
+    describe_confidence,
+    follow_up_rejection,
+    is_cancel_command,
+    strip_wake_word,
+    wake_word_pattern,
+)
 from mikata.vad.base import VAD
 from mikata.wake.base import WakeWordDetector
 from mikata.wake.recordings import (
@@ -62,6 +85,11 @@ HOTKEY_PRE_ROLL_S = 0.3  # raccourci : pas de mot d'activation à retirer, peu d
 # l'écoute (orchestrateur), quelques trames peuvent arriver ; on veut le pré-roll complet
 # **avant** la détection, plus tout ce qui a suivi.
 RING_MARGIN_S = 1.0
+FOLLOW_UP_PRE_ROLL_S = 0.3  # suivi : tu peux commencer à parler pile à la fin de la réponse
+FOLLOW_UP_SOURCE = "suivi"
+# Réponse orale d'une commande dont la réponse a été coupée : « non » à une confirmation,
+# « stop » à un compte à rebours (garde-fou : dans le doute, rien n'est fait).
+INTERRUPTED_ANSWER = "stop"
 
 
 class State(StrEnum):
@@ -150,6 +178,10 @@ class _Request:
     reason: EndReason | None = None
     stream: SpeechStream | None = None
     marks: dict[str, float] = field(default_factory=dict)
+    # Ajouts phase 6
+    task: asyncio.Task[None] | None = None  # traitement (transcription -> réponse)
+    barged: _Request | None = None  # commande dont la réponse a été coupée par celle-ci
+    follow_up: bool = False  # réponse jouée jusqu'au bout : fenêtre de suivi possible
 
     @property
     def last_syllable_at(self) -> float:
@@ -233,6 +265,19 @@ class App:
         state = next((s for s in DISPLAY_PRIORITY if s in states), State.IDLE)
         if state is not self.state:
             self._set_state(state)
+
+    def _set_listening(self, request: _Request | None) -> None:
+        """Commande qui a le micro. Tant que quelqu'un parle, aucune nouvelle phrase de
+        réponse ne commence (`Speaker.hold`)."""
+        if (request is None) == (self._listening is None):
+            self._listening = request
+            return
+        self._listening = request
+        if self._speaker is not None:
+            if request is None:
+                self._speaker.release()
+            else:
+                self._speaker.hold()
 
     def _set_request_state(self, request: _Request, state: State) -> None:
         if request.state is not state:
@@ -361,6 +406,8 @@ class App:
                     self._wake_executor, self._vad.is_speech, captured.samples
                 )
                 recorder.add(captured.samples, speech, captured.captured_at)
+                if speech and request is not None and request.state is State.FOLLOW_UP:
+                    self._set_request_state(request, State.LISTENING)  # tu parles
             if self._detector is None:
                 continue
             score = await loop.run_in_executor(
@@ -381,9 +428,17 @@ class App:
 
     def _on_wake(self, event: WakeDetected) -> None:
         now = time.monotonic()
-        if self._listening is not None:  # le micro sert déjà à une commande
+        listening = self._listening
+        if listening is not None:  # le micro sert déjà à une commande
+            if listening.source == FOLLOW_UP_SOURCE and "wake" not in listening.marks:
+                # « MIKATA » dit dans la fenêtre de suivi : elle écoute déjà, le mot sera
+                # retiré du texte ; le bip confirme qu'on t'entend.
+                listening.marks["wake"] = now
+                self._play("wake")
+                self._set_request_state(listening, State.LISTENING)
             logger.debug("Mot d'activation ignoré pendant une écoute ({}).", event.source)
             return
+        barged = self._barge_in(event)
         self._play("wake")
         self.detections += 1
         out_ms = (self._player.output_latency_s if self._player else 0.0) * 1000
@@ -396,7 +451,7 @@ class App:
         if event.source == "hotkey":
             self._trigger.suppress(now)
             logger.info("Raccourci clavier : bip lancé (+ sortie {:.0f} ms).", out_ms)
-            self._start_listening(event, now)
+            self._start_listening(event, now, barged)
             return
 
         if self._detector is not None and self._wake_executor is not None:
@@ -423,7 +478,41 @@ class App:
             )
         if audio is not None:
             self._submit_io(self._save_wake_log, audio, event.score, datetime.now())
-        self._start_listening(event, now)
+        self._start_listening(event, now, barged)
+
+    def _barge_in(self, event: WakeDetected) -> _Request | None:
+        """Coupe la réponse **en train d'être jouée** (et seulement elle) ; renvoie sa
+        commande. Une réponse pas encore commencée n'est pas touchée : elle attendra la fin
+        de l'écoute."""
+        stream = self._speaker.current if self._speaker is not None else None
+        if stream is None or stream.first_sound_at is None or stream.cancelled:
+            return None
+        stream.cancel()  # AudioPlayer.stop() : silence dès le bloc audio suivant
+        cut_at = time.monotonic()
+        owner = next((r for r in self._active.values() if r.stream is stream), None)
+        out_ms = (self._player.output_latency_s if self._player else 0.0) * 1000
+        tail_s = None
+        if event.source != "hotkey" and self._wake_audio is not None:
+            tail_s = estimate_tail_silence_s(self._wake_audio)
+        label = f"#{owner.id}" if owner is not None else stream.label or "annonce"
+        if tail_s is None:
+            logger.info(
+                "Barge-in : réponse {} coupée {:.0f} ms après la trame (+ sortie {:.0f} ms).",
+                label,
+                (cut_at - event.ts) * 1000,
+                out_ms,
+            )
+        else:
+            logger.info(
+                "Barge-in : réponse {} coupée ≈ {:.0f} ms après la fin du mot (détection {:.0f} "
+                "+ traitement {:.0f} + sortie {:.0f} ms).",
+                label,
+                tail_s * 1000 + (cut_at - event.ts) * 1000 + out_ms,
+                tail_s * 1000,
+                (cut_at - event.ts) * 1000,
+                out_ms,
+            )
+        return owner
 
     # -- écoute (une seule à la fois : il n'y a qu'un micro) -------------------------------
 
@@ -462,7 +551,7 @@ class App:
         request.recorder = CommandRecorder(
             self._stt, pre_roll, vad, self._wake_pattern, on_end=on_end, check_pre_roll=False
         )
-        self._listening = request
+        self._set_listening(request)
         self._active[request.id] = request
         self._set_request_state(request, State.LISTENING)
         try:
@@ -470,7 +559,7 @@ class App:
                 logger.info("Réponse orale : rien entendu en {:.0f} s.", timeout_s)
                 return ""
             if self._listening is request:
-                self._listening = None
+                self._set_listening(None)
             self._set_request_state(request, State.TRANSCRIBING)
             transcript = await request.recorder.transcribe()
             text, _ = strip_wake_word(clean_transcript(transcript.text), self._wake_pattern)
@@ -479,7 +568,9 @@ class App:
         finally:
             self._finish(request)
 
-    def _start_listening(self, event: WakeDetected, now: float) -> None:
+    def _start_listening(
+        self, event: WakeDetected, now: float, barged: _Request | None = None
+    ) -> None:
         if self._stt is None or self._vad is None or self._audio is None:
             return
         hotkey = event.source == "hotkey"
@@ -492,7 +583,11 @@ class App:
         if self._wake_executor is not None:  # même thread que is_speech : ordre garanti
             self._wake_executor.submit(self._vad.reset)
         request = _Request(
-            id=next(self._ids), source=event.source, wake_at=now, wake_frame_at=event.ts
+            id=next(self._ids),
+            source=event.source,
+            wake_at=now,
+            wake_frame_at=event.ts,
+            barged=barged,
         )
         request.recorder = CommandRecorder(
             self._stt,
@@ -502,7 +597,7 @@ class App:
             on_end=functools.partial(self._on_recorder_end, request),
             check_pre_roll=not hotkey,
         )
-        self._listening = request
+        self._set_listening(request)
         self._active[request.id] = request
         self._set_request_state(request, State.LISTENING)
         logger.debug(
@@ -513,28 +608,68 @@ class App:
         request.end_at = time.monotonic()
         request.reason = reason
         if self._listening is request:
-            self._listening = None  # micro libre : une autre commande peut commencer
+            self._set_listening(None)  # micro libre : une autre commande peut commencer
         if reason is EndReason.NO_SPEECH:
-            logger.info("Écoute terminée : {}.", reason)
+            if request.source == FOLLOW_UP_SOURCE:
+                logger.info("Fenêtre de suivi terminée : rien de dit.")
+            else:
+                logger.info("Écoute terminée : {}.", reason)
             self._play("end")
             self._finish(request)
             return
         self._set_request_state(request, State.TRANSCRIBING)
-        self._spawn(self._process(request), f"commande #{request.id}")
+        request.task = self._spawn(self._process(request), f"commande #{request.id}")
+
+    def _start_follow_up(self) -> None:
+        """Fenêtre de suivi : écoute `agent.follow_up_s` sans mot d'activation, seulement si
+        plus rien n'est en cours (sinon la dernière réponse à finir l'ouvrira)."""
+        seconds = self.config.agent.follow_up_s
+        if seconds <= 0 or not self._can_listen or self._listening is not None or self._active:
+            return
+        if self._speaker is not None and self._speaker.busy:
+            return
+        assert self._stt is not None and self._vad is not None
+        now = time.monotonic()
+        if self._wake_executor is not None:
+            self._wake_executor.submit(self._vad.reset)
+        request = _Request(
+            id=next(self._ids),
+            source=FOLLOW_UP_SOURCE,
+            wake_at=now,
+            wake_frame_at=now,
+            state=State.FOLLOW_UP,
+        )
+        request.recorder = CommandRecorder(
+            self._stt,
+            self.ring.read_last(round(FOLLOW_UP_PRE_ROLL_S * SAMPLE_RATE)),
+            self.config.vad.model_copy(update={"no_speech_timeout_s": seconds}),
+            self._wake_pattern,
+            on_end=functools.partial(self._on_recorder_end, request),
+            check_pre_roll=False,
+        )
+        self._set_listening(request)
+        self._active[request.id] = request
+        self._refresh_state()
+        logger.debug("Commande #{} : fenêtre de suivi ({:.0f} s).", request.id, seconds)
 
     # -- traitement d'une commande (plusieurs en parallèle) --------------------------------
 
-    def _spawn(self, coro: object, name: str) -> None:
+    def _spawn(self, coro: object, name: str) -> asyncio.Task[None]:
         task = asyncio.create_task(coro, name=name)  # type: ignore[arg-type]
         self._request_tasks.add(task)
         task.add_done_callback(self._request_tasks.discard)
+        return task
 
     async def _process(self, request: _Request) -> None:
         try:
             text = await self._transcribe(request)
+            if text and self._cancel_requested(request, text):
+                return
             if text and self._agent is not None and self._speaker is not None:
                 await self._respond(request, text)
         except asyncio.CancelledError:
+            if request.stream is not None:
+                request.stream.cancel()  # plus un mot de cette réponse
             raise
         except Exception:
             logger.exception("Commande #{} : erreur.", request.id)
@@ -543,6 +678,36 @@ class App:
             if request.stream is not None:
                 request.stream.close()
             self._finish(request)
+        if request.follow_up:
+            self._start_follow_up()
+
+    def _cancel_requested(self, request: _Request, text: str) -> bool:
+        """« stop », « annule »... : True si la commande est une annulation, traitée ici
+        (sans LLM). Cible : la commande dont la réponse vient d'être coupée si elle tourne
+        encore, sinon la dernière commande en cours."""
+        if not is_cancel_command(text, self.config.agent.cancel_phrases):
+            return False
+        running = [
+            r
+            for r in self._active.values()
+            if r is not request and r.task is not None and not r.task.done()
+        ]
+        barged = request.barged
+        target = barged if barged is not None and barged in running else None
+        if target is None and running:
+            target = max(running, key=lambda r: r.id)
+        if target is not None:
+            assert target.task is not None
+            target.task.cancel()
+            logger.info(
+                "Commande #{} : « {} » -> commande #{} annulée.", request.id, text, target.id
+            )
+        elif barged is not None or request.source == FOLLOW_UP_SOURCE:
+            logger.info("Commande #{} : « {} » -> rien d'autre à annuler.", request.id, text)
+        else:
+            return False  # rien à annuler : « stop » est une vraie commande (musique...)
+        self._play("end")
+        return True
 
     async def _transcribe(self, request: _Request) -> str:
         assert request.recorder is not None
@@ -567,6 +732,16 @@ class App:
             logger.info("Rien compris (texte brut : « {} »).", raw)
             self._play("end")
             return ""
+        if request.source == FOLLOW_UP_SOURCE:
+            min_confidence = self.config.agent.follow_up_min_confidence
+            rejection = follow_up_rejection(text, transcript, min_confidence)
+            if rejection is not None:
+                logger.info("Fenêtre de suivi : « {} » ignorée ({}).", text, rejection)
+                self._play("end")
+                return ""
+            logger.info(
+                "Fenêtre de suivi : « {} » retenue ({}).", text, describe_confidence(transcript)
+            )
         logger.success("Commande #{} : « {} » (texte brut : « {} »)", request.id, text, raw)
         self.commands.append(text)
         return text
@@ -577,20 +752,36 @@ class App:
         stream = self._speaker.open(label=f"#{request.id}")
         request.stream = stream
         stream.on_first_sound = functools.partial(self._on_first_sound, request)
-        self._spawn(self._thinking_sound(request), f"réflexion #{request.id}")
+        gated = request.source == FOLLOW_UP_SOURCE and self.config.agent.follow_up_use_llm_gate
+        if not gated:  # suivi jugé par le LLM : pas de son tant qu'on ne sait pas si on répond
+            self._spawn(self._thinking_sound(request), f"réflexion #{request.id}")
         result = await self._agent.respond(
             text,
             stream,
             label=f"#{request.id}",
             on_phase=functools.partial(self._on_agent_phase, request),
-            listen=self.listen_once if self._can_listen else None,
+            listen=functools.partial(self._listen_for, stream) if self._can_listen else None,
+            follow_up=gated,
         )
         stream.close()
         await stream.wait()
         request.marks["done"] = time.monotonic()
+        if result.outcome == "ignored":  # pas pour MIKATA : bip de fin, retour au repos
+            self._play("end")
+            return
+        request.follow_up = not stream.cancelled
         if result.answer:
             self.answers.append(result.answer)
         self._log_response(request, result)
+
+    async def _listen_for(self, stream: SpeechStream, timeout_s: float) -> str:
+        """Réponse orale pour une commande. Si sa réponse a été coupée (barge-in), la
+        question ou l'annonce n'a pas été entendue : réponse « stop », qui refuse une
+        confirmation et annule une extinction (jamais l'inverse)."""
+        if stream.cancelled:
+            logger.info("Réponse coupée avant l'écoute : vaut « {} ».", INTERRUPTED_ANSWER)
+            return INTERRUPTED_ANSWER
+        return await self.listen_once(timeout_s)
 
     def _on_first_sound(self, request: _Request) -> None:
         request.marks["first_sound"] = time.monotonic()
@@ -655,7 +846,7 @@ class App:
 
     def _finish(self, request: _Request) -> None:
         if self._listening is request:
-            self._listening = None
+            self._set_listening(None)
         if request.recorder is not None:
             request.recorder.cancel()
         self._active.pop(request.id, None)

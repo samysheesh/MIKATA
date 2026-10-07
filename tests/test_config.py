@@ -45,7 +45,8 @@ def test_defaults_match_section_10(config_file: Path) -> None:
     assert config.stt.compute_type == "int8_float16"
     assert config.llm.max_tool_rounds == 8
     assert config.tts.backend == "piper"
-    assert config.agent.follow_up_s == 6
+    assert Config().agent.follow_up_s == 6  # le fichier de test la coupe (conftest)
+    assert config.agent.follow_up_s == 0
     assert config.guard.confirm_after_web is False
     assert config.logging.rotation_mb == 5
     assert config.logging.retention_files == 5
@@ -93,7 +94,10 @@ def test_repo_config_keys_are_exactly_the_model_fields() -> None:
 
 
 def test_test_config_equals_defaults(config_file: Path) -> None:
-    assert load_config(config_file).model_dump() == Config().model_dump()
+    """Le config.yaml de test = les valeurs par défaut, fenêtre de suivi coupée en plus."""
+    expected = Config().model_dump()
+    expected["agent"]["follow_up_s"] = 0
+    assert load_config(config_file).model_dump() == expected
 
 
 def test_empty_file_uses_defaults(tmp_path: Path) -> None:

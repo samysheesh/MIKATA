@@ -108,12 +108,15 @@ def test_history_is_sent_on_next_turn() -> None:
     assert llm.calls[1][1]["content"] == "quelle heure"
 
 
-def test_one_immediate_retry_then_success() -> None:
-    llm = ScriptedLLM([LlmError("serveur injoignable")], [TextDelta("Me revoilà."), Done("stop")])
+def test_one_immediate_retry_then_success(caplog_loguru: list[str]) -> None:
+    llm = ScriptedLLM([LlmError("pas de réponse en 8 s")], [TextDelta("Me revoilà."), Done("stop")])
     sink = Sink()
     result = _run(_agent(llm), "salut", sink)
     assert result.attempts == 2 and result.outcome == "ok"
     assert sink.said == ["Me revoilà."]
+    logs = "\n".join(caplog_loguru)
+    assert "Appel LLM en échec (1/2) : pas de réponse en 8 s" in logs
+    assert "Appel LLM réussi à la tentative 2/2." in logs  # la relance se voit dans le log
 
 
 def test_server_unreachable_plays_cached_phrase() -> None:
@@ -188,3 +191,93 @@ def test_prewarm_delegates() -> None:
     llm = ScriptedLLM()
     asyncio.run(_agent(llm).prewarm())
     assert llm.prewarmed == 1
+
+
+# -- phase 6 : fenêtre de suivi jugée par le LLM, résumé de l'historique --------------------
+
+
+def _follow_up(agent: Agent, command: str, sink: Sink) -> Any:
+    return asyncio.run(agent.respond(command, sink, follow_up=True))
+
+
+def test_follow_up_marker_means_not_for_mikata() -> None:
+    """Le LLM juge la phrase hors sujet : rien n'est dit, fait, ni gardé."""
+    llm = ScriptedLLM(
+        [TextDelta("[IGN"), TextDelta("ORER]"), ToolCallReq("c1", "open_app", {}), Done("stop")]
+    )
+    agent = _agent(llm)
+    sink = Sink()
+    result = _follow_up(agent, "tu viens ce soir chez Paul", sink)
+    assert result.outcome == "ignored" and result.answer == ""
+    assert sink.said == [] and sink.audio == [] and len(agent.memory) == 0
+    note = llm.calls[0][-1]["content"]
+    assert "Fenêtre de suivi" in note and "[IGNORER]" in note
+
+
+def test_follow_up_never_asks_to_repeat() -> None:
+    llm = ScriptedLLM([TextDelta("Désolé, j'ai pas bien entendu. Tu peux répéter ?"), Done("stop")])
+    sink = Sink()
+    result = _follow_up(_agent(llm), "bruit de fond", sink)
+    assert result.outcome == "ignored" and sink.said == []
+
+
+def test_follow_up_answer_is_spoken_normally() -> None:
+    llm = ScriptedLLM(
+        [TextDelta("À Tokyo, il est "), TextDelta("vingt-trois heures."), Done("stop")]
+    )
+    sink = Sink()
+    result = _follow_up(_agent(llm), "et à Tokyo", sink)
+    assert result.outcome == "ok" and sink.said == ["À Tokyo, il est vingt-trois heures."]
+
+
+def test_marker_outside_follow_up_is_not_special() -> None:
+    llm = ScriptedLLM([TextDelta("[IGNORER] est un mot."), Done("stop")])
+    sink = Sink()
+    result = _run(_agent(llm), "lis ce mot", sink)
+    assert result.outcome == "ok" and sink.said == ["[IGNORER] est un mot."]
+    assert "Fenêtre de suivi" not in llm.calls[0][-1]["content"]
+
+
+class SummaryLLM:
+    """Répond « Réponse n », et résume quand on lui donne le prompt de résumé."""
+
+    def __init__(self) -> None:
+        self.summaries: list[str] = []
+        self.answers = 0
+
+    async def stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        reasoning_effort: str | None = None,
+    ) -> AsyncIterator[LLMEvent]:
+        from mikata.agent.loop import SUMMARY_PROMPT
+
+        if messages[0]["content"] == SUMMARY_PROMPT:
+            self.summaries.append(messages[1]["content"])
+            yield TextDelta(f"Résumé numéro {len(self.summaries)} : l'utilisateur aime le jazz.")
+        else:
+            self.answers += 1
+            yield TextDelta(f"Réponse {self.answers}.")
+        yield Done("stop")
+
+
+def test_oldest_exchanges_are_summarized_not_dropped() -> None:
+    from mikata.agent.memory import ShortTermMemory
+
+    llm = SummaryLLM()
+    memory = ShortTermMemory(max_tokens=60, summarize=True)
+    agent = Agent(llm, Config(), memory, window_title=lambda: None, clock=lambda: NOW)
+
+    async def scenario() -> None:
+        for i in range(6):
+            await agent.respond(f"j'aime le jazz, phrase numéro {i} un peu longue", Sink())
+            if agent._summary_task is not None:
+                await agent._summary_task
+
+    asyncio.run(scenario())
+    assert llm.summaries and "Utilisateur : j'aime le jazz, phrase numéro 0" in llm.summaries[0]
+    assert memory.summary.startswith("Résumé numéro") and memory.pending == 0
+    history = memory.messages()
+    assert history[0]["role"] == "system" and "l'utilisateur aime le jazz" in history[0]["content"]
+    assert memory.tokens <= 60 + 40  # plafond (+ le dernier échange, toujours gardé)
