@@ -204,4 +204,8 @@ def test_two_commands_run_in_parallel(config_file: Path) -> None:
     assert s2 < e1  # la 2e réfléchit pendant que la 1re n'a pas fini : pas de file d'attente
     assert out.effects.count("wake") == 2
     assert len(out.spoken) == 2  # les deux réponses dites, l'une après l'autre
-    assert State.LISTENING in tray.states[tray.states.index(State.THINKING) :]
+    # La 2e écoute commence pendant que la 1re commande est encore en cours (transcription ou
+    # réflexion selon la vitesse de la machine), sans repasser par IDLE.
+    after_first = tray.states[tray.states.index(State.TRANSCRIBING) :]
+    assert State.LISTENING in after_first
+    assert State.IDLE not in after_first[: after_first.index(State.LISTENING)]
