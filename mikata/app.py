@@ -20,7 +20,10 @@ Phase 6 :
   au LLM comme une commande normale (pause de la musique).
 - **fenêtre de suivi** : après une réponse, si rien d'autre n'est en cours, le micro écoute
   `agent.follow_up_s` secondes sans mot d'activation (état FOLLOW_UP) ; ce qui est dit
-  devient une nouvelle commande, avec l'historique. Sinon : bip de fin.
+  devient une nouvelle commande, avec l'historique. Sinon : bip de fin. Dans le bruit ou
+  une conversation à côté : une transcription peu fiable (`agent.follow_up_min_confidence`)
+  est ignorée, puis le LLM juge si la phrase s'adresse à MIKATA
+  (`agent.follow_up_use_llm_gate`). Phrase ignorée : bip de fin, aucune réponse.
 
 Commandes en parallèle : chaque commande a son propre état (`_Request.state`). Il n'y a
 qu'un micro, donc une seule commande **écoute** à la fois (`_listening`) ; dès que sa fin de
@@ -56,6 +59,8 @@ from mikata.stt.base import STT
 from mikata.stt.speculative import CommandRecorder, EndReason
 from mikata.stt.text import (
     clean_transcript,
+    describe_confidence,
+    follow_up_rejection,
     is_cancel_command,
     strip_wake_word,
     wake_word_pattern,
@@ -727,6 +732,16 @@ class App:
             logger.info("Rien compris (texte brut : « {} »).", raw)
             self._play("end")
             return ""
+        if request.source == FOLLOW_UP_SOURCE:
+            min_confidence = self.config.agent.follow_up_min_confidence
+            rejection = follow_up_rejection(text, transcript, min_confidence)
+            if rejection is not None:
+                logger.info("Fenêtre de suivi : « {} » ignorée ({}).", text, rejection)
+                self._play("end")
+                return ""
+            logger.info(
+                "Fenêtre de suivi : « {} » retenue ({}).", text, describe_confidence(transcript)
+            )
         logger.success("Commande #{} : « {} » (texte brut : « {} »)", request.id, text, raw)
         self.commands.append(text)
         return text
@@ -737,17 +752,23 @@ class App:
         stream = self._speaker.open(label=f"#{request.id}")
         request.stream = stream
         stream.on_first_sound = functools.partial(self._on_first_sound, request)
-        self._spawn(self._thinking_sound(request), f"réflexion #{request.id}")
+        gated = request.source == FOLLOW_UP_SOURCE and self.config.agent.follow_up_use_llm_gate
+        if not gated:  # suivi jugé par le LLM : pas de son tant qu'on ne sait pas si on répond
+            self._spawn(self._thinking_sound(request), f"réflexion #{request.id}")
         result = await self._agent.respond(
             text,
             stream,
             label=f"#{request.id}",
             on_phase=functools.partial(self._on_agent_phase, request),
             listen=functools.partial(self._listen_for, stream) if self._can_listen else None,
+            follow_up=gated,
         )
         stream.close()
         await stream.wait()
         request.marks["done"] = time.monotonic()
+        if result.outcome == "ignored":  # pas pour MIKATA : bip de fin, retour au repos
+            self._play("end")
+            return
         request.follow_up = not stream.cancelled
         if result.answer:
             self.answers.append(result.answer)

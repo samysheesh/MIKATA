@@ -209,6 +209,7 @@ class ToolContext:
     http: Any = None  # httpx2.AsyncClient partagé (outils web)
     search_api_key: str | None = None
     memory: Any = None  # agent.memory.LongTermMemory
+    history: Any = None  # agent.memory.ShortTermMemory (ajout phase 6 : set_history_duration)
     announce: Callable[[str], Awaitable[None]] | None = None  # dire un texte (minuteurs)
     tasks: set[asyncio.Task[Any]] = field(default_factory=set)  # minuteurs en cours
     clock: Callable[[], datetime] = datetime.now  # remplaçables dans les tests

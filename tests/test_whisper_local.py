@@ -17,8 +17,12 @@ from mikata.stt.whisper_local import SttUnavailableError, WhisperSTT
 
 
 class FakeSegment:
-    def __init__(self, text: str) -> None:
+    def __init__(
+        self, text: str, no_speech_prob: float | None = None, avg_logprob: float | None = None
+    ) -> None:
         self.text = text
+        self.no_speech_prob = no_speech_prob
+        self.avg_logprob = avg_logprob
 
 
 class FakeWhisperModel:
@@ -215,3 +219,14 @@ def test_explicit_prompt_overrides_config(
     stt.transcribe_sync(np.zeros(1600, dtype=np.int16), "")  # eval_stt --prompt none
     assert FakeWhisperModel.instances[-1].calls[-1][1]["initial_prompt"] is None
     stt.close()
+
+
+def test_reliability_of_segments() -> None:
+    """Phase 6 : confiance de la transcription (filtre de la fenêtre de suivi)."""
+    from mikata.stt.whisper_local import _reliability
+
+    segments = [FakeSegment(" Et à", 0.1, -0.2), FakeSegment(" Tokyo ?", 0.3, -0.6)]
+    no_speech, logprob = _reliability(segments)
+    assert no_speech == 0.3  # le pire segment
+    assert logprob == pytest.approx((-0.2 * 4 + -0.6 * 7) / 11)  # pondéré par le texte
+    assert _reliability([FakeSegment(" ok")]) == (None, None)

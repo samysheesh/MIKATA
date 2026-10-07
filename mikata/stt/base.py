@@ -13,6 +13,9 @@ class Transcript:
     text: str
     duration_s: float
     latency_s: float
+    # Ajouts phase 6 (fiabilité, pour la fenêtre de suivi) : None si le moteur ne les donne pas.
+    no_speech_prob: float | None = None  # probabilité qu'il n'y ait pas de parole
+    avg_logprob: float | None = None  # log-probabilité moyenne des tokens
 
 
 @runtime_checkable

@@ -135,6 +135,21 @@ def gpu_memory_used_mb() -> float | None:
         return None
 
 
+def _reliability(segments: Sequence[Any]) -> tuple[float | None, float | None]:
+    """(no_speech_prob le plus haut, avg_logprob moyen pondéré par la longueur du texte)."""
+    no_speech = [
+        s.no_speech_prob for s in segments if getattr(s, "no_speech_prob", None) is not None
+    ]
+    weighted = [
+        (s.avg_logprob, max(1, len(s.text.strip())))
+        for s in segments
+        if getattr(s, "avg_logprob", None) is not None
+    ]
+    total = sum(weight for _, weight in weighted)
+    logprob = sum(value * weight for value, weight in weighted) / total if total else None
+    return (max(no_speech) if no_speech else None), logprob
+
+
 class WhisperSTT:
     """Implémente l'interface `STT`. Un executor dédié à 1 worker (§3) : un seul calcul GPU
     à la fois, la boucle asyncio n'est jamais bloquée."""
@@ -243,11 +258,15 @@ class WhisperSTT:
             vad_filter=False,  # le découpage est déjà fait par Silero
             initial_prompt=(self.cfg.initial_prompt if prompt is None else prompt) or None,
         )
-        text = "".join(segment.text for segment in segments).strip()  # décodage ici
+        decoded = list(segments)  # décodage ici
+        text = "".join(segment.text for segment in decoded).strip()
+        no_speech, logprob = _reliability(decoded)
         return Transcript(
             text=text,
             duration_s=len(audio) / SAMPLE_RATE,
             latency_s=time.perf_counter() - start,
+            no_speech_prob=no_speech,
+            avg_logprob=logprob,
         )
 
     async def transcribe(self, audio: np.ndarray) -> Transcript:

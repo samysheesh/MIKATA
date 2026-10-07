@@ -1,4 +1,4 @@
-"""Évaluation du prompt système sur 20 phrases approximatives (vrai LLM, actions simulées).
+"""Évaluation du prompt système sur 23 phrases approximatives (vrai LLM, actions simulées).
 
 Usage : uv run python scripts/eval_prompt.py [--only 1 3 ...] [--json rapport.json]
 
@@ -9,7 +9,9 @@ Spotify et Discord ouverts, une liste d'applications installées connue.
 
 Une phrase réussit si le LLM appelle l'outil attendu avec les bons arguments, sans
 run_powershell, sans question de précision, et répond court sans parler de PowerShell ni de
-syntaxe. Coût : une vingtaine d'appels LLM (≈ 0,01 $).
+syntaxe. Ajout phase 6 : histoire, blague, explication -> réponse dite à voix haute, sans
+aucun outil (ni Bloc-notes ni fichier), en 3 à 5 phrases. Coût : une vingtaine d'appels LLM
+(≈ 0,01 $).
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 import sys
 import tempfile
 import time
@@ -72,9 +75,14 @@ def keys_are(*expected: str) -> Check:
 @dataclass
 class Case:
     phrase: str
-    tools: tuple[str, ...]  # un seul de ces outils suffit
+    tools: tuple[str, ...]  # un seul de ces outils suffit ; () : aucun outil, réponse dite
     expect: str  # attendu, lisible
     check: Check = anything
+    sentences: tuple[int, int] | None = None  # nombre de phrases dites (min, max)
+    max_words: int = MAX_WORDS
+
+
+SPOKEN = ()  # aucun outil : MIKATA répond lui-même à voix haute
 
 
 NOTEPAD = named("bloc-notes", "bloc notes", "notepad")
@@ -110,6 +118,12 @@ CASES: tuple[Case, ...] = (
     Case("quel temps il fait à Lyon", ("get_weather",), "météo à Lyon",
          lambda a: "lyon" in fold(str(a.get("city")))),
     Case("verrouille l'ordi", ("lock",), "verrouiller la session"),
+    # Phase 6 : « raconte-moi une longue histoire » avait ouvert le Bloc-notes pour l'y coller.
+    Case("raconte-moi une longue histoire", SPOKEN, "histoire dite, 3 à 5 phrases",
+         sentences=(3, 5), max_words=140),
+    Case("raconte-moi une blague", SPOKEN, "blague dite", sentences=(1, 5), max_words=80),
+    Case("explique-moi comment marche un frigo", SPOKEN, "explication dite, 3 à 5 phrases",
+         sentences=(3, 5), max_words=140),
 )  # fmt: skip
 
 
@@ -131,18 +145,31 @@ def evaluate(case: Case, calls: list[tuple[str, dict[str, Any]]], answer: str) -
     """Raisons de l'échec (liste vide : réussi)."""
     reasons = []
     names = [name for name, _ in calls]
-    if not any(name in case.tools and case.check(args) for name, args in calls):
+    if not case.tools and calls:
+        reasons.append(f"aucun outil attendu ({case.expect}), appelé : {', '.join(names)}")
+    elif case.tools and not any(name in case.tools and case.check(args) for name, args in calls):
         reasons.append(f"attendu {'/'.join(case.tools)} ({case.expect})")
     if used := [name for name in names if name in FORBIDDEN_TOOLS]:
         reasons.append(f"outil à éviter : {', '.join(used)}")
     lowered = answer.casefold()
     if words := [w.strip() for w in FORBIDDEN_WORDS if w in lowered]:
         reasons.append(f"parle de {', '.join(words)}")
-    if len(answer.split()) > MAX_WORDS:
+    if len(answer.split()) > case.max_words:
         reasons.append(f"réponse trop longue ({len(answer.split())} mots)")
-    if not calls and "?" in answer:
+    if case.sentences is not None:
+        count = count_sentences(answer)
+        low, high = case.sentences
+        if not low <= count <= high:
+            reasons.append(f"{count} phrase(s) dite(s), attendu {low} à {high}")
+    elif not calls and "?" in answer:
         reasons.append("pose une question au lieu d'agir")
     return reasons
+
+
+def count_sentences(text: str) -> int:
+    """Phrases d'une réponse dite (« Pourquoi... ? Parce que... » : 2)."""
+    parts = re.split(r"[.!?…]+(?=\s|$)", text)
+    return sum(1 for part in parts if re.search(r"[^\W\d_]{2,}", part))
 
 
 # -- environnement simulé : rien n'est fait sur le PC -------------------------------------
@@ -257,7 +284,7 @@ async def run_cases(
 ) -> list[Outcome]:
     from mikata.agent.guard import Guard
     from mikata.agent.loop import Agent
-    from mikata.agent.memory import LongTermMemory
+    from mikata.agent.memory import LongTermMemory, ShortTermMemory
     from mikata.llm.usage import cost_usd
     from mikata.tools.apps import installed_app_names, open_apps
     from mikata.tools.base import ToolContext
@@ -299,6 +326,7 @@ async def run_cases(
         agent = Agent(
             llm,
             config,
+            ShortTermMemory(),  # en mémoire : ne touche pas à data/history.json
             window_title=lambda: SCENARIO_WINDOWS[0].title,
             tools=ToolRegistry(ctx),
             long_memory=ctx.memory,

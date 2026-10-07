@@ -68,6 +68,7 @@ PHASE_5_TOOLS = {
     "run_powershell",
     "run_script",
 }
+PHASE_6_TOOLS = {"set_history_duration"}  # durée de l'historique, à la voix
 TERMINAL = {
     "set_timer",
     "set_reminder",
@@ -100,7 +101,7 @@ def _registry(tmp_path: Path, **kwargs: object) -> ToolRegistry:
 
 def test_catalogue_and_terminal_tools(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
-    assert set(registry.tools) - {"echo_test"} == PHASE_4_TOOLS | PHASE_5_TOOLS
+    assert set(registry.tools) - {"echo_test"} == PHASE_4_TOOLS | PHASE_5_TOOLS | PHASE_6_TOOLS
     assert {n for n in registry.tools if registry.is_terminal(n)} - {"echo_test"} == TERMINAL
     assert FAMILIES == (
         "system", "apps", "web", "media", "ui", "memory_tools", "input", "files", "shell"
@@ -110,14 +111,13 @@ def test_catalogue_and_terminal_tools(tmp_path: Path) -> None:
 
 
 def test_schemas_are_stable_sorted_and_lean(tmp_path: Path) -> None:
-    registry = ToolRegistry(make_ctx(tmp_path), include=PHASE_4_TOOLS | PHASE_5_TOOLS)
+    every = PHASE_4_TOOLS | PHASE_5_TOOLS | PHASE_6_TOOLS
+    registry = ToolRegistry(make_ctx(tmp_path), include=every)
     schemas = registry.schemas()
     names = [s["function"]["name"] for s in schemas]
     assert names == sorted(names)
     # identiques d'un appel à l'autre (cache de prompt)
-    assert (
-        schemas == ToolRegistry(make_ctx(tmp_path), include=PHASE_4_TOOLS | PHASE_5_TOOLS).schemas()
-    )
+    assert schemas == ToolRegistry(make_ctx(tmp_path), include=every).schemas()
     for schema in schemas:
         assert schema["type"] == "function"
         params = schema["function"]["parameters"]

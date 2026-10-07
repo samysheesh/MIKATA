@@ -179,9 +179,16 @@ class AgentConfig(_Section):
     thinking_sound_after_s: float = Field(default=1.2, ge=0)
     history_max_tokens: int = Field(default=6000, ge=500)  # ajout phase 3 : §6, ~6 000 tokens
     # Ajouts phase 6. Historique gardé sur disque (data/history.json) entre deux démarrages,
-    # et `history_persist_h` heures sans interaction au lieu de session_reset_min.
-    history_persist: bool = False
-    history_persist_h: float = Field(default=24, gt=0)
+    # et `history_persist_h` heures sans interaction au lieu de session_reset_min (durée
+    # modifiable à la voix). Au-delà de history_max_tokens, les plus anciens échanges sont
+    # résumés par le LLM (history_summarize) au lieu d'être supprimés.
+    history_persist: bool = True
+    history_persist_h: float = Field(default=168, gt=0)
+    history_summarize: bool = True
+    # Fenêtre de suivi dans le bruit : une phrase dont la transcription est moins fiable que
+    # ce seuil (0 à 1) est ignorée sans réponse ; puis le LLM juge si elle s'adresse à MIKATA.
+    follow_up_min_confidence: float = Field(default=0.4, ge=0, le=1)
+    follow_up_use_llm_gate: bool = True
     # Commande entière qui annule (dite après « MIKATA » pendant une réponse ou pendant la
     # fenêtre de suivi) : jamais envoyée au LLM.
     cancel_phrases: list[str] = Field(

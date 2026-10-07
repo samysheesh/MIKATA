@@ -124,14 +124,75 @@ def test_agent_memory_follows_config(tmp_path: Path) -> None:
     from mikata.agent.loop import short_term_memory
     from mikata.config import load_config
 
-    plain = load_config(write_test_config(tmp_path / "a.yaml"))
-    assert short_term_memory(plain).path is None
-    assert short_term_memory(plain).reset_after_s == 600
-    persistent = load_config(
+    # Phase 6 : gardé sur disque 7 jours par défaut, résumé au-delà du plafond.
+    default = short_term_memory(load_config(write_test_config(tmp_path / "a.yaml")))
+    assert default.path == tmp_path / "data" / "history.json"
+    assert default.reset_after_s == 7 * 24 * 3600 and default.summarize
+    in_ram = load_config(
         write_test_config(
-            tmp_path / "b.yaml", agent={"history_persist": True, "history_persist_h": 48}
+            tmp_path / "b.yaml", agent={"history_persist": False, "history_summarize": False}
         )
     )
-    memory = short_term_memory(persistent)
-    assert memory.path == tmp_path / "data" / "history.json"
-    assert memory.reset_after_s == 48 * 3600
+    memory = short_term_memory(in_ram)
+    assert memory.path is None and memory.reset_after_s == 600 and not memory.summarize
+
+
+def test_summary_replaces_dropped_exchanges_and_survives_restart(tmp_path: Path) -> None:
+    """Phase 6 : plafond atteint -> les plus anciens échanges attendent leur résumé."""
+    path = tmp_path / "history.json"
+    clock = Clock()
+    memory = ShortTermMemory(max_tokens=100, clock=clock, path=path, summarize=True)
+    for i in range(5):  # ~21 tokens par échange : le premier sort de l'historique
+        memory.add(f"question numéro {i} assez longue pour peser", f"Réponse {i}.")
+    assert memory.pending == 1 and len(memory) == 4 and memory.tokens <= 100
+    generation, previous, exchanges = memory.summary_request()
+    assert previous == "" and exchanges[0] == ("question numéro 0 assez longue pour peser",
+                                                "Réponse 0.")  # fmt: skip
+    assert memory.apply_summary(generation, len(exchanges), "L'utilisateur pose des questions.")
+    assert memory.pending == 0
+    assert memory.messages()[0] == {
+        "role": "system",
+        "content": "Résumé de la conversation plus ancienne : L'utilisateur pose des questions.",
+    }
+    reloaded = ShortTermMemory(max_tokens=100, clock=clock, path=path, summarize=True)
+    assert reloaded.summary == memory.summary and reloaded.messages() == memory.messages()
+
+
+def test_without_summary_oldest_exchanges_are_dropped() -> None:
+    memory = ShortTermMemory(max_tokens=60, clock=Clock())
+    for i in range(5):
+        memory.add(f"question numéro {i} assez longue pour peser", f"Réponse {i}.")
+    assert memory.pending == 0 and memory.summary == "" and memory.tokens <= 60
+
+
+def test_new_conversation_clears_everything_and_drops_stale_summaries(tmp_path: Path) -> None:
+    memory = ShortTermMemory(max_tokens=60, clock=Clock(), path=tmp_path / "h.json", summarize=True)
+    for i in range(5):
+        memory.add(f"question numéro {i} assez longue pour peser", f"Réponse {i}.")
+    generation, _, exchanges = memory.summary_request()
+    memory.clear()  # « nouvelle conversation » pendant que le résumé est calculé
+    assert not memory.apply_summary(generation, len(exchanges), "Résumé périmé.")
+    assert (memory.summary, memory.pending, len(memory)) == ("", 0, 0)
+    assert ShortTermMemory(path=tmp_path / "h.json").messages() == []
+
+
+def test_duration_set_by_voice_is_kept(tmp_path: Path) -> None:
+    path = tmp_path / "history.json"
+    clock = Clock()
+    memory = ShortTermMemory(reset_after_s=7 * 24 * 3600, clock=clock, path=path)
+    memory.add("bonjour", "Salut.")
+    memory.set_keep(30 * 24 * 3600)  # « garde la conversation un mois »
+    memory.clear()  # ne change pas la durée
+    memory.add("tu te souviens ?", "Oui.")
+    clock.t += 20 * 24 * 3600  # 20 jours plus tard, après un redémarrage
+    reloaded = ShortTermMemory(reset_after_s=7 * 24 * 3600, clock=clock, path=path)
+    assert reloaded.reset_after_s == 30 * 24 * 3600 and len(reloaded) == 1
+
+
+def test_backlog_of_unsummarized_exchanges_is_bounded() -> None:
+    """Résumés impossibles (hors ligne) : l'arriéré ne dépasse pas le plafond de tokens."""
+    memory = ShortTermMemory(max_tokens=60, clock=Clock(), summarize=True)
+    for i in range(20):
+        memory.add(f"question numéro {i} assez longue pour peser", f"Réponse {i}.")
+    _, _, exchanges = memory.summary_request()
+    assert 1 <= len(exchanges) <= 3 and exchanges[-1][0].startswith("question numéro 1")

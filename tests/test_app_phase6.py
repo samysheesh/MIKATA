@@ -68,18 +68,31 @@ class LastWordSTT:
     def close(self) -> None:
         pass
 
+    def __init__(self, unreliable: set[int] | None = None) -> None:
+        self.unreliable = unreliable or set()  # paroles mal entendues (bruit, voix lointaine)
+
     async def transcribe(self, audio: np.ndarray) -> Transcript:
         await asyncio.sleep(0.005)
         values = [int(v) for v in audio[::1280] if int(v) in TEXTS]
         text = TEXTS[values[-1]] if values else ""
-        return Transcript(text=text, duration_s=len(audio) / 16_000, latency_s=0.005)
+        noisy = bool(values) and values[-1] in self.unreliable
+        return Transcript(
+            text=text,
+            duration_s=len(audio) / 16_000,
+            latency_s=0.005,
+            no_speech_prob=0.7 if noisy else 0.02,
+            avg_logprob=-1.3 if noisy else -0.2,
+        )
 
 
 class CommandLLM:
     """Répond selon la commande, après `delays[commande]` s ; note les annulations."""
 
-    def __init__(self, delays: dict[str, float] | None = None) -> None:
+    def __init__(
+        self, delays: dict[str, float] | None = None, answers: dict[str, str] | None = None
+    ) -> None:
         self.delays = delays or {}
+        self.answers = {**ANSWERS, **(answers or {})}
         self.calls: list[list[dict[str, Any]]] = []
         self.commands: list[str] = []
         self.cancelled: list[str] = []
@@ -101,7 +114,7 @@ class CommandLLM:
         except asyncio.CancelledError:
             self.cancelled.append(command)
             raise
-        yield TextDelta(ANSWERS[command])
+        yield TextDelta(self.answers[command])
         yield Done("stop")
 
 
@@ -151,6 +164,7 @@ def _app(
     follow_up_s: float = 1.0,
     duration: float = 0.02,
     tools: ToolRegistry | None = None,
+    stt: LastWordSTT | None = None,
 ) -> tuple[App, FeedAudio, CutPlayer, TextTTS, RecordingTray]:
     config_file = write_test_config(
         tmp_path / "config.yaml",
@@ -168,7 +182,7 @@ def _app(
         player=out,
         earcons=ALL_EARCONS,
         vad=MarkerVAD(),
-        stt=LastWordSTT(),
+        stt=stt or LastWordSTT(),
         agent=Agent(llm, config, window_title=lambda: None, tools=tools),
         speaker=Speaker(tts, out),
     )
@@ -426,3 +440,66 @@ def test_barge_in_on_a_shutdown_announcement_cancels_it(tmp_path: Path) -> None:
     assert [entry for entry in desktop.log if entry[0] == "power"] == []
     assert any("Extinction annulée." in answer for answer in app.answers)
     assert "Extinction annulée." not in tts.texts  # réponse coupée : plus rien n'est dit
+
+
+# -- fenêtre de suivi dans le bruit (retours de test de la phase 6) -------------------------
+
+
+def test_unreliable_follow_up_is_ignored_without_a_word(tmp_path: Path) -> None:
+    """Bruit ou voix lointaine dans la fenêtre de suivi : bip de fin, pas d'appel LLM, pas
+    de « j'ai pas bien entendu »."""
+    llm = CommandLLM()
+    app, audio, out, tts, _ = _app(tmp_path, llm, stt=LastWordSTT(unreliable={2}))
+
+    async def scenario() -> None:
+        await _wake_and_say(app, audio, 1)
+        await _until(lambda: _in_follow_up(app))
+        audio.say(2)  # mal entendu
+        await _until(lambda: out.effects[-1:] == ["end"] and not app._active)
+        await asyncio.sleep(0.05)
+
+    _run(app, scenario)
+    assert llm.commands == ["quelle heure est-il"]
+    assert tts.texts == ["Il est quinze heures."] and app._listening is None
+
+
+def test_conversation_next_to_mikata_is_judged_by_the_llm(tmp_path: Path) -> None:
+    """Une phrase bien entendue mais adressée à quelqu'un d'autre : le LLM répond le
+    marqueur, rien n'est dit, la fenêtre se ferme."""
+    llm = CommandLLM(answers={"et à Tokyo": "[IGNORER]"})
+    app, audio, out, tts, _ = _app(tmp_path, llm)
+
+    async def scenario() -> None:
+        await _wake_and_say(app, audio, 1)
+        await _until(lambda: _in_follow_up(app))
+        audio.say(2)
+        await _until(lambda: len(llm.commands) == 2)
+        await _until(lambda: out.effects[-1:] == ["end"] and not app._active)
+        await asyncio.sleep(0.05)
+
+    _run(app, scenario)
+    assert tts.texts == ["Il est quinze heures."]  # le marqueur n'est jamais dit
+    assert list(app.answers) == ["Il est quinze heures."]
+    assert "Fenêtre de suivi" in llm.calls[1][-1]["content"]
+    assert "Fenêtre de suivi" not in llm.calls[0][-1]["content"]  # pas après « MIKATA »
+    assert app._listening is None  # pas de nouvelle fenêtre de suivi
+
+
+def test_llm_gate_can_be_disabled(tmp_path: Path) -> None:
+    llm = CommandLLM()
+    config_file = write_test_config(
+        tmp_path / "sans_juge.yaml",
+        agent={"follow_up_s": 1.0, "follow_up_use_llm_gate": False},
+        wake={"refractory_s": 0.0},
+    )
+    app, audio, _, _, _ = _app(tmp_path, llm)
+    app.config = load_config(config_file)
+
+    async def scenario() -> None:
+        await _wake_and_say(app, audio, 1)
+        await _until(lambda: _in_follow_up(app))
+        audio.say(2)
+        await _until(lambda: len(app.answers) == 2)
+
+    _run(app, scenario)
+    assert "Fenêtre de suivi" not in llm.calls[1][-1]["content"]

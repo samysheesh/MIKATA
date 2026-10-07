@@ -22,6 +22,17 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(name, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_base_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """Une Config créée sans fichier (`Config()`) résout ses chemins relatifs (data/...) dans
+    un dossier temporaire, jamais dans le dépôt : l'historique gardé sur disque (phase 6)
+    ne doit ni lire ni écraser data/history.json pendant les tests."""
+    attribute = Config.__private_attributes__["_base_dir"]
+    monkeypatch.setattr(attribute, "default", tmp_path_factory.mktemp("base"))
+
+
 def write_test_config(path: Path, **sections: dict[str, Any]) -> Path:
     """config.yaml de test : valeurs par défaut du code (LLM en placeholder « ... »),
     indépendantes du config.yaml réel ; `sections` en surcharge (ex. llm={"model": "x"})."""

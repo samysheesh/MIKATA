@@ -4,14 +4,19 @@
   Tout ce qui précède la première occurrence part aussi : la transcription démarre au début
   du pré-roll de 2 s, qui peut contenir la fin d'une phrase dite avant le mot d'activation.
 - Retrait des hallucinations classiques de Whisper sur du silence en français.
-- Ajout phase 6 : reconnaissance d'une commande d'annulation (« stop », « laisse tomber »...).
+- Ajout phase 6 : reconnaissance d'une commande d'annulation (« stop », « laisse tomber »...)
+  et filtre de la fenêtre de suivi (`follow_up_rejection` : bruit, hésitation, transcription
+  peu fiable).
 """
 
 from __future__ import annotations
 
+import math
 import re
 import unicodedata
 from collections.abc import Iterable
+
+from mikata.stt.base import Transcript
 
 # Phrases que Whisper invente sur du silence ou du bruit (sous-titres de son corpus).
 HALLUCINATIONS = (  # « amara.org » d'abord : son point ne doit pas couper la phrase
@@ -66,3 +71,53 @@ def is_cancel_command(text: str, phrases: Iterable[str]) -> bool:
     n'en est pas une : seule la phrase complète compte."""
     form = _cancel_form(text)
     return bool(form) and form in {_cancel_form(p) for p in phrases}
+
+
+# Fenêtre de suivi : ce qui n'est pas une phrase pour MIKATA.
+FILLER_WORDS = frozenset(
+    {"euh", "heu", "hum", "hmm", "mmh", "mh", "ah", "oh", "eh", "he", "bah", "ben", "hein",
+     "pff", "bof", "ouh", "haha", "hahaha", "hihi", "mouais"}
+)  # fmt: skip
+MIN_LETTERS = 2
+MIN_UNIQUE_RATIO = 0.4  # « la la la la la » : texte incohérent
+
+
+def transcript_confidence(transcript: Transcript) -> float | None:
+    """Confiance de 0 à 1 : probabilité moyenne des tokens × probabilité qu'il y ait de la
+    parole. None si le moteur ne donne ni l'une ni l'autre."""
+    if transcript.avg_logprob is None and transcript.no_speech_prob is None:
+        return None
+    token = math.exp(transcript.avg_logprob) if transcript.avg_logprob is not None else 1.0
+    speech = 1.0 - (transcript.no_speech_prob or 0.0)
+    return max(0.0, min(1.0, token * speech))
+
+
+def follow_up_rejection(text: str, transcript: Transcript, min_confidence: float) -> str | None:
+    """Raison d'ignorer une phrase entendue dans la fenêtre de suivi (bruit, hésitation,
+    texte incohérent, transcription peu fiable), ou None si elle peut partir au LLM."""
+    folded = unicodedata.normalize("NFKD", text.casefold())
+    folded = "".join(c for c in folded if not unicodedata.combining(c))
+    words = re.findall(r"[^\W\d_]+", folded)
+    if sum(len(w) for w in words) < MIN_LETTERS:
+        return "texte trop court"
+    if all(w in FILLER_WORDS for w in words):
+        return "hésitation seule"
+    if len(words) >= 4 and len(set(words)) / len(words) < MIN_UNIQUE_RATIO:
+        return "texte incohérent (répétitions)"
+    confidence = transcript_confidence(transcript)
+    if confidence is not None and confidence < min_confidence:
+        return f"transcription peu fiable ({describe_confidence(transcript)})"
+    return None
+
+
+def describe_confidence(transcript: Transcript) -> str:
+    """« confiance 0.31 : no_speech 0.62, logprob -1.10 » pour le log."""
+    confidence = transcript_confidence(transcript)
+    if confidence is None:
+        return "confiance inconnue"
+    parts = []
+    if transcript.no_speech_prob is not None:
+        parts.append(f"no_speech {transcript.no_speech_prob:.2f}")
+    if transcript.avg_logprob is not None:
+        parts.append(f"logprob {transcript.avg_logprob:.2f}")
+    return f"confiance {confidence:.2f} : {', '.join(parts)}"

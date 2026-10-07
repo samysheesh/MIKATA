@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from mikata.config import SttConfig
@@ -71,3 +73,48 @@ def test_is_cancel_command(text: str, expected: bool) -> None:
     from mikata.stt.text import is_cancel_command
 
     assert is_cancel_command(text, AgentConfig().cancel_phrases) is expected
+
+
+def _transcript(no_speech: float | None = None, logprob: float | None = None) -> Any:
+    from mikata.stt.base import Transcript
+
+    return Transcript("x", 1.0, 0.1, no_speech_prob=no_speech, avg_logprob=logprob)
+
+
+@pytest.mark.parametrize(
+    ("text", "no_speech", "logprob", "rejected"),
+    [
+        ("Et à Tokyo ?", 0.05, -0.25, None),
+        ("Oui.", 0.1, -0.3, None),  # réponse courte valable
+        ("OK", None, None, None),  # moteur sans mesure de confiance
+        ("Euh... hmm.", 0.1, -0.3, "hésitation seule"),
+        ("A.", 0.1, -0.3, "texte trop court"),
+        ("la la la la la la", 0.1, -0.3, "texte incohérent (répétitions)"),
+        ("Tu viens ce soir ?", 0.7, -1.2, "transcription peu fiable"),
+        ("Tu viens ce soir ?", 0.05, -1.5, "transcription peu fiable"),
+    ],
+)
+def test_follow_up_rejection(
+    text: str, no_speech: float | None, logprob: float | None, rejected: str | None
+) -> None:
+    """Phase 6 : bruit et conversations à côté dans la fenêtre de suivi."""
+    from mikata.stt.text import follow_up_rejection
+
+    reason = follow_up_rejection(text, _transcript(no_speech, logprob), min_confidence=0.4)
+    if rejected is None:
+        assert reason is None
+    else:
+        assert reason is not None and reason.startswith(rejected)
+
+
+def test_transcript_confidence() -> None:
+    from mikata.stt.text import describe_confidence, transcript_confidence
+
+    assert transcript_confidence(_transcript()) is None
+    assert transcript_confidence(_transcript(0.0, 0.0)) == 1.0
+    assert transcript_confidence(_transcript(0.5, None)) == 0.5
+    assert transcript_confidence(_transcript(None, -1.0)) == pytest.approx(0.368, abs=1e-3)
+    assert describe_confidence(_transcript(0.62, -1.1)) == (
+        "confiance 0.13 : no_speech 0.62, logprob -1.10"
+    )
+    assert describe_confidence(_transcript()) == "confiance inconnue"

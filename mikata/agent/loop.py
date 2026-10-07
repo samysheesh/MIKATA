@@ -10,6 +10,11 @@
    joindre le serveur » (en cache, fonctionne hors ligne). `llm.turn_timeout_s` par requête.
    Phase 6 : un serveur muet échoue après `llm.first_chunk_timeout_s` (et non plus
    `request_timeout_s`), sur une connexion neuve pour la relance (llm/client.py).
+6. Fenêtre de suivi (ajout phase 6, `follow_up=True`) : la phrase a été entendue sans mot
+   d'activation, peut-être dans une conversation à côté. Le LLM répond `FOLLOW_UP_MARKER`
+   si elle ne s'adresse pas clairement à MIKATA : rien n'est dit ni fait, la fenêtre se
+   ferme (`outcome = "ignored"`). Le début de la réponse est retenu tant qu'il peut être ce
+   marqueur, et une demande de répétition (« j'ai pas bien entendu ») n'est jamais dite.
 5. Niveau de réflexion (ajout phase 4) : `llm.reasoning_effort` par défaut, ou celui d'un
    mot-clé dit en début / fin de commande (`llm.reasoning_keywords`, détecté par le code).
    Filet : un outil en échec, ou plus de `llm.reasoning_fallback_steps` étapes -> au moins
@@ -21,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
@@ -44,6 +50,20 @@ if TYPE_CHECKING:
 
 MAX_ATTEMPTS = 2  # un retry immédiat (§6)
 HISTORY_TOOL_CHARS = 400  # résultat d'outil gardé dans l'historique de conversation
+FOLLOW_UP_MARKER = "[IGNORER]"
+FOLLOW_UP_NOTE = (
+    "Fenêtre de suivi : cette phrase a été entendue sans mot d'activation, elle peut venir "
+    "d'une conversation à côté, d'une vidéo ou du bruit. Si ce n'est pas clairement une "
+    "suite adressée à toi (question, demande, réponse à ce que tu viens de dire), réponds "
+    f"exactement {FOLLOW_UP_MARKER}, sans rien d'autre et sans outil. Ne demande jamais de "
+    "répéter."
+)
+# « J'ai pas bien entendu », « tu peux répéter ? » : jamais dit dans la fenêtre de suivi.
+_REPEAT_RE = re.compile(
+    r"pas (?:bien |tout |tr[eè]s bien )?(?:entendu|compris|saisi|capt[ée])|r[ée]p[ée]ter|"
+    r"r[ée]p[èe]te|^\W*pardon\W*$|^\W*comment\W*\?\W*$",
+    re.IGNORECASE,
+)
 # Applis ouvertes (contexte dynamique) : relevées au mot d'activation, pendant que
 # l'utilisateur parle ; relues au moment de la commande seulement si elles datent.
 OPEN_APPS_FRESH_S = 10.0
@@ -80,7 +100,7 @@ class SilentSpeech:
 @dataclass
 class TurnResult:
     answer: str = ""
-    outcome: str = "ok"  # ok | reset | server | timeout | limit
+    outcome: str = "ok"  # ok | reset | server | timeout | limit | ignored (suivi)
     first_token_at: float | None = None
     attempts: int = 0
     tool_calls: list[ToolCallReq] = field(default_factory=list)
@@ -133,6 +153,14 @@ def _with_reasoning(messages: list[dict[str, Any]], effort: str | None) -> list[
 HISTORY_FILE = "data/history.json"
 
 
+SUMMARY_PROMPT = """\
+Tu tiens la mémoire de MIKATA, l'assistant vocal de l'utilisateur. Mets à jour le résumé de \
+leur conversation avec les échanges ci-dessous. Garde l'essentiel : ce que l'utilisateur a \
+dit de lui, ses demandes et préférences, les décisions, les réponses importantes, ce qui \
+reste en cours. Laisse de côté les actions banales déjà faites (« C'est fait »). Au plus \
+120 mots, en phrases simples, sans markdown, en français. Réponds seulement par le résumé."""
+
+
 def short_term_memory(config: Config) -> ShortTermMemory:
     """Historique de conversation : en mémoire, ou sur disque si `agent.history_persist`."""
     agent = config.agent
@@ -141,8 +169,13 @@ def short_term_memory(config: Config) -> ShortTermMemory:
             agent.history_max_tokens,
             agent.history_persist_h * 3600,
             path=config.resolve(HISTORY_FILE),
+            summarize=agent.history_summarize,
         )
-    return ShortTermMemory(agent.history_max_tokens, agent.session_reset_min * 60)
+    return ShortTermMemory(
+        agent.history_max_tokens,
+        agent.session_reset_min * 60,
+        summarize=agent.history_summarize,
+    )
 
 
 @dataclass
@@ -150,6 +183,60 @@ class _Reply:
     text: str
     calls: list[ToolCallReq]
     reasoning: str
+    ignored: bool = False  # fenêtre de suivi : phrase pas adressée à MIKATA
+
+
+class _FollowUpGate:
+    """Fenêtre de suivi : retient le texte tant qu'il peut être `FOLLOW_UP_MARKER`, et bloque
+    une demande de répétition en début de réponse. Hors suivi, tout passe tel quel."""
+
+    def __init__(self, active: bool) -> None:
+        self.active = active
+        self.ignored = False
+        self.reason = ""
+        self._pending = ""
+        self._open = not active
+        self._spoken = False
+
+    def feed(self, text: str) -> str:
+        """Texte à donner au découpeur en phrases (peut être vide : retenu)."""
+        if self._open or self.ignored:
+            return "" if self.ignored else text
+        self._pending += text
+        head = self._pending.lstrip()
+        if head.upper().startswith(FOLLOW_UP_MARKER):
+            self._ignore("le LLM juge que la phrase ne s'adresse pas à MIKATA")
+            return ""
+        if FOLLOW_UP_MARKER.startswith(head.upper()):
+            return ""  # peut encore être le marqueur
+        self._open = True
+        released, self._pending = self._pending, ""
+        return released
+
+    def finish(self) -> str:
+        """Fin du flux : le texte encore retenu, ou "" si c'était le marqueur."""
+        if self._open or self.ignored:
+            return ""
+        head = self._pending.strip().rstrip(".!").upper()
+        if head and FOLLOW_UP_MARKER.startswith(head) and len(head) >= 3:
+            self._ignore("le LLM juge que la phrase ne s'adresse pas à MIKATA")
+            return ""
+        self._open = True
+        released, self._pending = self._pending, ""
+        return released
+
+    def allow(self, fragment: str) -> bool:
+        """Le fragment peut-il être dit ?"""
+        if self.ignored:
+            return False
+        if self.active and not self._spoken and _REPEAT_RE.search(fragment):
+            self._ignore(f"demande de répétition jamais dite en suivi (« {fragment} »)")
+            return False
+        self._spoken = True
+        return True
+
+    def _ignore(self, reason: str) -> None:
+        self.ignored, self.reason = True, reason
 
 
 class Agent:
@@ -170,7 +257,7 @@ class Agent:
     ) -> None:
         self.llm = llm
         self.config = config
-        self.memory = memory or short_term_memory(config)
+        self.memory = memory if memory is not None else short_term_memory(config)
         self.phrases = phrases
         self.tools = tools
         self.long_memory = long_memory
@@ -182,6 +269,9 @@ class Agent:
         self._apps: Sequence[str] = ()
         self._apps_at = float("-inf")
         self._tools_warmed = False
+        self._summary_task: asyncio.Task[None] | None = None
+        if tools is not None and tools.ctx.history is None:  # outil set_history_duration
+            tools.ctx.history = self.memory
 
     async def prewarm(self) -> None:
         """À chaque mot d'activation : connexion LLM préchauffée, applis ouvertes relevées ;
@@ -211,12 +301,14 @@ class Agent:
         label: str = "commande",
         on_phase: Callable[[str], None] | None = None,
         listen: Callable[[float], Awaitable[str]] | None = None,
+        follow_up: bool = False,
     ) -> TurnResult:
         """Répond à voix haute à `command` ; renvoie le texte et les mesures du tour.
 
         `on_phase("acting")` / `on_phase("thinking")` : outils en cours / LLM relancé.
         `listen(délai)` (phase 5) : écoute une réponse sans mot d'activation, pour les
         confirmations orales et le « stop » avant extinction ; None sans micro.
+        `follow_up` (phase 6) : phrase de la fenêtre de suivi, que le LLM peut ignorer.
         """
         llm_cfg = self.config.llm
         request = detect_reasoning(command, llm_cfg.reasoning_keywords)
@@ -233,7 +325,7 @@ class Agent:
             return result
         try:
             async with asyncio.timeout(llm_cfg.turn_timeout_s):
-                await self._run_turn(request.text, speech, result, on_phase, listen)
+                await self._run_turn(request.text, speech, result, on_phase, listen, follow_up)
         except TimeoutError:
             logger.warning("Requête LLM trop longue (> {} s).", llm_cfg.turn_timeout_s)
             result.outcome = "timeout"
@@ -272,14 +364,16 @@ class Agent:
         result: TurnResult,
         on_phase: Callable[[str], None] | None,
         listen: Callable[[float], Awaitable[str]] | None = None,
+        follow_up: bool = False,
     ) -> None:
         facts = self.long_memory.facts if self.long_memory is not None else ()
         drain = getattr(speech, "drain", None)
         turn = TurnIO(say=speech.say, listen=listen, **({"drain": drain} if drain else {}))
         installed = self._installed_apps() if self._installed_apps is not None else ()
-        messages = build_messages(
-            self.memory.messages(), command, await self._context(), facts, installed
-        )
+        context = await self._context()
+        if follow_up:
+            context = f"{context} {FOLLOW_UP_NOTE}"
+        messages = build_messages(self.memory.messages(), command, context, facts, installed)
         schemas = self.tools.schemas() if self.tools is not None else []
         max_rounds = self.config.llm.max_tool_rounds
         fallback_steps = self.config.llm.reasoning_fallback_steps
@@ -287,10 +381,15 @@ class Agent:
         steps: list[dict[str, Any]] = []  # appels d'outils gardés dans l'historique
         for round_no in range(max_rounds + 1):
             last = round_no == max_rounds  # dernier appel : sans outils, réponse obligée
-            reply = await self._call_llm(messages, [] if last else schemas, speech, result)
+            gate = _FollowUpGate(follow_up and round_no == 0)
+            reply = await self._call_llm(messages, [] if last else schemas, speech, result, gate)
             if reply is None:
                 result.outcome = "server"
                 self._say_phrase(speech, "server")
+                return
+            if reply.ignored:  # rien n'est dit ni fait, rien n'entre dans l'historique
+                logger.info("Fenêtre de suivi : « {} » ignorée ({}).", command, gate.reason)
+                result.outcome = "ignored"
                 return
             if reply.text.strip():
                 spoken.append(reply.text.strip())
@@ -322,6 +421,47 @@ class Agent:
         result.answer = " ".join(spoken).strip()
         if result.answer or steps:
             self.memory.add(command, result.answer or PHRASES["done"], steps)
+            self._schedule_summary()
+
+    def _schedule_summary(self) -> None:
+        """Résume en arrière-plan les échanges sortis de l'historique (plafond atteint)."""
+        if self.memory.pending and (self._summary_task is None or self._summary_task.done()):
+            self._summary_task = asyncio.create_task(self._summarize(), name="résumé")
+
+    async def _summarize(self) -> None:
+        while self.memory.pending:
+            generation, previous, exchanges = self.memory.summary_request()
+            lines = [f"Résumé actuel : {previous or '(aucun)'}", "", "Échanges à intégrer :"]
+            for user, assistant in exchanges:
+                lines += [f"Utilisateur : {user}", f"MIKATA : {assistant}"]
+            messages = [
+                {"role": "system", "content": SUMMARY_PROMPT},
+                {"role": "user", "content": "\n".join(lines)},
+            ]
+            parts: list[str] = []
+            usage: Usage | None = None
+            try:
+                async with asyncio.timeout(self.config.llm.turn_timeout_s):
+                    async for event in self.llm.stream(messages, [], reasoning_effort="none"):
+                        if isinstance(event, TextDelta):
+                            parts.append(event.text)
+                        elif isinstance(event, Done):
+                            usage = event.usage
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # hors ligne : nouvel essai au prochain échange
+                logger.warning("Résumé de l'historique impossible : {}", exc)
+                return
+            if self.usage is not None:
+                self.usage.record("résumé", usage, 1)
+            summary = "".join(parts).strip()
+            if not self.memory.apply_summary(generation, len(exchanges), summary):
+                return  # conversation remise à zéro entre-temps, ou résumé vide
+            logger.info(
+                "Historique : {} ancien(s) échange(s) résumé(s) ({} caractères).",
+                len(exchanges),
+                len(self.memory.summary),
+            )
 
     async def _run_tools(
         self,
@@ -376,8 +516,16 @@ class Agent:
         tools: list[dict[str, Any]],
         speech: SpeechSink,
         result: TurnResult,
+        gate: _FollowUpGate | None = None,
     ) -> _Reply | None:
         """Un appel LLM (avec son retry) ; le texte part au TTS fragment par fragment."""
+        gate = gate or _FollowUpGate(active=False)
+
+        def say(fragments: list[str]) -> None:
+            for fragment in fragments:
+                if gate.allow(fragment):
+                    speech.say(fragment)
+
         splitter = FragmentSplitter(self.config.tts.first_chunk_min_words)
         effort = result.effort_final
         parts: list[str] = []
@@ -401,8 +549,7 @@ class Agent:
                         result.first_token_at = now
                     if isinstance(event, TextDelta):
                         parts.append(event.text)
-                        for fragment in splitter.feed(event.text):
-                            speech.say(fragment)
+                        say(splitter.feed(gate.feed(event.text)))
                     elif isinstance(event, ToolCallReq):
                         calls.append(event)
                 if attempt > 1:
@@ -418,12 +565,14 @@ class Agent:
                 calls.clear()
                 if attempt == MAX_ATTEMPTS:
                     return None
-        for fragment in splitter.flush():
-            speech.say(fragment)
+        say(splitter.feed(gate.finish()))
+        say(splitter.flush())
         if done is not None and done.usage is not None:
             result.usage = done.usage if result.usage is None else result.usage + done.usage
         self._log_call(result.llm_calls, effort, start, first_at, done, calls)
-        return _Reply("".join(parts), calls, done.reasoning if done is not None else "")
+        return _Reply(
+            "".join(parts), calls, done.reasoning if done is not None else "", gate.ignored
+        )
 
     @staticmethod
     def _log_call(
@@ -452,6 +601,8 @@ class Agent:
         )
 
     async def aclose(self) -> None:
+        if self._summary_task is not None and not self._summary_task.done():
+            self._summary_task.cancel()
         aclose = getattr(self.llm, "aclose", None)
         if aclose is not None:
             await aclose()
