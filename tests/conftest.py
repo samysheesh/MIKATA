@@ -77,7 +77,10 @@ def fake_pystray(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
 
 # -- faux sounddevice : callbacks appelés depuis un thread, comme PortAudio --------------
 
-HOST_APIS = [{"name": "MME"}, {"name": "Windows WASAPI"}]
+HOST_APIS = [
+    {"name": "MME"},
+    {"name": "Windows WASAPI", "default_input_device": 5, "default_output_device": 2},
+]
 DEVICES: list[dict[str, Any]] = [
     {"name": "Focusrite USB (Scarlett", "hostapi": 0, "max_input_channels": 2,
      "max_output_channels": 0, "default_samplerate": 44100.0},
@@ -89,6 +92,8 @@ DEVICES: list[dict[str, Any]] = [
      "max_output_channels": 0, "default_samplerate": 48000.0},
     {"name": "Haut-parleurs (Realtek)", "hostapi": 1, "max_input_channels": 0,
      "max_output_channels": 2, "default_samplerate": 48000.0},
+    {"name": "Microphone (RØDE NT-USB+)", "hostapi": 1, "max_input_channels": 2,
+     "max_output_channels": 0, "default_samplerate": 48000.0},
 ]  # fmt: skip
 
 

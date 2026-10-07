@@ -61,10 +61,36 @@ def match_devices(devices: list[DeviceInfo], substring: str, kind: Kind) -> list
     return [d for d in devices if d.supports(kind) and needle in d.name.casefold()]
 
 
-def find_device(devices: list[DeviceInfo], substring: str, kind: Kind) -> DeviceInfo:
+def default_device_index(sd: Any, kind: Kind) -> int | None:
+    """Index du périphérique par défaut de Windows pour l'API WASAPI, s'il est connu."""
+    key = "default_input_device" if kind == "input" else "default_output_device"
+    for api in sd.query_hostapis():
+        if api["name"] == PREFERRED_HOST_API:
+            index = api.get(key, -1)
+            return int(index) if index is not None and index >= 0 else None
+    return None
+
+
+def find_device(
+    devices: list[DeviceInfo],
+    substring: str,
+    kind: Kind,
+    default_index: int | None = None,
+) -> DeviceInfo:
     """Le périphérique WASAPI (à défaut, de n'importe quelle API) dont le nom contient
-    `substring`. Un nom exactement égal l'emporte sur les correspondances partielles."""
+    `substring`. Un nom exactement égal l'emporte sur les correspondances partielles.
+
+    La valeur spéciale « default » désigne le périphérique par défaut de Windows
+    (`default_index`), qui suit les changements de casque ou d'enceintes."""
     candidates = filter_host_api(devices, PREFERRED_HOST_API)
+    if substring.casefold() == "default":
+        for device in candidates:
+            if device.index == default_index and device.supports(kind):
+                return device
+        key = "audio.input_device" if kind == "input" else "audio.output_device"
+        raise DeviceNotFoundError(
+            f"{key} = « default » : aucun périphérique par défaut trouvé dans Windows."
+        )
     matches = match_devices(candidates, substring, kind)
     exact = [d for d in matches if d.name.casefold() == substring.casefold()]
     if len(exact) == 1:

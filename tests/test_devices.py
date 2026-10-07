@@ -3,7 +3,13 @@ from __future__ import annotations
 import pytest
 from conftest import DEVICES, HOST_APIS
 
-from mikata.audio.devices import DeviceInfo, DeviceNotFoundError, collect_devices, find_device
+from mikata.audio.devices import (
+    DeviceInfo,
+    DeviceNotFoundError,
+    collect_devices,
+    default_device_index,
+    find_device,
+)
 from mikata.config import ConfigError
 
 
@@ -61,3 +67,13 @@ def test_ambiguous(devices: list[DeviceInfo]) -> None:
 def test_falls_back_to_other_host_api() -> None:
     mme_only = [DeviceInfo(0, "Micro USB", "MME", 1, 0, 44_100)]
     assert find_device(mme_only, "usb", "input").index == 0
+
+
+def test_default_follows_windows_default(devices: list[DeviceInfo]) -> None:
+    assert default_device_index(_Sd, "output") == 2
+    assert find_device(devices, "default", "output", 2).name == "Casque (HyperX Cloud)"
+    assert find_device(devices, "Default", "output", 4).name == "Haut-parleurs (Realtek)"
+    with pytest.raises(DeviceNotFoundError):
+        find_device(devices, "default", "output", None)
+    with pytest.raises(DeviceNotFoundError):
+        find_device(devices, "default", "output", 1)  # une entrée n'est pas une sortie

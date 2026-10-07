@@ -19,6 +19,7 @@ from mikata.audio.devices import (
     PREFERRED_HOST_API,
     DeviceInfo,
     collect_devices,
+    default_device_index,
     filter_host_api,
     match_devices,
 )
@@ -81,6 +82,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         ("audio.input_device", config.audio.input_device, "input"),
         ("audio.output_device", config.audio.output_device, "output"),
     ):
+        if substring.casefold() == "default":
+            index = default_device_index(sd, kind)
+            default = next((d for d in candidates if d.index == index), None)
+            if default is None:
+                print(f"[!!] {key} = 'default' -> aucun périphérique par défaut dans Windows")
+                all_ok = False
+            else:
+                print(f"[OK] {key} = 'default' -> #{default.index} {default.name}")
+            continue
         ok, line = describe_match(key, substring, match_devices(candidates, substring, kind))
         all_ok &= ok
         print(line)

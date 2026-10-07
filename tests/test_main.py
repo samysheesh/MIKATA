@@ -151,7 +151,7 @@ def test_build_app_wires_real_components(
     monkeypatch.setattr("mikata.wake.oww.OpenWakeWordDetector", Detector)
     config = entry.load_config(config_file)
     app = entry.build_app(config, tray=False, audio=True)
-    assert app._audio.device.name == "Analogue 1 + 2 (Focusrite USB Audio)"  # type: ignore[union-attr]
+    assert app._audio.device.name == "Microphone (RØDE NT-USB+)"  # type: ignore[union-attr]
     assert app._player.device.name == "Casque (HyperX Cloud)"  # type: ignore[union-attr]
     assert app._detector.model == config_file.parent / "models" / "hey_jarvis.onnx"  # type: ignore[union-attr]
     assert app._earcons["wake"].dtype.name == "float32"

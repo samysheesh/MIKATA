@@ -74,7 +74,7 @@ def build_app(config: Config, *, tray: bool, audio: bool) -> App:
         return App(config, tray=icon)
 
     from mikata.audio.capture import AudioCapture
-    from mikata.audio.devices import collect_devices, find_device
+    from mikata.audio.devices import collect_devices, default_device_index, find_device
     from mikata.audio.earcons import Earcons
     from mikata.audio.player import AudioPlayer
     from mikata.governor import CpuMonitor, lower_priority
@@ -88,8 +88,12 @@ def build_app(config: Config, *, tray: bool, audio: bool) -> App:
         raise RuntimeError(f"Bibliothèque audio PortAudio introuvable : {exc}") from exc
 
     devices = collect_devices(sd)
-    mic = find_device(devices, config.audio.input_device, "input")
-    headset = find_device(devices, config.audio.output_device, "output")
+    mic = find_device(
+        devices, config.audio.input_device, "input", default_device_index(sd, "input")
+    )
+    headset = find_device(
+        devices, config.audio.output_device, "output", default_device_index(sd, "output")
+    )
     if config.audio.input_channel is not None and config.audio.input_channel > min(
         mic.max_input_channels, 8
     ):
