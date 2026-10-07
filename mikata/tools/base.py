@@ -6,22 +6,32 @@ Ajouts phase 4 : `BaseTool` (classe de base des outils enregistrés), `ToolError
 expliqué au LLM) et `ToolContext` (services partagés : bureau Windows, volume, web,
 mémoire...). Le code propre à Windows est derrière les interfaces `Desktop`, `AudioControl`
 et `Notifier`, simulées dans les tests.
+
+Ajouts phase 5 : `TurnIO` (la commande en cours : parler, attendre la fin de la phrase,
+écouter une réponse sans mot d'activation), `GuardDenied` / `ActionCancelled`, et les
+interfaces `InputControl` (clavier, souris) et `ProcessRunner` (PowerShell, scripts).
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sys
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, ClassVar, Generic, Protocol, TypeVar, runtime_checkable
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Protocol, TypeVar, runtime_checkable
 
 from loguru import logger
 from pydantic import BaseModel
 
 from mikata.config import Config
+
+if TYPE_CHECKING:
+    from mikata.agent.guard import Guard
 
 P = TypeVar("P", bound=BaseModel)
 R = TypeVar("R")
@@ -57,10 +67,72 @@ class BaseTool(Generic[P]):
     async def run(self, args: P) -> str:
         raise NotImplementedError
 
+    def time_limit(self) -> float | None:
+        """Délai propre à l'outil (phase 5 : confirmation orale, commande de 30 s...) ;
+        None = `tools.timeout_s`."""
+        return None
+
 
 class ToolError(Exception):
     """Échec attendu d'un outil (appli introuvable, clé absente...) : message en français
     renvoyé au LLM, qui l'explique à l'utilisateur."""
+
+
+class GuardDenied(ToolError):
+    """Action refusée par le garde-fou (§7) : jamais exécutée, journalisée « refusé »."""
+
+
+class ActionCancelled(ToolError):
+    """Action non faite : l'utilisateur a dit non, ou « stop » pendant le délai."""
+
+
+async def _nothing() -> None:
+    return None
+
+
+@dataclass
+class TurnIO:
+    """La commande en cours, pour un outil (phase 5) : dire une phrase dans sa réponse,
+    attendre qu'elle soit jouée, écouter une réponse courte sans mot d'activation.
+
+    Fixée par la boucle agent pendant l'exécution des outils (`current_turn()`) ; `listen`
+    vaut None sans micro (option --ask).
+    """
+
+    say: Callable[[str], None]
+    drain: Callable[[], Awaitable[None]] = _nothing
+    listen: Callable[[float], Awaitable[str]] | None = None
+    spoken: list[str] = field(default_factory=list)  # phrases dites par les outils
+    web_read: bool = False  # une page ou une recherche web a été lue pendant la commande
+
+    def speak(self, text: str) -> None:
+        self.spoken.append(text)
+        self.say(text)
+
+    async def ask(self, question: str, timeout_s: float) -> str | None:
+        """Pose la question, attend qu'elle soit dite, puis écoute ; None sans micro."""
+        self.speak(question)
+        await self.drain()
+        if self.listen is None:
+            return None
+        return await self.listen(timeout_s)
+
+
+_TURN: ContextVar[TurnIO | None] = ContextVar("mikata_turn", default=None)
+
+
+def current_turn() -> TurnIO | None:
+    return _TURN.get()
+
+
+@contextlib.contextmanager
+def turn_context(turn: TurnIO) -> Iterator[None]:
+    """Les outils lancés dans ce bloc (y compris en parallèle) voient `turn`."""
+    token = _TURN.set(turn)
+    try:
+        yield
+    finally:
+        _TURN.reset(token)
 
 
 @dataclass
@@ -91,6 +163,23 @@ class Desktop(Protocol):
     def lock(self) -> None: ...
     def clipboard_read(self) -> str: ...
     def clipboard_write(self, text: str) -> None: ...
+    def power(self, action: str) -> None: ...  # shutdown | restart | sleep (phase 5)
+
+
+class InputControl(Protocol):
+    """Clavier et souris (tools/input.py, pynput), simulés dans les tests (phase 5)."""
+
+    def type_text(self, text: str) -> None: ...
+    def press_keys(self, keys: list[str]) -> None: ...  # noms normalisés (input.parse_keys)
+    def mouse(self, action: str, x: int | None, y: int | None, amount: int) -> None: ...
+
+
+class ProcessRunner(Protocol):
+    """Lance un programme et renvoie (code de sortie, sortie texte) (phase 5)."""
+
+    async def run(
+        self, argv: list[str], timeout_s: float, cwd: Path | None = None
+    ) -> tuple[int, str]: ...
 
 
 class AudioControl(Protocol):
@@ -122,6 +211,10 @@ class ToolContext:
     tasks: set[asyncio.Task[Any]] = field(default_factory=set)  # minuteurs en cours
     clock: Callable[[], datetime] = datetime.now  # remplaçables dans les tests
     sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep
+    # Ajouts phase 5
+    guard: Guard | None = None
+    input: InputControl | None = None
+    shell: ProcessRunner | None = None
     _executor: ThreadPoolExecutor | None = field(default=None, repr=False)
 
     async def run_blocking(self, fn: Callable[..., R], *args: Any) -> R:
@@ -140,6 +233,21 @@ class ToolContext:
         if self.desktop is None:
             raise ToolError("le pilotage du bureau Windows n'est pas disponible ici")
         return self.desktop
+
+    def require_guard(self) -> Guard:
+        if self.guard is None:
+            raise GuardDenied("garde-fou absent : action refusée par sécurité")
+        return self.guard
+
+    def require_input(self) -> InputControl:
+        if self.input is None:
+            raise ToolError("le clavier et la souris ne sont pas pilotables ici")
+        return self.input
+
+    def require_shell(self) -> ProcessRunner:
+        if self.shell is None:
+            raise ToolError("lancer des commandes n'est pas possible ici")
+        return self.shell
 
     def require_audio(self) -> AudioControl:
         if self.audio is None:

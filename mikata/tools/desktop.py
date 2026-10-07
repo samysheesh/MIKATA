@@ -42,8 +42,46 @@ GET_START_APPS = (
 APP_INDEX_MAX_AGE_S = 600.0
 CREATE_NO_WINDOW = 0x08000000  # pas de console qui clignote sous pythonw
 
+# Dossiers personnels (ajout phase 5) : leur vrai chemin, qui peut être dans OneDrive.
+KNOWN_FOLDER_IDS = {
+    "desktop": "B4BFCC3A-DB2C-424C-B029-7FE99A87C641",
+    "documents": "FDD39AD0-238F-46AF-ADB4-6C85480369C7",
+    "downloads": "374DE290-123F-4565-9164-39C4925E467B",
+    "pictures": "33E28130-4E1E-4676-835A-98395C3BC3BB",
+    "music": "4BD8D571-6D19-48D3-BE97-422220080E43",
+    "videos": "18989B1D-99B5-455B-841C-AB7C74E4DDFC",
+}
+
 # Touches média virtuelles (Win32 VK_MEDIA_*).
 MEDIA_KEYS = {"play_pause": 0xB3, "next": 0xB0, "previous": 0xB1, "stop": 0xB2}
+
+
+def known_folders() -> dict[str, Path]:
+    """Vrais chemins du Bureau, des Documents, Téléchargements... (SHGetKnownFolderPath) ;
+    un dossier introuvable est simplement absent du résultat."""
+    import ctypes
+    import uuid
+
+    class GUID(ctypes.Structure):
+        _fields_ = [
+            ("Data1", ctypes.c_uint32),
+            ("Data2", ctypes.c_uint16),
+            ("Data3", ctypes.c_uint16),
+            ("Data4", ctypes.c_ubyte * 8),
+        ]
+
+    shell32 = ctypes.windll.shell32  # type: ignore[attr-defined,unused-ignore]
+    ole32 = ctypes.windll.ole32  # type: ignore[attr-defined,unused-ignore]
+    folders: dict[str, Path] = {}
+    for name, text in KNOWN_FOLDER_IDS.items():
+        u = uuid.UUID(text)
+        guid = GUID(u.time_low, u.time_mid, u.time_hi_version, (ctypes.c_ubyte * 8)(*u.bytes[8:]))
+        found = ctypes.c_wchar_p()
+        if shell32.SHGetKnownFolderPath(ctypes.byref(guid), 0, None, ctypes.byref(found)) == 0:
+            if found.value:
+                folders[name] = Path(found.value)
+            ole32.CoTaskMemFree(found)
+    return folders
 
 
 def start_menu_dirs() -> list[Path]:
@@ -227,6 +265,27 @@ class WindowsDesktop:
 
         if not ctypes.windll.user32.LockWorkStation():  # type: ignore[attr-defined,unused-ignore]
             raise ToolError("Windows a refusé de verrouiller la session")
+
+    def power(self, action: str) -> None:
+        """Extinction, redémarrage (shutdown.exe, droits normaux) ou veille (powrprof)."""
+        if action == "sleep":
+            import ctypes
+
+            # SetSuspendState(hibernate=False, force=False, wakeup_events_disabled=False)
+            if not ctypes.windll.powrprof.SetSuspendState(0, 0, 0):  # type: ignore[attr-defined,unused-ignore]
+                raise ToolError("Windows a refusé la mise en veille")
+            return
+        flag = {"shutdown": "/s", "restart": "/r"}[action]
+        try:
+            subprocess.run(
+                ["shutdown.exe", flag, "/t", "0"],
+                check=True,
+                capture_output=True,
+                timeout=10,
+                creationflags=CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ToolError(f"Windows a refusé : {exc}") from exc
 
     def clipboard_read(self) -> str:
         import pyperclip

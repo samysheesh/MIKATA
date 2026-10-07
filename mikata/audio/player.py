@@ -225,6 +225,16 @@ class SpeechStream:
     async def wait(self) -> None:
         await self._done.wait()
 
+    async def drain(self) -> None:
+        """Attend que tout ce qui a été dit jusqu'ici soit joué (ajout phase 5 : poser une
+        question avant d'écouter la réponse)."""
+        if self.closed or self.cancelled:
+            await self.wait()
+            return
+        marker = asyncio.Event()
+        self._items.put_nowait(marker)
+        await marker.wait()
+
 
 class Speaker:
     def __init__(self, tts: TTS, player: SpeechPlayer, cache: PhraseSource | None = None) -> None:
@@ -266,6 +276,9 @@ class Speaker:
             item = await stream._items.get()
             if item is _END:
                 return
+            if isinstance(item, asyncio.Event):  # SpeechStream.drain : tout ce qui précède est joué
+                item.set()
+                continue
             if stream.cancelled:
                 continue
             try:

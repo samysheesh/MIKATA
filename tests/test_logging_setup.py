@@ -62,3 +62,22 @@ def test_retention_sends_old_logs_to_trash(tmp_path: Path, monkeypatch: pytest.M
         files.append(str(path))
     trash_old_logs(5)(files)
     assert sorted(trashed) == sorted(files[:2])  # les 2 plus anciennes
+
+
+def test_actions_go_to_their_own_file(tmp_path: Path) -> None:
+    """Phase 5 : chaque action d'outil dans data/actions.log, pas dans le log général."""
+    from mikata.agent.guard import log_action
+
+    log_file = setup_logging(LoggingConfig(), base_dir=tmp_path)
+    log_action("delete_file", {"path": "notes.txt"}, "ok", "Mis à la corbeille : notes.txt.")
+    log_action("run_powershell", {"command": "rm x"}, "refusé", "suppression définitive")
+    logger.info("message ordinaire")
+    shutdown_logging()
+    actions = (tmp_path / "data" / "actions.log").read_text(encoding="utf-8").splitlines()
+    assert len(actions) == 2
+    assert actions[0].endswith(
+        "| OK | delete_file(path='notes.txt') | Mis à la corbeille : notes.txt."
+    )
+    assert "| REFUSÉ | run_powershell(command='rm x') | suppression définitive" in actions[1]
+    general = log_file.read_text(encoding="utf-8")
+    assert "message ordinaire" in general and "delete_file" not in general

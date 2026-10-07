@@ -18,8 +18,9 @@ interroge un LLM cloud, agit sur le PC et répond à voix haute dans le casque.
 | 1 | Audio + mot d'activation (`hey_jarvis`), bip, raccourci, priorité basse | fusionnée |
 | 2 | VAD Silero + Whisper GPU, transcription spéculative, retrait du mot d'activation | fusionnée |
 | 3 | LLM en streaming + voix (Piper / Kokoro), commandes en parallèle | fusionnée |
-| 4 | Outils (system, apps, web, media, ui, memory), réflexion choisie à la voix, coût par commande | livrée, à valider sur le PC |
-| 5 à 7 | Voir `docs/ARCHITECTURE.md` §11 | à faire |
+| 4 | Outils (system, apps, web, media, ui, memory), réflexion choisie à la voix, coût par commande | fusionnée |
+| 5 | Outils puissants (clavier/souris, fichiers, PowerShell, extinction) + garde-fou | livrée, à valider sur le PC |
+| 6 à 7 | Voir `docs/ARCHITECTURE.md` §11 | à faire |
 
 ## Développement
 
@@ -638,3 +639,138 @@ Attendu : une ligne par commande avec les tokens et le coût, et le cumul (`cost
 `commands`, depuis `since`). Une action simple coûte de l'ordre de 0,0001 $ quand le début de
 la requête (prompt et outils, identiques à chaque appel) est facturé au tarif « cache », et
 environ 0,001 $ sinon : la part `dont cache` de la ligne `Tokens` le montre.
+
+## Phase 5 — vérification sur le PC Windows
+
+Critère d'acceptation : des tests automatisés prouvent qu'aucune commande de la liste noire ne
+s'exécute et que `delete_file` finit toujours dans la corbeille.
+
+Comment ça marche :
+
+- **Nouveaux outils** : `type_text`, `press_keys`, `mouse` (clavier et souris, accents
+  compris) ; `find_files`, `read_file`, `write_file`, `move_file`, `delete_file` ;
+  `run_powershell`, `run_script` (scripts de `scripts\user\`) ; `shutdown`, `restart`, `sleep`
+  (reportés de la phase 4).
+- **Garde-fou** (`mikata\agent\guard.py`), appliqué par le code, jamais par le LLM :
+  - **Supprimer = corbeille.** `delete_file` passe par `send2trash`, et rien d'autre. Refus
+    plutôt que risque : élément sur un lecteur sans corbeille (clé USB, réseau), plus gros que
+    `guard.trash_max_mb` (Windows le supprimerait définitivement), ou corbeille sûre
+    indisponible (`pywin32`, réinstallé pour ça). Jamais de repli vers une vraie suppression.
+  - **Liste noire** : `Remove-Item` et ses alias (`rm`, `ri`, `del`, `erase`, `rd`, `rmdir`),
+    `Clear-RecycleBin`, `Format-Volume`, `diskpart`, `cipher /w`, `sdelete`,
+    `vssadmin delete`, `.Delete()`, `git clean`, `shutil.rmtree`, élévation administrateur,
+    commandes encodées... Refusées dans PowerShell, dans les scripts, en argument, et même
+    tapées au clavier ; Maj+Suppr aussi.
+  - **Confirmation orale** pour les commandes risquées : arrêter un programme, toucher au
+    registre, aux services, installer, écraser un fichier sans sauvegarde... MIKATA demande
+    « Tu confirmes ? », bipe, et écoute sans mot d'activation (`guard.confirm_timeout_s`,
+    6 s). Seul un oui clair lance la commande. `guard.confirm_risky: false` coupe ces
+    questions, pas la liste noire.
+  - **Écrasement = sauvegarde** : `write_file` et `move_file` copient d'abord l'ancien fichier
+    dans `data\backups\`, mis à la corbeille au bout de 14 jours.
+  - **Extinction / redémarrage / veille** : « Extinction dans 5 secondes. Dis stop pour
+    annuler. », bip, et « stop » (ou « annule ») l'arrête.
+  - **Journal** : chaque appel d'outil, avec son issue (OK, REFUSÉ, ANNULÉ, ÉCHEC), dans
+    `data\actions.log`.
+  - Les fichiers ne sont touchés que dans `guard.allowed_dirs` (ton dossier perso).
+- **Correctif phase 4** : `open_app` ne choisit plus un nom qui ressemble seulement
+  (« ouvre Photoshop » ouvrait Photos) : nom identique, mots du nom, sigle (« vs code »), ou
+  « application introuvable : X ».
+- Sans micro (`--ask`), une commande risquée est refusée (personne pour dire oui), et une
+  extinction a lieu après 5 s : **ne lance pas `--ask "éteins le PC"`** sans le vouloir.
+
+### 1. Récupérer la branche, installer
+
+```powershell
+git fetch origin
+git checkout phase-5
+git pull
+uv sync
+uv run python -c "import send2trash.win.modern; print('corbeille sûre : OK')"
+```
+
+Attendu : installation de `pywin32`, puis `corbeille sûre : OK`.
+
+### 2. Le critère : tests automatisés
+
+```powershell
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
+uv run pytest tests\test_guard_criteria.py -v
+```
+
+Attendu : tout en `passed`. Le dernier fichier contient le critère :
+- `test_blacklisted_powershell_never_runs` (et ses variantes pour les scripts, les arguments et
+  le texte tapé) : une soixantaine de commandes de la liste noire, aucune n'est lancée ;
+- `test_delete_file_always_ends_in_trash` : fichier, dossier, sous-dossier finissent dans la
+  corbeille, avec toute fonction de suppression définitive piégée pendant le test ;
+- `test_no_permanent_deletion_anywhere_in_mikata` : aucun appel de suppression définitive dans
+  le code de MIKATA.
+
+### 3. Correctif open_app
+
+```powershell
+uv run python -m mikata --ask "ouvre Photoshop"
+uv run python -m mikata --ask "ouvre visual studio code"
+```
+
+Attendu : pour Photoshop (non installé), `Outil open_app(name='Photoshop') -> ÉCHEC ... :
+application introuvable : Photoshop`, Photos ne s'ouvre pas et MIKATA le dit. Pour
+VS Code : il s'ouvre (« C'est fait »).
+
+### 4. Fichiers, corbeille et sauvegardes (sans micro)
+
+```powershell
+uv run python -m mikata --ask "crée sur le bureau un fichier essai-mikata.txt qui contient bonjour"
+uv run python -m mikata --ask "remplace le contenu de essai-mikata.txt sur le bureau par au revoir"
+Get-ChildItem -Recurse data\backups | Select-Object FullName
+uv run python -m mikata --ask "mets essai-mikata.txt du bureau à la corbeille"
+explorer shell:RecycleBinFolder
+```
+
+Attendu : le fichier apparaît sur le bureau ; après le remplacement, l'ancienne version
+(« bonjour ») est dans `data\backups\<date>\essai-mikata.txt` ; après la suppression, le fichier
+n'est plus sur le bureau mais **dans la Corbeille** (fenêtre ouverte par la dernière commande),
+d'où « Restaurer » le remet en place.
+
+### 5. Liste noire en vrai
+
+```powershell
+New-Item $HOME\Desktop\garde-fou.txt -ItemType File
+uv run python -m mikata --ask "lance la commande PowerShell Remove-Item $HOME\Desktop\garde-fou.txt"
+Test-Path $HOME\Desktop\garde-fou.txt
+Get-Content data\actions.log -Tail 5
+```
+
+Attendu : MIKATA répond que c'est refusé (et propose la corbeille), `Test-Path` répond `True`,
+et `actions.log` contient une ligne `REFUSÉ | run_powershell(command='Remove-Item ...') |
+refusé par le garde-fou : suppression définitive interdite ...`.
+
+### 6. Confirmation orale, « stop », clavier (avec le micro)
+
+```powershell
+notepad
+uv run python -m mikata
+```
+
+1. « hey jarvis, lance la commande PowerShell Stop-Process -Name notepad ». Attendu : « Cette
+   commande va arrêter un programme. Tu confirmes ? », un bip ; réponds « non » : le Bloc-notes
+   reste ouvert (`ANNULÉ` dans `data\actions.log`). Recommence et réponds « oui » : il se ferme.
+2. Rouvre le Bloc-notes et clique dedans. « hey jarvis, tape bonjour à tous, ça va ? » :
+   le texte s'écrit avec les accents. « hey jarvis, appuie sur ctrl+a » : tout est sélectionné.
+   « hey jarvis, appuie sur maj+suppr » : refusé.
+3. « hey jarvis, mets le PC en veille ». Attendu : « Mise en veille dans 5 secondes. Dis stop
+   pour annuler. », un bip ; dis « stop » : « Mise en veille annulée. ». Pour le vrai test,
+   recommence sans rien dire : le PC se met en veille au bout de 5 s. (Même chose avec
+   « redémarre le PC » et « éteins le PC », après avoir tout enregistré.)
+
+### 7. Scripts à toi
+
+```powershell
+Set-Content scripts\user\bonjour.ps1 'Write-Output "Bonjour $env:USERNAME, il est $(Get-Date -Format HH:mm)"'
+uv run python -m mikata --ask "lance mon script bonjour"
+```
+
+Attendu : MIKATA dit le message du script. Un script qui contient une commande de la liste
+noire (par exemple `Remove-Item`) est refusé avant d'être lancé.

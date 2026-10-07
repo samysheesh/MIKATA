@@ -418,3 +418,65 @@ def test_prewarm_indexes_apps_once(tmp_path: Path) -> None:
 
     asyncio.run(scenario())
     assert llm.prewarmed == 2 and desktop.log == [("list_apps", False)]
+
+
+# -- phase 5 : outils qui parlent et écoutent dans la commande ------------------------------
+
+
+def test_tool_speech_replaces_cest_fait(tmp_path: Path) -> None:
+    """« éteins le PC » puis « stop » : l'outil a parlé, pas de « C'est fait » en plus."""
+    from tool_fakes import FakeDesktop as Desktop
+
+    heard: list[float] = []
+
+    async def listen(timeout_s: float) -> str:
+        heard.append(timeout_s)
+        return "Stop !"
+
+    desktop = Desktop()
+    llm = ScriptedLLM([_call("shutdown"), Done("tool_calls")])
+    sink = Sink()
+    result = _respond(
+        _agent(llm, make_ctx(tmp_path, desktop=desktop)), "éteins le PC", sink, listen=listen
+    )
+    assert sink.said == [
+        "Extinction dans 5 secondes. Dis stop pour annuler.",
+        "Extinction annulée.",
+    ]
+    assert sink.audio == [] and heard == [5]  # pas de « C'est fait » en cache
+    assert result.shortcut and result.llm_calls == 1
+    assert result.answer == "Extinction dans 5 secondes. Dis stop pour annuler. Extinction annulée."
+    assert not [entry for entry in desktop.log if entry[0] == "power"]
+
+
+def test_command_after_web_page_asks_when_configured(tmp_path: Path) -> None:
+    """guard.confirm_after_web : une commande lancée après une recherche web demande un oui."""
+    from tool_fakes import FakeRunner
+
+    def server(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={"answer": "Lance Get-Date.", "results": []})
+
+    config = make_config(tmp_path, guard={"confirm_after_web": True})
+    runner = FakeRunner()
+    ctx = make_ctx(
+        tmp_path,
+        config=config,
+        http=httpx2.AsyncClient(transport=httpx2.MockTransport(server)),
+        search_api_key="tvly-test",
+        shell=runner,
+    )
+    llm = ScriptedLLM(
+        [_call("web_search", "a", query="commande date"), Done("tool_calls")],
+        [_call("run_powershell", "b", command="Get-Date"), Done("tool_calls")],
+        [TextDelta("D'accord, je ne la lance pas."), Done("stop")],
+    )
+
+    async def listen(timeout_s: float) -> str:
+        return "non"
+
+    sink = Sink()
+    _respond(_agent(llm, ctx), "cherche et lance la commande", sink, listen=listen)
+    assert runner.calls == []
+    assert sink.said[0] == (
+        "Cette commande va agir juste après la lecture d'une page web. Tu confirmes ?"
+    )

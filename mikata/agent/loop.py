@@ -32,6 +32,7 @@ from mikata.config import Config
 from mikata.llm.base import Done, LLMClient, TextDelta, ToolCallReq, Usage
 from mikata.llm.prompts import active_window_title, build_messages, dynamic_context
 from mikata.llm.reasoning import at_least, detect_reasoning
+from mikata.tools.base import TurnIO, turn_context
 from mikata.tts.cache import PHRASES
 from mikata.tts.normalize import FragmentSplitter
 
@@ -68,6 +69,9 @@ class SilentSpeech:
         pass
 
     def say_audio(self, pcm: Any, sample_rate: int) -> None:
+        pass
+
+    async def drain(self) -> None:
         pass
 
 
@@ -189,10 +193,13 @@ class Agent:
         *,
         label: str = "commande",
         on_phase: Callable[[str], None] | None = None,
+        listen: Callable[[float], Awaitable[str]] | None = None,
     ) -> TurnResult:
         """Répond à voix haute à `command` ; renvoie le texte et les mesures du tour.
 
         `on_phase("acting")` / `on_phase("thinking")` : outils en cours / LLM relancé.
+        `listen(délai)` (phase 5) : écoute une réponse sans mot d'activation, pour les
+        confirmations orales et le « stop » avant extinction ; None sans micro.
         """
         llm_cfg = self.config.llm
         request = detect_reasoning(command, llm_cfg.reasoning_keywords)
@@ -209,7 +216,7 @@ class Agent:
             return result
         try:
             async with asyncio.timeout(llm_cfg.turn_timeout_s):
-                await self._run_turn(request.text, speech, result, on_phase)
+                await self._run_turn(request.text, speech, result, on_phase, listen)
         except TimeoutError:
             logger.warning("Requête LLM trop longue (> {} s).", llm_cfg.turn_timeout_s)
             result.outcome = "timeout"
@@ -247,8 +254,11 @@ class Agent:
         speech: SpeechSink,
         result: TurnResult,
         on_phase: Callable[[str], None] | None,
+        listen: Callable[[float], Awaitable[str]] | None = None,
     ) -> None:
         facts = self.long_memory.facts if self.long_memory is not None else ()
+        drain = getattr(speech, "drain", None)
+        turn = TurnIO(say=speech.say, listen=listen, **({"drain": drain} if drain else {}))
         messages = build_messages(self.memory.messages(), command, await self._context(), facts)
         schemas = self.tools.schemas() if self.tools is not None else []
         max_rounds = self.config.llm.max_tool_rounds
@@ -273,7 +283,10 @@ class Agent:
                 if not spoken:
                     self._say_phrase(speech, "error")
                 break
-            results = await self._run_tools(reply, messages, steps, result, on_phase)
+            with turn_context(turn):  # les outils parlent et écoutent dans cette commande
+                results = await self._run_tools(reply, messages, steps, result, on_phase)
+            spoken.extend(turn.spoken)  # ex. « Extinction dans 5 secondes... »
+            turn.spoken.clear()
             if all(r.ok and r.terminal for r in results):
                 result.shortcut = True
                 if not spoken:  # une action simple : « C'est fait » en cache

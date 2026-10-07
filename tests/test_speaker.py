@@ -181,3 +181,37 @@ def test_failed_synthesis_skips_fragment() -> None:
 
     asyncio.run(scenario())
     assert len(player.played) == 1
+
+
+def test_drain_waits_until_everything_said_is_played() -> None:
+    """Phase 5 : une question est entièrement dite avant que MIKATA écoute la réponse."""
+    tts, player = SlowTTS(delay=0.01), RecordingPlayer(duration=0.03)
+
+    async def scenario() -> tuple[int, int]:
+        speaker = Speaker(tts, player)
+        stream = speaker.open("#1")
+        stream.say("Cette commande va arrêter un programme.")
+        stream.say("Tu confirmes ?")
+        await asyncio.wait_for(stream.drain(), 2)
+        played_at_drain = len(player.played)
+        stream.say("Fini.")
+        stream.close()
+        await asyncio.wait_for(stream.drain(), 2)  # flux fermé : attend la fin
+        await speaker.aclose()
+        return played_at_drain, len(player.played)
+
+    assert asyncio.run(scenario()) == (2, 3)
+
+
+def test_drain_of_a_cancelled_stream_returns() -> None:
+    tts, player = SlowTTS(delay=0.01), RecordingPlayer(duration=0.03)
+
+    async def scenario() -> None:
+        speaker = Speaker(tts, player)
+        stream = speaker.open("#1")
+        stream.say("Une phrase.")
+        stream.cancel()
+        await asyncio.wait_for(stream.drain(), 2)
+        await speaker.aclose()
+
+    asyncio.run(scenario())

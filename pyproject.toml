@@ -40,6 +40,9 @@ dependencies = [
     "rapidfuzz>=3.9",
     "trafilatura>=2.0",
     "pyperclip>=1.9",
+    # pywin32 : send2trash n'utilise sa corbeille sûre (IFileOperation, qui refuse un
+    # élément non recyclable au lieu de le supprimer définitivement) qu'avec pywin32.
+    "pywin32>=308 ; sys_platform == 'win32'",
     "pycaw>=20240316 ; sys_platform == 'win32'",
     "comtypes>=1.4 ; sys_platform == 'win32'",
     "win11toast>=0.35 ; sys_platform == 'win32'",

@@ -51,6 +51,7 @@ llm:
 tools:
   timeout_s: 15                    # durée max d'un appel d'outil
   result_max_chars: 2000           # résultat d'outil renvoyé au LLM (tronqué)
+  shell_timeout_s: 30              # durée max d'une commande PowerShell ou d'un script
 web:
   search_provider: tavily          # tavily | brave ; clé SEARCH_API_KEY dans .env
   max_results: 5
@@ -70,13 +71,17 @@ agent:
   thinking_sound_after_s: 1.2
   history_max_tokens: 6000         # historique de conversation envoyé au LLM
 guard:
-  allowed_dirs: ["~"]
-  backup_days: 14
-  shutdown_cancel_s: 5
-  confirm_after_web: false
+  allowed_dirs: ["~"]              # dossiers où les outils fichiers ont le droit d'agir
+  backup_days: 14                  # sauvegardes avant écrasement (data/backups), puis corbeille
+  shutdown_cancel_s: 5             # délai pour dire « stop » avant extinction / redémarrage / veille
+  confirm_after_web: false         # true : commande shell après une page web -> confirmation orale
+  confirm_risky: true              # commandes risquées (registre, services...) -> « Tu confirmes ? »
+  confirm_timeout_s: 6             # temps laissé pour répondre oui / non
+  trash_max_mb: 4096               # au-delà, mise à la corbeille refusée (Windows supprimerait)
 logging:                           # ajout phase 0 (§10 « Logs »)
   level: INFO                      # TRACE | DEBUG | INFO | SUCCESS | WARNING | ERROR
   file: data/logs/mikata.log
   rotation_mb: 5
   retention_files: 5
   stats_interval_s: 60             # ligne « CPU du processus » toutes les N s (0 = jamais)
+  actions_file: data/actions.log   # journal de chaque action des outils (garde-fou)
