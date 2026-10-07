@@ -199,6 +199,17 @@ class AgentConfig(_Section):
             "non merci", "pas grave",
         ]
     )  # fmt: skip
+    # Ajouts phase 6b : arrêt vocal **sans** mot d'activation pendant que MIKATA parle. Une
+    # phrase courte qui est entièrement l'une de voice_stop_phrases coupe la réponse en
+    # cours ; toute autre parole est ignorée. Liste plus courte que cancel_phrases : un
+    # « non » ou un « c'est bon » dit à quelqu'un d'autre ne doit pas couper MIKATA.
+    voice_stop: bool = True
+    voice_stop_phrases: list[str] = Field(
+        default_factory=lambda: ["stop", "arrête", "arrête-toi", "tais-toi", "ça suffit", "chut"],
+        min_length=1,
+    )
+    voice_stop_silence_ms: int = Field(default=160, ge=80, le=1000)  # fin de la phrase d'arrêt
+    voice_stop_max_s: float = Field(default=2.0, gt=0, le=10)  # au-delà : pas un « stop »
 
 
 class GuardConfig(_Section):

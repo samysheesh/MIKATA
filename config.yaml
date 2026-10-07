@@ -83,6 +83,11 @@ agent:
   cancel_phrases: ["stop", "arrête", "arrête-toi", "annule", "annule ça", "annule tout",
     "laisse tomber", "oublie", "oublie ça", "tais-toi", "chut", "silence", "c'est bon",
     "ça ira", "ça suffit", "c'est tout", "non", "non rien", "rien", "non merci", "pas grave"]
+  # Arrêt vocal SANS « MIKATA » pendant qu'il parle : phrase entière de cette liste -> son coupé.
+  voice_stop: true                 # false : seul « MIKATA » (ou Ctrl+Alt+M) coupe une réponse
+  voice_stop_phrases: ["stop", "arrête", "arrête-toi", "tais-toi", "ça suffit", "chut"]
+  voice_stop_silence_ms: 160       # silence qui termine la phrase d'arrêt (80 = 1 trame)
+  voice_stop_max_s: 2.0            # parole plus longue : pas un arrêt, pas transcrite
 guard:
   allowed_dirs: ["~"]              # dossiers où les outils fichiers ont le droit d'agir
   backup_days: 14                  # sauvegardes avant écrasement (data/backups), puis corbeille
