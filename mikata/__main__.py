@@ -174,7 +174,7 @@ def build_agent(config: Config, phrases: Any = None, *, tools: bool = True) -> A
     if not tools:
         return Agent(llm, config, phrases=phrases, usage=usage)
 
-    from mikata.tools.apps import open_apps
+    from mikata.tools.apps import installed_app_names, open_apps
     from mikata.tools.registry import ToolRegistry
 
     ctx = build_tool_context(config)
@@ -195,6 +195,9 @@ def build_agent(config: Config, phrases: Any = None, *, tools: bool = True) -> A
         long_memory=ctx.memory,
         usage=usage,
         open_apps=running_apps if desktop is not None else None,
+        installed_apps=(
+            (lambda: installed_app_names(desktop.cached_apps())) if desktop is not None else None
+        ),
     )
 
 

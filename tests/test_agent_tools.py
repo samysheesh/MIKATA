@@ -480,3 +480,14 @@ def test_command_after_web_page_asks_when_configured(tmp_path: Path) -> None:
     assert sink.said[0] == (
         "Cette commande va agir juste après la lecture d'une page web. Tu confirmes ?"
     )
+
+
+def test_installed_apps_reach_the_prompt(tmp_path: Path) -> None:
+    """La liste des applications installées aide le LLM à corriger « spotifaille »."""
+    llm = ScriptedLLM([_call("open_app", name="Spotify"), Done("tool_calls")])
+    agent = _agent(
+        llm, make_ctx(tmp_path, desktop=FakeDesktop()), installed_apps=lambda: ["Brave", "Spotify"]
+    )
+    _respond(agent, "ouvre spotifaille")
+    system = [m["content"] for m in llm.calls[0] if m["role"] == "system"]
+    assert system[1].endswith(": Brave, Spotify.") and "Applications installées" in system[1]

@@ -178,6 +178,10 @@ class WindowsDesktop:
                 )
             return list(self._apps)
 
+    def cached_apps(self) -> list[AppEntry]:
+        """Index déjà construit (vide avant le premier `list_apps`) ; jamais bloquant."""
+        return list(self._apps)
+
     def launch(self, app: AppEntry) -> None:
         self.open_target(app.target)
 
@@ -228,6 +232,17 @@ class WindowsDesktop:
         callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(visit)
         user32.EnumWindows(callback, 0)
         return [w for w in found if w.process.casefold() not in ("explorer", "mikata")]
+
+    def foreground_window(self) -> WindowInfo | None:
+        import ctypes
+
+        hwnd = ctypes.windll.user32.GetForegroundWindow()  # type: ignore[attr-defined,unused-ignore]
+        if not hwnd:
+            return None
+        for window in self.windows():
+            if window.handle == hwnd:
+                return window
+        return None  # bureau, barre des tâches, fenêtre de MIKATA : rien à fermer
 
     def close_window(self, window: WindowInfo) -> None:
         import ctypes

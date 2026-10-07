@@ -149,6 +149,7 @@ class Agent:
         long_memory: LongTermMemory | None = None,
         usage: UsageTracker | None = None,
         open_apps: Callable[[], Awaitable[Sequence[str]]] | None = None,
+        installed_apps: Callable[[], Sequence[str]] | None = None,
     ) -> None:
         self.llm = llm
         self.config = config
@@ -162,6 +163,7 @@ class Agent:
         self._window_title = window_title
         self._clock = clock
         self._open_apps = open_apps
+        self._installed_apps = installed_apps  # liste déjà en mémoire, jamais bloquante
         self._apps: Sequence[str] = ()
         self._apps_at = float("-inf")
         self._tools_warmed = False
@@ -259,7 +261,10 @@ class Agent:
         facts = self.long_memory.facts if self.long_memory is not None else ()
         drain = getattr(speech, "drain", None)
         turn = TurnIO(say=speech.say, listen=listen, **({"drain": drain} if drain else {}))
-        messages = build_messages(self.memory.messages(), command, await self._context(), facts)
+        installed = self._installed_apps() if self._installed_apps is not None else ()
+        messages = build_messages(
+            self.memory.messages(), command, await self._context(), facts, installed
+        )
         schemas = self.tools.schemas() if self.tools is not None else []
         max_rounds = self.config.llm.max_tool_rounds
         fallback_steps = self.config.llm.reasoning_fallback_steps

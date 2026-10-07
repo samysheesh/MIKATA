@@ -1,0 +1,403 @@
+"""Évaluation du prompt système sur 20 phrases approximatives (vrai LLM, actions simulées).
+
+Usage : uv run python scripts/eval_prompt.py [--only 1 3 ...] [--json rapport.json]
+
+Chaque phrase passe par la vraie boucle agent et le vrai LLM (config.yaml + .env), mais
+**rien n'est fait sur le PC** : bureau, volume, clavier, souris, PowerShell et corbeille sont
+simulés et notent ce qui aurait été fait. Scénario fixe : Bloc-notes au premier plan, Chrome,
+Spotify et Discord ouverts, une liste d'applications installées connue.
+
+Une phrase réussit si le LLM appelle l'outil attendu avec les bons arguments, sans
+run_powershell, sans question de précision, et répond court sans parler de PowerShell ni de
+syntaxe. Coût : une vingtaine d'appels LLM (≈ 0,01 $).
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import sys
+import tempfile
+import time
+from collections.abc import Callable, Sequence
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any
+
+from mikata.tools.apps import fold
+from mikata.tools.base import AppEntry, WindowInfo
+from mikata.tools.input import parse_keys
+
+FORBIDDEN_TOOLS = ("run_powershell", "run_script")
+FORBIDDEN_WORDS = ("powershell", "stop-process", "syntaxe", "argument", "outil ")
+MAX_WORDS = 25
+
+SCENARIO_APPS = (
+    "Bloc-notes", "Brave", "Calculatrice", "Counter-Strike 2", "Discord", "Excel",
+    "Explorateur de fichiers", "Google Chrome", "Microsoft Edge", "Netflix", "OBS Studio",
+    "Paint", "Paramètres", "Photos", "Spotify", "Steam", "Visual Studio Code",
+    "VLC media player", "WhatsApp", "Word",
+)  # fmt: skip
+SCENARIO_WINDOWS = (
+    WindowInfo(101, "Sans titre - Bloc-notes", "notepad"),
+    WindowInfo(102, "YouTube - Google Chrome", "chrome"),
+    WindowInfo(103, "Spotify Premium", "Spotify"),
+    WindowInfo(104, "Discord", "Discord"),
+)
+
+Check = Callable[[dict[str, Any]], bool]
+
+
+def named(*options: str) -> Check:
+    """L'argument `name` désigne l'une des applis (sans casse ni accents)."""
+    wanted = [fold(option) for option in options]
+    return lambda args: any(w in fold(str(args.get("name") or "")) for w in wanted)
+
+
+def anything(args: dict[str, Any]) -> bool:
+    return True
+
+
+def keys_are(*expected: str) -> Check:
+    def check(args: dict[str, Any]) -> bool:
+        try:
+            return parse_keys(str(args.get("keys"))) == list(expected)
+        except ValueError:
+            return False
+
+    return check
+
+
+@dataclass
+class Case:
+    phrase: str
+    tools: tuple[str, ...]  # un seul de ces outils suffit
+    expect: str  # attendu, lisible
+    check: Check = anything
+
+
+NOTEPAD = named("bloc-notes", "bloc notes", "notepad")
+CLOSE = ("close_app", "close_window")
+CASES: tuple[Case, ...] = (
+    Case("stop process name notepad", CLOSE, "fermer le Bloc-notes", NOTEPAD),
+    Case("arrête notepad", CLOSE, "fermer le Bloc-notes", NOTEPAD),
+    Case("ferme le bloc-notes", CLOSE, "fermer le Bloc-notes", NOTEPAD),
+    Case("ouvre spotifaille", ("open_app", "focus_window"), "Spotify", named("spotify")),
+    Case("lance Team", ("open_app",), "ouvrir Steam", named("steam")),
+    Case("ouvre brève", ("open_app",), "ouvrir Brave", named("brave")),
+    Case("ouvre visuel studio code", ("open_app",), "ouvrir Visual Studio Code",
+         named("visual studio code", "vs code", "vscode")),
+    Case("ferme crôme", CLOSE, "fermer Chrome", named("chrome")),
+    Case("ferme cette fenêtre", ("close_window", "close_app"),
+         "fermer la fenêtre active (Bloc-notes)",
+         lambda a: not a.get("name") or NOTEPAD(a)),
+    Case("mets spotify devant", ("focus_window", "open_app"), "Spotify au premier plan",
+         named("spotify")),
+    Case("mets le son à trente", ("set_volume",), "volume à 30", lambda a: a.get("level") == 30),
+    Case("monte un peu le son", ("set_volume",), "volume plus fort",
+         lambda a: (a.get("change") or 0) > 0 or (a.get("level") or 0) > 50),
+    Case("coupe le son", ("mute",), "sourdine", lambda a: a.get("mute", True) is True),
+    Case("met pause", ("media_control",), "pause",
+         lambda a: a.get("action") in ("pause", "play_pause")),
+    Case("passe à la chanson d'après", ("media_control",), "piste suivante",
+         lambda a: a.get("action") == "next"),
+    Case("écris bonjour tout le monde", ("type_text",), "taper « Bonjour tout le monde »",
+         lambda a: fold(str(a.get("text"))).startswith("bonjour tout le monde")),
+    Case("fais contrôle S", ("press_keys",), "Ctrl+S", keys_are("ctrl", "s")),
+    Case("mets un minuteur de cinq minutes", ("set_timer",), "minuteur de 300 s",
+         lambda a: a.get("seconds") == 300),
+    Case("quel temps il fait à Lyon", ("get_weather",), "météo à Lyon",
+         lambda a: "lyon" in fold(str(a.get("city")))),
+    Case("verrouille l'ordi", ("lock",), "verrouiller la session"),
+)  # fmt: skip
+
+
+@dataclass
+class Outcome:
+    number: int
+    phrase: str
+    expect: str
+    ok: bool
+    reasons: list[str] = field(default_factory=list)
+    calls: list[str] = field(default_factory=list)
+    answer: str = ""
+    llm_calls: int = 0
+    ms: float = 0.0
+    cost_usd: float = 0.0
+
+
+def evaluate(case: Case, calls: list[tuple[str, dict[str, Any]]], answer: str) -> list[str]:
+    """Raisons de l'échec (liste vide : réussi)."""
+    reasons = []
+    names = [name for name, _ in calls]
+    if not any(name in case.tools and case.check(args) for name, args in calls):
+        reasons.append(f"attendu {'/'.join(case.tools)} ({case.expect})")
+    if used := [name for name in names if name in FORBIDDEN_TOOLS]:
+        reasons.append(f"outil à éviter : {', '.join(used)}")
+    lowered = answer.casefold()
+    if words := [w.strip() for w in FORBIDDEN_WORDS if w in lowered]:
+        reasons.append(f"parle de {', '.join(words)}")
+    if len(answer.split()) > MAX_WORDS:
+        reasons.append(f"réponse trop longue ({len(answer.split())} mots)")
+    if not calls and "?" in answer:
+        reasons.append("pose une question au lieu d'agir")
+    return reasons
+
+
+# -- environnement simulé : rien n'est fait sur le PC -------------------------------------
+
+
+class DryRunDesktop:
+    def __init__(self, actions: list[str]) -> None:
+        self.actions = actions
+        self.apps = [AppEntry(name, f"simulé:{name}") for name in SCENARIO_APPS]
+
+    def list_apps(self, refresh: bool = False) -> list[AppEntry]:
+        return list(self.apps)
+
+    def cached_apps(self) -> list[AppEntry]:
+        return list(self.apps)
+
+    def windows(self) -> list[WindowInfo]:
+        return list(SCENARIO_WINDOWS)
+
+    def foreground_window(self) -> WindowInfo | None:
+        return SCENARIO_WINDOWS[0]
+
+    def launch(self, app: AppEntry) -> None:
+        self.actions.append(f"ouvrir {app.name}")
+
+    def open_target(self, target: str) -> None:
+        self.actions.append(f"ouvrir {target}")
+
+    def close_window(self, window: WindowInfo) -> None:
+        self.actions.append(f"fermer « {window.title} »")
+
+    def focus_window(self, window: WindowInfo) -> None:
+        self.actions.append(f"premier plan « {window.title} »")
+
+    def media_key(self, action: str) -> None:
+        self.actions.append(f"touche média {action}")
+
+    def lock(self) -> None:
+        self.actions.append("verrouiller")
+
+    def power(self, action: str) -> None:
+        self.actions.append(f"alimentation {action}")
+
+    def clipboard_read(self) -> str:
+        return ""
+
+    def clipboard_write(self, text: str) -> None:
+        self.actions.append(f"copier {text!r}")
+
+
+class DryRunAudio:
+    def __init__(self, actions: list[str]) -> None:
+        self.actions = actions
+
+    def get_volume(self) -> float:
+        return 50.0
+
+    def set_volume(self, percent: float) -> None:
+        self.actions.append(f"volume {percent:.0f} %")
+
+    def set_mute(self, mute: bool) -> None:
+        self.actions.append("sourdine" if mute else "son remis")
+
+    def output_devices(self) -> list[tuple[str, str]]:
+        return [("1", "Casque (AirPods)"), ("2", "Haut-parleurs (Realtek(R) Audio)")]
+
+    def set_default_output(self, device_id: str) -> None:
+        self.actions.append(f"sortie {device_id}")
+
+
+class DryRunInput:
+    def __init__(self, actions: list[str]) -> None:
+        self.actions = actions
+
+    def type_text(self, text: str) -> None:
+        self.actions.append(f"taper {text!r}")
+
+    def press_keys(self, keys: list[str]) -> None:
+        self.actions.append(f"touches {'+'.join(keys)}")
+
+    def mouse(self, action: str, x: int | None, y: int | None, amount: int) -> None:
+        self.actions.append(f"souris {action}")
+
+
+class DryRunShell:
+    def __init__(self, actions: list[str]) -> None:
+        self.actions = actions
+
+    async def run(
+        self, argv: list[str], timeout_s: float, cwd: Path | None = None
+    ) -> tuple[int, str]:
+        self.actions.append(f"lancer {argv[-1][-80:]!r}")
+        return 0, "(simulation : rien n'a été lancé)"
+
+
+class RecordingSpeech:
+    def __init__(self) -> None:
+        self.said: list[str] = []
+
+    def say(self, text: str) -> None:
+        self.said.append(text)
+
+    def say_audio(self, pcm: Any, sample_rate: int) -> None:
+        self.said.append("C'est fait.")
+
+    async def drain(self) -> None:
+        pass
+
+
+async def run_cases(
+    llm: Any, config: Any, cases: Sequence[tuple[int, Case]], search_api_key: str | None = None
+) -> list[Outcome]:
+    from mikata.agent.guard import Guard
+    from mikata.agent.loop import Agent
+    from mikata.agent.memory import LongTermMemory
+    from mikata.llm.usage import cost_usd
+    from mikata.tools.apps import installed_app_names, open_apps
+    from mikata.tools.base import ToolContext
+    from mikata.tools.registry import ToolRegistry
+    from mikata.tools.web import create_http_client
+
+    actions: list[str] = []
+    outcomes = []
+    with tempfile.TemporaryDirectory(prefix="mikata-eval-") as folder:
+        sandbox = Path(folder)
+        guard_cfg = config.guard.model_copy(update={"allowed_dirs": [sandbox]})
+        sandboxed = config.model_copy(update={"guard": guard_cfg})
+        trashed: list[str] = []
+
+        async def no_wait(seconds: float) -> None:
+            return None
+
+        async def silent(text: str) -> None:
+            return None
+
+        desktop = DryRunDesktop(actions)
+        ctx = ToolContext(
+            sandboxed,
+            desktop=desktop,
+            audio=DryRunAudio(actions),
+            http=create_http_client(),
+            search_api_key=search_api_key,
+            memory=LongTermMemory(sandbox / "memory.json"),
+            announce=silent,
+            sleep=no_wait,
+            guard=Guard(sandboxed, home=sandbox, trash=trashed.append),
+            input=DryRunInput(actions),
+            shell=DryRunShell(actions),
+        )
+
+        async def running() -> list[str]:
+            return open_apps(SCENARIO_WINDOWS)
+
+        agent = Agent(
+            llm,
+            config,
+            window_title=lambda: SCENARIO_WINDOWS[0].title,
+            tools=ToolRegistry(ctx),
+            long_memory=ctx.memory,
+            open_apps=running,
+            installed_apps=lambda: installed_app_names(desktop.cached_apps()),
+        )
+        try:
+            await agent.prewarm()
+            for number, case in cases:
+                agent.memory.clear()  # chaque phrase comme une nouvelle conversation
+                actions.clear()
+                speech = RecordingSpeech()
+                start = time.perf_counter()
+                result = await agent.respond(case.phrase, speech, label=f"éval {number}")
+                elapsed = (time.perf_counter() - start) * 1000
+                calls = [(call.name, dict(call.arguments)) for call in result.tool_calls]
+                answer = " ".join(speech.said).strip()
+                reasons = evaluate(case, calls, answer)
+                outcomes.append(
+                    Outcome(
+                        number=number,
+                        phrase=case.phrase,
+                        expect=case.expect,
+                        ok=not reasons,
+                        reasons=reasons,
+                        calls=[f"{name}({_args(args)})" for name, args in calls],
+                        answer=answer,
+                        llm_calls=result.llm_calls,
+                        ms=elapsed,
+                        cost_usd=cost_usd(result.usage, config.llm) if result.usage else 0.0,
+                    )
+                )
+        finally:
+            await agent.aclose()
+    return outcomes
+
+
+def _args(args: dict[str, Any]) -> str:
+    return ", ".join(f"{key}={value!r}" for key, value in args.items())
+
+
+def report(outcomes: Sequence[Outcome]) -> str:
+    lines = []
+    for o in outcomes:
+        mark = "OK " if o.ok else "ÉCHEC"
+        lines.append(f"{o.number:>2}. {mark} « {o.phrase} »")
+        lines.append(f"      appels : {'; '.join(o.calls) or 'aucun'}")
+        lines.append(f"      dit : « {o.answer} » ({o.llm_calls} appel(s) LLM, {o.ms:.0f} ms)")
+        if o.reasons:
+            lines.append(f"      problème : {' ; '.join(o.reasons)}")
+    passed = sum(o.ok for o in outcomes)
+    single = sum(o.llm_calls == 1 for o in outcomes)
+    cost = sum(o.cost_usd for o in outcomes)
+    lines.append("")
+    lines.append(
+        f"Réussies : {passed}/{len(outcomes)} ; en un seul appel LLM : {single} ; "
+        f"coût ≈ {cost:.4f} $."
+    )
+    return "\n".join(lines)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--only", type=int, nargs="+", help="numéros des phrases à tester")
+    parser.add_argument("--json", type=Path, help="écrit le détail dans ce fichier")
+    args = parser.parse_args(argv)
+
+    from loguru import logger
+
+    from mikata.config import ConfigError, load_config
+    from mikata.llm.client import OpenAICompatClient, check_llm_config
+
+    logger.remove()  # seulement les avertissements : le rapport reste lisible
+    logger.add(sys.stderr, level="WARNING")
+
+    try:
+        config = load_config()
+        api_key = check_llm_config(config.llm, config.secrets)
+    except ConfigError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    selected = [
+        (number, case)
+        for number, case in enumerate(CASES, 1)
+        if not args.only or number in args.only
+    ]
+    key = config.secrets.search_api_key
+    llm = OpenAICompatClient(config.llm, api_key)
+    outcomes = asyncio.run(
+        run_cases(llm, config, selected, key.get_secret_value() if key else None)
+    )
+    print(report(outcomes))
+    if args.json:
+        args.json.write_text(
+            json.dumps([asdict(o) for o in outcomes], ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    return 0 if all(o.ok for o in outcomes) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

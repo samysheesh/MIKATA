@@ -49,6 +49,7 @@ PHASE_4_TOOLS = {
     "forget",
 }
 PHASE_5_TOOLS = {
+    "close_window",  # une seule fenêtre (la fenêtre active par défaut)
     # system : reportés de la phase 4 (délai d'annulation)
     "shutdown",
     "restart",
@@ -89,6 +90,7 @@ TERMINAL = {
     "type_text",
     "press_keys",
     "mouse",
+    "close_window",
 }
 
 

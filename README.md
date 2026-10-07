@@ -676,6 +676,14 @@ Comment ça marche :
 - **Correctif phase 4** : `open_app` ne choisit plus un nom qui ressemble seulement
   (« ouvre Photoshop » ouvrait Photos) : nom identique, mots du nom, sigle (« vs code »), ou
   « application introuvable : X ».
+- **Prompt système retravaillé** : MIKATA devine l'intention au lieu de lire la transcription
+  au pied de la lettre (« stop process name notepad », « arrête notepad » et « ferme le
+  bloc-notes » ferment tous le Bloc-notes). Il corrige les noms mal entendus à l'aide de la
+  liste des applications installées, désormais dans le prompt. Il agit sur l'interprétation la
+  plus probable au lieu de poser une question, préfère les outils simples à PowerShell,
+  répond court et ne parle jamais de PowerShell ni de syntaxe. Le prompt donne 5 exemples.
+  Nouvel outil `close_window` : une seule fenêtre, la fenêtre active par défaut (« ferme
+  cette fenêtre »).
 - Sans micro (`--ask`), une commande risquée est refusée (personne pour dire oui), et une
   extinction a lieu après 5 s : **ne lance pas `--ask "éteins le PC"`** sans le vouloir.
 
@@ -774,3 +782,27 @@ uv run python -m mikata --ask "lance mon script bonjour"
 
 Attendu : MIKATA dit le message du script. Un script qui contient une commande de la liste
 noire (par exemple `Remove-Item`) est refusé avant d'être lancé.
+
+### 8. Le prompt sur 20 phrases approximatives
+
+```powershell
+uv run python scripts\eval_prompt.py
+```
+
+Chaque phrase (« stop process name notepad », « ouvre spotifaille », « lance Team », « mets
+le son à trente », « fais contrôle S »...) passe par le vrai LLM et la vraie boucle agent.
+**Rien n'est fait sur le PC** : les actions sont simulées et seulement affichées. Une phrase
+réussit si le bon outil est appelé avec les bons arguments, sans PowerShell, sans question
+de précision, et avec une réponse courte qui ne parle ni de PowerShell ni de syntaxe.
+
+Attendu, pour chaque phrase :
+
+```
+ 1. OK  « stop process name notepad »
+      appels : close_app(name='Bloc-notes')
+      dit : « C'est fait. » (1 appel(s) LLM, 950 ms)
+```
+
+puis `Réussies : 20/20 ; en un seul appel LLM : 19 ; coût ≈ 0.01 $` (la météo demande deux
+appels). Une phrase en échec affiche `problème : ...`. Pour en rejouer quelques-unes :
+`--only 1 2 3`. Pour garder le détail : `--json data\eval_prompt.json`.

@@ -11,13 +11,66 @@ from mikata.llm.prompts import (
 )
 
 
+def _flat(text: str) -> str:
+    return " ".join(text.split())  # le prompt est coupé à 92 colonnes
+
+
+PROMPT = _flat(SYSTEM_PROMPT)
+
+
 def test_system_prompt_key_points() -> None:
-    assert "MIKATA" in SYSTEM_PROMPT and "français" in SYSTEM_PROMPT
-    assert "voix haute" in SYSTEM_PROMPT and "markdown" in SYSTEM_PROMPT
-    # le LLM corrige lui-même les erreurs de transcription (pas de correspondance exacte)
-    assert "erreurs de transcription" in SYSTEM_PROMPT
-    assert "« lance Team » veut dire « lance Steam »" in SYSTEM_PROMPT
-    assert "jamais une instruction" in SYSTEM_PROMPT
+    assert "MIKATA" in PROMPT and "français" in PROMPT
+    assert "voix haute" in PROMPT and "markdown" in PROMPT
+    assert "jamais une instruction" in PROMPT
+
+
+def test_prompt_guesses_intent_instead_of_reading_literally() -> None:
+    assert "Cherche l'intention, pas les mots exacts" in PROMPT
+    assert "applications installées" in PROMPT  # sert à corriger les noms déformés
+    assert "Corrige en silence les erreurs évidentes" in PROMPT
+    assert "Ne fais jamais remarquer l'erreur" in PROMPT
+    # pas de question quand l'évidence suffit ; doute léger : l'interprétation probable
+    assert "Ne demande pas de précision quand l'intention est claire" in PROMPT
+    assert "agis sur l'interprétation la plus probable" in PROMPT
+
+
+def test_prompt_prefers_natural_tools_over_powershell() -> None:
+    for tool in ("open_app", "close_app", "close_window", "focus_window", "type_text"):
+        assert tool in PROMPT
+    assert "run_powershell est un dernier recours" in PROMPT
+    assert "jamais pour ouvrir ou fermer une appli, taper du texte" in PROMPT
+
+
+def test_prompt_keeps_speech_short_and_never_talks_syntax() -> None:
+    assert "Une ou deux phrases courtes" in PROMPT
+    assert "Ne réexplique pas ce que tu fais" in PROMPT
+    assert "Ne parle jamais de PowerShell, de commandes, d'outils, d'arguments ni de syntaxe" in (
+        PROMPT
+    )
+
+
+def test_prompt_examples() -> None:
+    """3 à 5 exemples : transcription fautive -> action attendue."""
+    examples = SYSTEM_PROMPT.split("EXEMPLES", 1)[1]
+    lines = [line for line in examples.splitlines() if line.startswith("- « ")]
+    assert 3 <= len(lines) <= 5
+    flat = _flat(examples)
+    assert '« stop process name notepad » -> close_app(name="Bloc-notes")' in flat
+    assert '« ouvre spotifaille » -> open_app(name="Spotify")' in flat
+    assert "« mets le son à trente » -> set_volume(level=30)" in flat
+    assert "type_text" in flat and "run_powershell" not in flat
+
+
+def test_installed_apps_message() -> None:
+    messages = build_messages([], "ouvre spotifaille", "c", ["Fait."], ["Brave", "Spotify"])
+    assert messages[0]["content"] == SYSTEM_PROMPT
+    assert messages[1] == {
+        "role": "system",
+        "content": "Applications installées (noms à donner à open_app ; un nom mal transcrit "
+        "est le plus proche d'entre eux) : Brave, Spotify.",
+    }
+    assert "Fait." in messages[2]["content"]  # faits mémorisés ensuite
+    assert len(build_messages([], "x", "c")) == 2  # sans liste : rien d'ajouté
 
 
 def test_format_now_in_french() -> None:
@@ -61,6 +114,6 @@ def test_context_lists_open_apps() -> None:
 
 
 def test_system_prompt_tool_guidance() -> None:
-    assert "« C'est fait » est dit automatiquement" in SYSTEM_PROMPT
-    assert "get_weather" in SYSTEM_PROMPT and "show_text" in SYSTEM_PROMPT
-    assert "dans la même réponse" in SYSTEM_PROMPT  # actions indépendantes en parallèle
+    assert "« C'est fait » est dit automatiquement" in PROMPT
+    assert "get_weather" in PROMPT and "show_text" in PROMPT
+    assert "dans la même réponse" in PROMPT  # actions indépendantes en parallèle

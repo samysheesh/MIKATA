@@ -127,8 +127,8 @@ def find_app(query: str, apps: Sequence[AppEntry]) -> AppEntry | None:
 
 
 def find_windows(query: str, windows: Sequence[WindowInfo]) -> list[WindowInfo]:
-    """Fenêtres de l'appli qui correspond à `query` : par nom de processus, sinon par titre
-    (tous les mots demandés présents dans le titre)."""
+    """Fenêtres de l'appli qui correspond à `query` : par nom de processus, sinon les
+    fenêtres dont le titre contient tous les mots demandés (« Bloc-notes » pour notepad)."""
     best: tuple[float, list[WindowInfo]] | None = None
     by_process: dict[str, list[WindowInfo]] = {}
     for window in windows:
@@ -137,11 +137,41 @@ def find_windows(query: str, windows: Sequence[WindowInfo]) -> list[WindowInfo]:
         score = name_score(query, process) if process else None
         if score is not None and (best is None or score > best[0]):
             best = (score, group)
-    asked = _query_words(query)
-    titled = [w for w in windows if asked and _covered(asked, fold(w.title).split()) is not None]
-    if titled and (best is None or best[0] < TITLE_SCORE):
-        best = (TITLE_SCORE, titled[:1])
+    if best is None or best[0] < TITLE_SCORE:
+        titled = _title_matches(query, windows)
+        if titled:
+            best = (TITLE_SCORE, titled)
     return best[1] if best is not None else []
+
+
+def _title_app(title: str) -> str:
+    """Dernier morceau du titre, où Windows met le nom de l'appli (« x.txt - Bloc-notes »)."""
+    return re.split(r"\s+[-–—|]\s+", title.strip())[-1]
+
+
+def _title_matches(query: str, windows: Sequence[WindowInfo]) -> list[WindowInfo]:
+    """Fenêtres dont le nom d'appli en fin de titre correspond ; sinon celles dont le titre
+    contient tous les mots demandés. Toujours d'une seule appli (« ferme le bloc-notes » ne
+    ferme pas l'onglet « Bloc-notes et astuces - YouTube - Google Chrome »)."""
+    found = [w for w in windows if name_score(query, _title_app(w.title)) is not None]
+    if not found:
+        asked = _query_words(query)
+        found = [w for w in windows if asked and _covered(asked, fold(w.title).split()) is not None]
+    if not found:
+        return []
+    process = found[0].process
+    return [w for w in found if w.process == process]
+
+
+def installed_app_names(apps: Sequence[AppEntry], limit: int = 400) -> list[str]:
+    """Noms des applications installées, triés et dédoublonnés, pour le prompt (le LLM y
+    corrige les noms mal transcrits)."""
+    names: dict[str, str] = {}
+    for app in apps:
+        name = " ".join(app.name.split())
+        if 0 < len(name) <= 60:
+            names.setdefault(name.casefold(), name)
+    return [names[key] for key in sorted(names)][:limit]
 
 
 def open_apps(windows: Sequence[WindowInfo], limit: int = 8) -> list[str]:
@@ -196,6 +226,39 @@ class CloseApp(BaseTool[AppName]):
             await self.ctx.run_blocking(desktop.close_window, window)
         label = windows[0].process or windows[0].title
         return f"{label} fermé ({len(windows)} fenêtre(s))."
+
+
+class WindowParams(BaseModel):
+    name: str | None = Field(
+        default=None,
+        description="Appli ou titre de la fenêtre à fermer ; vide : la fenêtre active",
+    )
+
+
+@register_tool
+class CloseWindow(BaseTool[WindowParams]):
+    name = "close_window"
+    description = (
+        "Ferme une seule fenêtre, comme avec la croix : la fenêtre active (« ferme cette "
+        "fenêtre »), ou celle d'une appli ou d'un titre donné."
+    )
+    params = WindowParams
+    terminal = True
+
+    async def run(self, args: WindowParams) -> str:
+        desktop = self.ctx.require_desktop()
+        if args.name:
+            found = find_windows(args.name, await self.ctx.run_blocking(desktop.windows))
+            if not found:
+                raise ToolError(f"aucune fenêtre ouverte pour « {args.name} »")
+            window = found[0]
+        else:
+            active = await self.ctx.run_blocking(desktop.foreground_window)
+            if active is None:
+                raise ToolError("aucune fenêtre active")
+            window = active
+        await self.ctx.run_blocking(desktop.close_window, window)
+        return f"Fenêtre « {window.title} » fermée."
 
 
 @register_tool

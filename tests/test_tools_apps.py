@@ -191,3 +191,39 @@ def test_close_focus_and_list_windows(tmp_path: Path) -> None:
     assert not nothing.ok and "aucune fenêtre" in nothing.content
     empty = _run(tmp_path, FakeDesktop(windows=[]), "list_windows")
     assert empty.content == "Aucune fenêtre ouverte."
+
+
+def test_close_window_closes_only_one(tmp_path: Path) -> None:
+    desktop = FakeDesktop()
+    active = _run(tmp_path, desktop, "close_window")  # « ferme cette fenêtre »
+    assert active.ok and active.terminal and active.content == "Fenêtre « Spotify Premium » fermée."
+    assert desktop.log == [("close", 11)]
+    one = _run(tmp_path, desktop, "close_window", name="Brave")
+    assert one.ok and desktop.log[-1] == ("close", 12)  # une seule des deux fenêtres Brave
+    assert len([entry for entry in desktop.log if entry[0] == "close"]) == 2
+    none = _run(tmp_path, FakeDesktop(windows=[]), "close_window")
+    assert not none.ok and none.content == "aucune fenêtre active"
+
+
+def test_close_app_by_french_title(tmp_path: Path) -> None:
+    """« ferme le bloc-notes » : le processus s'appelle notepad, le titre dit Bloc-notes."""
+    windows = [
+        WindowInfo(21, "courses.txt - Bloc-notes", "notepad"),
+        WindowInfo(22, "Sans titre - Bloc-notes", "notepad"),
+        WindowInfo(23, "Bloc-notes et astuces - YouTube - Google Chrome", "chrome"),
+    ]
+    desktop = FakeDesktop(windows=windows)
+    for name in ("Bloc-notes", "notepad"):
+        result = _run(tmp_path, desktop, "close_app", name=name)
+        assert result.ok
+    closed = [value for kind, value in desktop.log if kind == "close"]
+    assert set(closed) == {21, 22}  # l'onglet Chrome « Bloc-notes et astuces » reste ouvert
+    youtube = _run(tmp_path, FakeDesktop(windows=windows), "close_window", name="YouTube")
+    assert youtube.ok and "YouTube" in youtube.content  # sinon : un mot du titre suffit
+
+
+def test_installed_app_names() -> None:
+    from mikata.tools.apps import installed_app_names
+
+    apps = [AppEntry(n, "x") for n in ("spotify", "Brave", "Spotify", "  Steam  ", "x" * 80)]
+    assert installed_app_names(apps) == ["Brave", "spotify", "Steam"]

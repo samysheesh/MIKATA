@@ -70,6 +70,12 @@ class FakeDesktop:
     def windows(self) -> list[WindowInfo]:
         return list(self.win)
 
+    def foreground_window(self) -> WindowInfo | None:
+        return self.win[0] if self.win else None
+
+    def cached_apps(self) -> list[AppEntry]:
+        return list(self.apps)
+
     def close_window(self, window: WindowInfo) -> None:
         self._record("close", window.handle)
 

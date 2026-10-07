@@ -103,9 +103,9 @@ class PowerShellParams(BaseModel):
 class RunPowerShell(BaseTool[PowerShellParams]):
     name = "run_powershell"
     description = (
-        "Lance une commande PowerShell (droits normaux, 30 s max) quand aucun autre outil ne "
-        "convient ; jamais pour supprimer (delete_file) ; le garde-fou peut refuser ou "
-        "demander confirmation."
+        "Dernier recours : commande PowerShell pour ce qu'aucun autre outil ne sait faire "
+        "(jamais pour ouvrir ou fermer une appli, taper du texte, déplacer ou supprimer un "
+        "fichier) ; le garde-fou peut la refuser ou demander confirmation."
     )
     params = PowerShellParams
 
