@@ -41,7 +41,7 @@ def test_plan_report_tracks_progress(tmp_path: Path) -> None:
     report = rec.plan_report(data, tmp_path / "negatives")
     assert "normal          3 / 20" in report
     assert "Mots proches : 0 / 36" in report
-    assert "0.0 h sur 6 h" in report
+    assert "0.0 h sur 4 h" in report
     assert "record --set train : 97 prise(s)" in report
     assert "collect_negatives: true" in report
 

@@ -5,8 +5,8 @@ Ce qu'il faut enregistrer (détail : `plan`) :
   fatiguée, en souriant, loin du micro, tête tournée, avec du bruit, dans une phrase) ;
 - 36 mots proches dits par toi (mikado, Nikita, Akira, « il m'a quitté »... 3 fois chacun) ;
 - un autre jour, 30 « MIKATA » pour l'évaluation, jamais utilisés à l'entraînement ;
-- plusieurs heures de vie courante avec `wake.collect_negatives: true` (au moins 6 h :
-  3 h figées pour l'évaluation, le reste pour l'entraînement).
+- plusieurs heures de vie courante avec `wake.collect_negatives: true` (au moins 4 h :
+  2 h figées pour l'évaluation, le reste pour l'entraînement).
 
 Usage :
 
@@ -55,7 +55,7 @@ DEFAULT_ROOT = PROJECT_ROOT / "data" / "wakeword"
 NEGATIVES_DIR = PROJECT_ROOT / "data" / "negatives"
 TRAIN_SCRIPT = PROJECT_ROOT / "scripts" / "train_wakeword.py"
 PACK_NAME = "mikata_wakeword_colab.zip"
-MIN_NEGATIVE_HOURS = 6.0  # 3 h pour l'évaluation + au moins 3 h pour l'entraînement
+MIN_NEGATIVE_HOURS = 4.0  # 2 h pour l'évaluation + au moins 2 h pour l'entraînement
 PACK_NEGATIVE_HOURS = 4.0  # négatifs envoyés à Colab (taille de l'archive : ~115 Mo / h)
 WORD_MAX_S = 2.0  # « MIKATA » seul : au-delà, il y a autre chose dans la prise
 SAMPLE_RATE = 16_000
@@ -292,7 +292,7 @@ def _pack(args: argparse.Namespace) -> int:
         return 1
     if not freeze_eval_negatives(args.negatives, data.eval_list):
         print(
-            f"Pas assez de vie courante dans {args.negatives} pour mettre 3 h de côté "
+            f"Pas assez de vie courante dans {args.negatives} pour mettre 2 h de côté "
             f"(il en faut au moins {MIN_NEGATIVE_HOURS:.0f} h) : l'archive est faite sans "
             "négatifs à toi, et le benchmark ne sera pas possible."
         )

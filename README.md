@@ -1267,7 +1267,7 @@ d'évaluation, puis une semaine d'usage réel confortable.
 
 Le parcours, dans l'ordre :
 
-1. Collecter ta vie courante (au moins 6 h).
+1. Collecter ta vie courante (au moins 4 h).
 2. Enregistrer tes « MIKATA ».
 3. Entraîner `mikata.onnx` sur Colab.
 4. Entraîner le vérificateur de ta voix sur ton PC.
@@ -1297,7 +1297,7 @@ Comment ça marche :
     - ta vie courante, qui sert aussi de bruit de fond mélangé aux positifs.
   - Le jeu d'évaluation n'est jamais envoyé à Colab.
 - **Benchmark** (`scripts/eval_wakeword.py`) :
-  - Tes 30 prises « eval » sont chacune placées dans 1,5 s de vie courante. Les 3 h de vie
+  - Tes 30 prises « eval » sont chacune placées dans 1,5 s de vie courante. Les 2 h de vie
     courante figées sont passées d'un bloc, comme en vrai.
   - Les règles de déclenchement de MIKATA sont rejouées pour chaque seuil, 1 ou 2 trames,
     avec et sans vérificateur.
@@ -1343,9 +1343,9 @@ uv run pytest tests\test_eval_wakeword.py tests\test_record_wakeword.py tests\te
 
 Attendu : tout en `passed`.
 
-### 3. Collecter ta vie courante (au moins 6 h, sur plusieurs jours)
+### 3. Collecter ta vie courante (au moins 4 h, sur plusieurs jours)
 
-C'est la donnée la plus précieuse (§4) : 3 h sont figées pour le benchmark, le reste sert à
+C'est la donnée la plus précieuse (§4) : 2 h sont figées pour le benchmark, le reste sert à
 l'entraînement. Dans `config.yaml`, section `wake` :
 
 ```yaml
@@ -1470,7 +1470,7 @@ Il apprend à partir de tes 100 prises `train` (ta voix qui dit « MIKATA ») et
 dit autre chose : les 36 mots proches, et tes phrases de `data\stt_eval` sauf celles qui
 contiennent « MIKATA ». Attendu : `Vérificateur : ...\models\mikata_verifier.pkl`.
 
-### 8. Le critère : benchmark (≈ 10 min pour 3 h)
+### 8. Le critère : benchmark (≈ 10 min pour 2 h)
 
 ```powershell
 uv run python scripts\eval_wakeword.py --model models\mikata.onnx --verifier models\mikata_verifier.pkl
