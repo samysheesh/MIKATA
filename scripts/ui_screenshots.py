@@ -247,12 +247,25 @@ def render(out: Path, gif: bool = False) -> list[Path]:
     return written
 
 
+def _qimage(path: Path) -> object:
+    """Image lue par Pillow puis passée à Qt : pas de dépendance aux greffons d'image de Qt
+    (JPEG absent de certaines installations de PySide6-Essentials)."""
+    from PIL import Image
+    from PySide6.QtGui import QImage
+
+    rgba = Image.open(path).convert("RGBA")
+    data = rgba.tobytes("raw", "RGBA")
+    return QImage(
+        data, rgba.width, rgba.height, rgba.width * 4, QImage.Format.Format_RGBA8888
+    ).copy()
+
+
 def _render_cutout(base: Path, path: Path) -> Path:
     from PySide6.QtCore import QRectF, Qt
     from PySide6.QtGui import QColor, QImage, QPainter
 
-    raw = QImage(str(base / "images_brutes" / "repos.jpg"))
-    skin = QImage(str(base / "assets" / "mascot" / DEMO_SKIN / "idle.png"))
+    raw = _qimage(base / "images_brutes" / "repos.jpg")
+    skin = _qimage(base / "assets" / "mascot" / DEMO_SKIN / "idle.png")
     sheet = QImage(640, 350, QImage.Format.Format_ARGB32)
     sheet.fill(QColor("#eef2f7"))
     painter = QPainter(sheet)

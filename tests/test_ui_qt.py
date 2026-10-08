@@ -552,4 +552,9 @@ def test_screenshot_script(tmp_path: Path) -> None:
         + ["skin_detourage.png", "skin_images_etats.png"]
     )
     assert len(script.SETTINGS_TABS) == 7  # un nom par onglet des réglages
-    assert all(p.stat().st_size > 1000 for p in written)
+    from PIL import Image
+
+    for path in written:  # une vraie image, pas un rendu vide (une seule couleur)
+        with Image.open(path) as image:
+            colors = image.convert("RGB").getcolors(maxcolors=1_000_000) or []
+            assert min(image.size) > 20 and len(colors) > 8, (path.name, image.size, len(colors))
