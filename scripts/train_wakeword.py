@@ -71,6 +71,7 @@ PACKAGES = [
     "torchinfo==1.8.0",
     "torchmetrics==1.2.0",
     "pathvalidate==3.2.0",
+    "setuptools==69.5.1",  # pronouncing a besoin de pkg_resources (retiré des setuptools récents)
 ]
 NO_DEPS = ["openwakeword==0.6.0", "piper-tts==1.8.0"]  # sans tflite-runtime ni onnxruntime CPU
 
