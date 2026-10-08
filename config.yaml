@@ -67,7 +67,7 @@ web:
   max_results: 5
   default_city: null               # ville de la météo si aucune n'est dite (ex. "Paris")
 tts:
-  backend: piper                   # piper | kokoro
+  backend: piper                   # piper | kokoro | elevenlabs (skin sans profil, ui.profiles)
   voice: models/fr_FR-siwis-medium.onnx   # voix Piper (scripts/download_models.py)
   first_chunk_min_words: 6
   kokoro_model: models/kokoro-v1.0.onnx
@@ -75,6 +75,20 @@ tts:
   kokoro_voice: ff_siwis           # voix française de Kokoro
   speed: 1.0                       # vitesse de parole (0.5 à 2)
   cpu_threads: 4                   # threads CPU de la synthèse (§10 : 4 max)
+  elevenlabs:                      # ajout phase 11 : voix en ligne payante (clé ELEVENLABS_API_KEY dans .env)
+    model: eleven_v4_turbo         # premier son ~165 ms
+    language: fr
+    voice_id: YxrwjAKoUKULGd0g8K9Y # voix d'un profil sans voice_id (Lucie)
+    backup_voice_id: d3AXX0BlgJHYFCuH9X88   # si une voix a disparu du compte (Émilie)
+    output_format: pcm_24000       # PCM 24 kHz en flux
+    monthly_credit_cap: 30000      # plafond de dépense du mois (crédits) : au-delà, Kokoro
+    min_remaining_credits: 500     # crédit du mois sous ce seuil : Kokoro jusqu'au renouvellement
+    subscription_refresh_every: 20 # solde relu toutes les N synthèses (déduit entre deux)
+    estimated_credits_per_char: 1.0   # tant que le coût n'est pas mesuré (prudent)
+    calibration_hours: 24          # mesure du coût réel au démarrage, au plus toutes les N h (0 : jamais)
+    retry_after_s: 300             # panne réseau ou serveur : Kokoro pendant N s, puis on réessaie
+    timeout_s: 10
+    cache_max_mb: 300              # phrases gardées dans data/tts_cache/elevenlabs (jamais refacturées)
 agent:
   follow_up_s: 6                   # fenêtre de suivi sans mot d'activation (0 = désactivée)
   follow_up_min_confidence: 0.2    # suivi : transcription moins fiable (0 à 1) -> ignorée, bip
@@ -114,3 +128,7 @@ ui:                                # ajout phase 8 : mascotte et réglages (proc
   mascot: true                     # lancer la mascotte au démarrage de MIKATA
   skin: default                    # dossier assets/mascot/<skin>/ ; default : Mika, dessinée en code
   bubble_s: 8                      # la bulle reste N s après la dernière phrase
+  profiles:                        # ajout phase 11 : skin -> voix (piper | kokoro | elevenlabs), à chaud
+    default: {voice: kokoro}       # Mika : voix locale et gratuite
+    gars: {voice: elevenlabs, voice_id: NyxenPOqNyllHIzSoPbJ, voice_name: "Théo"}
+    femme: {voice: elevenlabs, voice_id: YxrwjAKoUKULGd0g8K9Y, voice_name: "Lucie"}

@@ -25,7 +25,9 @@ PHRASES: dict[str, str] = {
     "timeout": "Désolé, ça prend trop de temps.",
     "error": "Désolé, quelque chose s'est mal passé.",
     "reset": "D'accord, nouvelle conversation.",
+    "voice_fallback": "Je passe sur ma voix de base.",  # phase 11 : ElevenLabs indisponible
 }
+FALLBACK_KEY = "voice_fallback"
 
 
 class _SyncTTS(Protocol):

@@ -46,12 +46,14 @@ from mikata.ui.settings_store import (
     SECRET_NAMES,
     SPECS,
     USAGE_FILE,
+    VOICE_USAGE_FILE,
     ConfigEditor,
     EditorError,
     LogTail,
     list_audio_devices,
     read_secrets,
     read_usage,
+    voice_usage_text,
     write_secret,
 )
 
@@ -59,6 +61,7 @@ REASONING = ("none", "low", "medium", "high")
 LOG_LEVELS = {"Tout": 0, "Infos et plus": 1, "Avertissements et erreurs": 2}
 _LEVEL_RANK = {"TRACE": 0, "DEBUG": 0, "INFO": 1, "SUCCESS": 1, "WARNING": 2, "ERROR": 2}
 MAX_LOG_LINES = 2000
+COST_REFRESH_POLLS = 10  # coûts relus toutes les 5 s (relevé toutes les 500 ms)
 
 STYLE = """
 QWidget { font-size: 10pt; }
@@ -161,6 +164,7 @@ class SettingsWindow(QWidget):
         self.fields: dict[str, Any] = {}
         self.tail = LogTail(self._log_path())
         self._log_lines: list[str] = []
+        self._polls = 0
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self._audio_tab(), "Audio")
@@ -171,7 +175,7 @@ class SettingsWindow(QWidget):
         self.skins_tab = SkinsTab(
             base_dir / "assets" / "mascot",
             config_path,
-            on_applied=lambda values: self._on_applied(values),
+            on_applied=self._skin_applied,
             on_status=lambda text: self.status.setText(text),
         )
         self.tabs.addTab(self.skins_tab, "Skins")
@@ -314,6 +318,19 @@ class SettingsWindow(QWidget):
         layout.addWidget(self.cost_label)
         layout.addWidget(self.credit_bar)
         layout.addSpacing(12)
+        self.voice_label = QLabel("")  # ajout phase 11 : crédits ElevenLabs
+        self.voice_label.setWordWrap(True)
+        self.voice_bar = QProgressBar()
+        self.voice_bar.setRange(0, 1000)
+        layout.addWidget(self.voice_label)
+        layout.addWidget(self.voice_bar)
+        layout.addWidget(
+            self._hint(
+                "Plafond, seuil et coût : section tts.elevenlabs de config.yaml. Sous le seuil, "
+                "au plafond ou sans connexion, MIKATA passe sur sa voix de base (Kokoro)."
+            )
+        )
+        layout.addSpacing(12)
         form = QFormLayout()
         self.secret_labels: dict[str, QLabel] = {}
         for name, label in SECRET_NAMES.items():
@@ -427,6 +444,17 @@ class SettingsWindow(QWidget):
         self._on_applied({k: self.values().get(k) for k in changed})
         return changed
 
+    def _skin_applied(self, values: dict[str, Any]) -> None:
+        """Skin choisi : la mascotte change tout de suite, et MIKATA relit config.yaml pour
+        prendre la voix du profil (phase 11)."""
+        self._on_applied(values)
+        self._send({"type": "reload_config"})
+
+    def on_voice(self, message: dict[str, Any]) -> None:
+        """Voix de MIKATA changée (secours Kokoro, retour ElevenLabs, profil)."""
+        self.status.setText(str(message.get("message", "")))
+        self._refresh_cost()
+
     def on_config_reply(self, message: dict[str, Any]) -> None:
         """Réponse de MIKATA à reload_config."""
         if message.get("error"):
@@ -477,6 +505,9 @@ class SettingsWindow(QWidget):
         return path if path.is_absolute() else self.base_dir / path
 
     def _poll(self) -> None:
+        self._polls += 1
+        if self._polls % COST_REFRESH_POLLS == 0:  # compteur ElevenLabs écrit par MIKATA
+            self._refresh_cost()
         lines = self.tail.poll()
         if lines:
             self._log_lines = (self._log_lines + lines)[-MAX_LOG_LINES:]
@@ -505,6 +536,10 @@ class SettingsWindow(QWidget):
         )
         share = usage.remaining_usd / usage.credit_usd if usage.credit_usd else 0.0
         self.credit_bar.setValue(int(1000 * min(max(share, 0.0), 1.0)))
+        text, share = voice_usage_text(self.base_dir / VOICE_USAGE_FILE)
+        self.voice_label.setText(text)
+        self.voice_bar.setVisible(share is not None)
+        self.voice_bar.setValue(int(1000 * (share or 0.0)))
         for name, shown in read_secrets(self.base_dir / ".env").items():
             self.secret_labels[name].setText(shown)
 

@@ -120,6 +120,9 @@ class MascotModel:
             self._text_at = now
         elif kind == "mic":
             self.mic = str(message.get("status", "ok"))
+        elif kind == "voice" and message.get("event") in ("fallback", "resume"):
+            self._note = str(message.get("message", ""))  # ajout phase 11
+            self._text_at = now
         elif kind == "bye":
             self.disconnected()
 

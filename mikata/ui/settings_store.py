@@ -9,6 +9,8 @@
   prochain démarrage (cohérent avec `app.LIVE_SETTINGS`, vérifié par les tests).
 - Secrets : lus et écrits dans .env, jamais affichés en clair (`mask`).
 - Coût LLM cumulé (data/llm_usage.json) et journal en direct (`LogTail`).
+- Ajouts phase 11 : compteur de crédits ElevenLabs (data/elevenlabs_usage.json, écrit par
+  MIKATA) et profils de personnage (`set_profile` : une ligne `ui.profiles.<skin>`).
 """
 
 from __future__ import annotations
@@ -62,6 +64,7 @@ SPECS = {spec.key: spec for spec in SETTINGS}
 SECRET_NAMES = {
     "LLM_API_KEY": "Clé du LLM",
     "SEARCH_API_KEY": "Clé de recherche web",
+    "ELEVENLABS_API_KEY": "Clé ElevenLabs",  # ajout phase 11
 }
 _YAML_WORDS = {"true", "false", "yes", "no", "on", "off", "null", "~", "y", "n"}
 _PLAIN = re.compile(r"^[A-Za-z_][A-Za-z0-9_./-]*$")
@@ -153,6 +156,60 @@ def set_value(text: str, key: str, value: Any) -> str:
     )
 
 
+def flow_mapping(values: dict[str, Any]) -> str:
+    """{voice: elevenlabs, voice_id: abc} : un profil sur une ligne."""
+    return "{" + ", ".join(f"{k}: {yaml_scalar(v)}" for k, v in values.items()) + "}"
+
+
+def set_profile(text: str, skin: str, profile: dict[str, Any] | None) -> str:
+    """`text` (config.yaml) avec le profil `ui.profiles.<skin>` (une ligne, en style
+    `{clé: valeur}`) remplacé, ajouté, ou retiré si `profile` est None. Le reste du fichier
+    est inchangé."""
+    if not _PLAIN.match(skin):
+        raise EditorError(f"nom de skin « {skin} » invalide")
+    doc = _ruamel_doc(text) or {}
+    lines = text.splitlines(keepends=True)
+    ui = doc.get("ui")
+    profiles = ui.get("profiles") if ui is not None and hasattr(ui, "lc") else None
+    rendered = flow_mapping(profile) if profile is not None else None
+    if profiles is None or not hasattr(profiles, "lc"):
+        if rendered is None:
+            return text
+        if ui is not None and "profiles" in ui:
+            raise EditorError("ui.profiles n'est pas une liste de profils : modifie-la à la main")
+        indent = ui.lc.key(next(iter(ui)))[1] if ui is not None and len(ui) else 2
+        added = set_value(text, "ui.profiles", "PLACEHOLDER")
+        return added.replace(
+            f"{' ' * indent}profiles: PLACEHOLDER\n",
+            f"{' ' * indent}profiles:\n{' ' * (indent + 2)}{skin}: {rendered}\n",
+        )
+    if skin in profiles:
+        row, col = profiles.lc.key(skin)
+        line = lines[row]
+        nxt = lines[row + 1] if row + 1 < len(lines) else ""
+        continued = nxt.strip() and not nxt.lstrip().startswith("#")
+        if continued and len(nxt) - len(nxt.lstrip()) > col:
+            raise EditorError(f"profil « {skin} » sur plusieurs lignes : à la main")
+        if rendered is None:
+            return "".join([*lines[:row], *lines[row + 1 :]])
+        newline = line[len(line.rstrip("\r\n")) :]
+        body = line[: len(line) - len(newline)]
+        colon = body.index(":", col + len(skin)) + 1
+        comment_at = _comment_start(body, colon)
+        comment = f"  {body[comment_at:]}" if comment_at is not None else ""
+        lines[row] = f"{body[:colon]} {rendered}{comment}{newline}"
+        return "".join(lines)
+    if rendered is None:
+        return text
+    last_row, col = profiles.lc.key(next(iter(profiles))) if len(profiles) else (None, 4)
+    for name in profiles:
+        last_row = max(last_row or 0, profiles.lc.key(name)[0])
+    if last_row is None:
+        raise EditorError("ui.profiles vide : ajoute le profil à la main")
+    lines.insert(last_row + 1, f"{' ' * col}{skin}: {rendered}\n")
+    return "".join(lines)
+
+
 def _format_error(exc: ValidationError) -> str:
     return "\n".join(
         f"{'.'.join(str(p) for p in err['loc'])} : {err['msg']}" for err in exc.errors()
@@ -180,7 +237,7 @@ class ConfigEditor:
         return getattr(getattr(Config(), section), name)
 
     def set(self, key: str, value: Any) -> None:
-        if key.split(".")[-1] in ("llm_api_key", "search_api_key"):
+        if key.split(".")[-1] in ("llm_api_key", "search_api_key", "elevenlabs_api_key"):
             raise EditorError("les secrets vont dans .env, jamais dans config.yaml")
         self.text = set_value(self.text, key, value)
 
@@ -284,6 +341,48 @@ def read_usage(path: Path, credit_usd: float) -> UsageSummary:
         since=str(data.get("since", "")),
         credit_usd=credit_usd,
     )
+
+
+VOICE_USAGE_FILE = "data/elevenlabs_usage.json"  # = tts.credits.USAGE_FILE
+
+
+def voice_usage_text(path: Path) -> tuple[str, float | None]:
+    """Compteur ElevenLabs pour l'onglet « Coût et clés » : (texte, part restante du
+    plafond entre 0 et 1, None si inconnue)."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = None
+    if not isinstance(data, dict) or data.get("used") is None:
+        return "ElevenLabs : pas encore de relevé (MIKATA le fait au démarrage).", None
+    used, cap = float(data["used"]), float(data.get("cap") or 0)
+    limit = float(data.get("limit") or 0)
+    remaining = float(data.get("remaining") or 0)
+    measured = data.get("rate_measured")
+    rate = float(data.get("rate") or 0)
+    rate_text = (
+        f"coût mesuré {rate:.3f} crédit par caractère"
+        if measured is not None
+        else f"coût pas encore mesuré (estimé {rate:.3f} crédit par caractère)"
+    )
+    reset = data.get("reset_unix")
+    reset_text = f", renouvellement le {datetime.fromtimestamp(reset):%d/%m}" if reset else ""
+    state = data.get("state")
+    if state == "kokoro":
+        reason = data.get("reason") or "indisponible"
+        state_text = f"Voix de base (Kokoro) en ce moment : {reason}."
+    else:
+        state_text = "Voix ElevenLabs active."
+    answers = data.get("answers_left")
+    lines = [
+        f"ElevenLabs : {used:.0f} crédits utilisés ce mois sur {limit:.0f} "
+        f"(plafond choisi : {cap:.0f}){reset_text}",
+        f"Crédits restants utilisables : {remaining:.0f} — environ "
+        f"{answers if answers is not None else '?'} réponses de 150 caractères ; {rate_text}.",
+        state_text,
+    ]
+    share = remaining / cap if cap else 0.0
+    return "\n".join(lines), min(max(share, 0.0), 1.0)
 
 
 class LogTail:

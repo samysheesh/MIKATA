@@ -84,6 +84,8 @@ class UiController(QObject):
             self.mascot.reveal()
         elif kind == "config" and self.settings is not None:
             self.settings.on_config_reply(message)
+        elif kind == "voice" and self.settings is not None:
+            self.settings.on_voice(message)
         elif kind == "bye":
             logger.info("MIKATA s'arrête : l'interface aussi.")
             QApplication.quit()

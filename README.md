@@ -1953,3 +1953,196 @@ vérifier, relance-les 10 fois :
    puis deux tics, puis MIKATA t'écoute comme d'habitude.
 3. Vérifie le fichier et la ligne du journal (« Phase 7 », étape 13).
 
+
+## Phase 11 — vérification sur le PC Windows
+
+Voix ElevenLabs et profils de personnage :
+
+1. **Voix ElevenLabs** (`tts.elevenlabs`, modèle `eleven_v4_turbo`, français, PCM 24 kHz en
+   flux).
+   - Synthèse fragment par fragment, comme Piper et Kokoro, avec le même découpage.
+   - Cache disque `data\tts_cache\elevenlabs\` : une phrase déjà dite n'est jamais refacturée.
+     La clé est voix + modèle + texte normalisé (espaces et apostrophes unifiés).
+2. **Retour automatique sur Kokoro**. MIKATA dit une fois « Je passe sur ma voix de base. »
+   et l'interface l'affiche. Les causes :
+   - crédit du mois sous `min_remaining_credits` ;
+   - plafond `monthly_credit_cap` atteint (30 000 par défaut) ;
+   - connexion impossible ;
+   - erreur de l'API (401, 429, quota épuisé, 5xx).
+
+   Retour sur ElevenLabs :
+   - après une panne réseau : au bout de `retry_after_s` ;
+   - pour un crédit épuisé : au renouvellement ;
+   - pour une clé refusée : à la relecture des réglages.
+
+   Le solde est relu au démarrage, puis toutes les `subscription_refresh_every` synthèses. Entre
+   deux relevés, il est déduit localement.
+3. **Coût réel mesuré**, jamais supposé. Au démarrage (au plus une fois par
+   `calibration_hours`), une courte phrase est synthétisée entre deux relevés du solde. Le
+   coût par caractère est ensuite remesuré à chaque relevé. Il s'affiche dans le journal et
+   dans l'onglet « Coût et clés ».
+4. **Profils** (`ui.profiles`) : un skin + une voix.
+   - `default` (Mika) : Kokoro.
+   - `gars` : Théo.
+   - `femme` : Lucie.
+
+   Choisir un skin dans l'onglet Skins change aussi la voix, tout de suite.
+5. **`scripts\eleven_voices.py`** : lister les voix du compte, chercher dans la bibliothèque,
+   ajouter une voix, l'essayer, l'attribuer à un skin.
+
+Écarts avec `docs/ARCHITECTURE.md` :
+
+- §8 écartait le TTS cloud. Tu as mesuré qu'ElevenLabs v4 Turbo donne le premier son en
+  ~165 ms, sous l'objectif de 200 ms, avec une voix bien meilleure que les voix locales. Kokoro
+  reste la voix de base et le secours hors ligne.
+- « Relire le solde toutes les N réponses » est fait toutes les N **synthèses** : une réponse
+  compte plusieurs fragments.
+- Tout sort maintenant à 24 kHz : Piper (22 050 Hz) est rééchantillonné. Ses phrases en cache
+  sont donc regénérées une fois.
+- Rien n'a changé pour le mot d'activation ni pour `mikata.onnx`.
+
+### 1. Récupérer la branche, installer
+
+```powershell
+git fetch origin
+git checkout phase-11-voix-profils
+git pull
+uv sync
+uv run python scripts/download_models.py     # Kokoro, voix de base et de secours
+```
+
+`config.yaml` reçoit deux blocs : `tts.elevenlabs` et `ui.profiles`. Si tu l'as modifié en
+local, garde tes réglages :
+
+```powershell
+git stash
+git pull
+git stash pop
+Select-String -Path config.yaml -Pattern "eleven_v4_turbo|profiles:|gars:|femme:"
+```
+
+Ajoute la clé dans `.env`. Elle n'est jamais commitée ni affichée (ligne `ELEVENLABS_API_KEY=`,
+voir `.env.example`) :
+
+```powershell
+notepad .env
+```
+
+Tes skins doivent être dans `assets\mascot\gars\` et `assets\mascot\femme\`, comme avant.
+`.gitignore` les tient hors du dépôt.
+
+### 2. Lint et tests (API simulée, aucun appel réel)
+
+```powershell
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
+uv run pytest tests\test_elevenlabs.py tests\test_voice_profiles.py tests\test_eleven_voices.py -v
+```
+
+Attendu : tout en `passed`. Les tests couvrent :
+
+- le retour sur Kokoro pour chaque cause : crédit, plafond, réseau, 401, 429, quota, 5xx, clé
+  absente ;
+- le retour sur ElevenLabs ;
+- le cache facturé une seule fois ;
+- la voix de secours ;
+- le changement de profil à chaud.
+
+### 3. Tes voix
+
+```powershell
+uv run python scripts/eleven_voices.py list
+```
+
+Attendu : Lucie, Théo et Émilie avec leur identifiant. Les profils qui les utilisent sont
+indiqués (« <- profil(s) gars »). Pour en changer, sans code :
+
+```powershell
+uv run python scripts/eleven_voices.py search --gender male --query "chaleureuse"
+uv run python scripts/eleven_voices.py add <owner> <voice_id> --name "Hugo"
+uv run python scripts/eleven_voices.py try <voice_id>        # quelques crédits ; écoute data\eleven_essai_<voice_id>.wav
+uv run python scripts/eleven_voices.py use gars <voice_id> --name "Hugo"
+uv run python scripts/eleven_voices.py use default --kokoro
+```
+
+### 4. Démarrage : solde et coût réel
+
+Choisis le skin `femme`, lance MIKATA, puis regarde le journal :
+
+```powershell
+uv run python -m mikata
+Select-String -Path data\logs\mikata.log -Pattern "ElevenLabs|Voix :" | Select-Object -Last 6
+```
+
+Attendu, en plus de « Voix : ElevenLabs « Lucie ». » :
+
+- « ElevenLabs : coût mesuré 0.0xxx crédit par caractère » ;
+- une ligne « … crédits utilisés sur 40000 (plafond 30000), … utilisables, coût mesuré …,
+  environ N réponses ; renouvellement le jj/mm ».
+
+Le coût vient du tarif en cours (promotion jusqu'au 12 octobre). Il est remesuré tout seul
+après la fin de la promotion.
+
+### 5. La voix et sa latence
+
+Dis « MIKATA, quelle heure est-il ? » : tu entends Lucie. Pour la latence, sans micro :
+
+```powershell
+uv run python -m mikata --ask "Raconte-moi une blague courte."
+```
+
+Attendu : « premier son » proche de celui de Kokoro, à environ 200 ms près. Repose la même
+question ou dis « c'est fait » plusieurs fois. Les phrases déjà dites viennent du cache :
+
+```powershell
+(Get-ChildItem data\tts_cache\elevenlabs).Count
+Get-Content data\elevenlabs_usage.json
+```
+
+`cache_hits` augmente, `requests` non.
+
+### 6. Changer de personnage, à chaud
+
+Fais clic droit sur la mascotte, puis Réglages et l'onglet **Skins** :
+
+- clique `gars` : le statut dit « Skin « … » appliqué (voix ElevenLabs « Théo ») » et la
+  réponse suivante est dite par Théo ;
+- clique `Mika (par défaut)` : retour à Kokoro.
+
+Tout cela sans redémarrer. Le journal le note (« Voix : … (profil « gars ») »).
+
+### 7. Compteur dans « Coût et clés »
+
+L'onglet montre :
+
+- les crédits utilisés ce mois, le plafond choisi et la date de renouvellement ;
+- les crédits restants utilisables et une estimation du nombre de réponses ;
+- le coût mesuré et la voix en cours.
+
+La clé `ELEVENLABS_API_KEY` y est masquée (••••••••xxxx). Le compteur se met à jour tout seul
+toutes les 5 s. S'il reste sur « pas encore de relevé » et que le journal dit « la clé n'a pas
+le droit de lire le solde », ajoute la permission « User » en lecture à la clé sur
+elevenlabs.io. Sans elle, la voix marche mais le solde et le plafond ne sont pas suivis.
+
+### 8. Retour sur Kokoro, en vrai
+
+Pour chaque cas, édite `config.yaml`, relance MIKATA, pose une question, puis remets la valeur.
+
+- **Plafond atteint** : `monthly_credit_cap: 1` dans `tts.elevenlabs`. Attendu :
+  « Je passe sur ma voix de base. » suivi de la réponse en Kokoro. L'onglet « Coût et clés »
+  affiche « Voix de base (Kokoro) en ce moment : plafond mensuel atteint… ». Le journal note
+  « Voix de base (kokoro) : plafond mensuel atteint ».
+- **Connexion** : `base_url: https://api.elevenlabs.invalid`. Attendu : même annonce, une seule
+  fois.
+- **Clé refusée** : mets une fausse clé dans `.env`. Attendu : même annonce, journal « clé
+  ElevenLabs refusée ».
+- **Retour** : remets la valeur, puis choisis un autre skin et reviens sur `femme` dans
+  l'onglet Skins. MIKATA relit ses réglages et reparle avec Lucie, sans redémarrer.
+
+```powershell
+Select-String -Path data\logs\mikata.log -Pattern "Voix de base|de nouveau disponible|en pause" | Select-Object -Last 6
+```
+
+Le passage sur Kokoro au renouvellement du crédit et la reprise après un 429 sont vérifiés par
+les tests (horloge simulée).

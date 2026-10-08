@@ -245,10 +245,13 @@ def test_build_app_with_llm_and_voice(
     app = entry.build_app(config, tray=False, audio=True)
     assert app._agent is not None and app._speaker is not None
     assert app._agent.llm.cfg.model == "deepseek-flash"  # type: ignore[attr-defined]
-    assert app._speaker.tts.name == "piper"
-    assert app._speaker.tts.model == config_file.parent / "models" / "fr_FR-siwis-medium.onnx"  # type: ignore[attr-defined]
+    router = app._speaker.tts  # phase 11 : routeur de voix (profil du skin, Kokoro en secours)
+    assert router.name == "voix" and router.choice.engine == "piper"  # type: ignore[attr-defined]
+    assert router.on_event == app.voice_event  # type: ignore[attr-defined]
+    piper, _ = router._factory("piper")  # type: ignore[attr-defined]
+    assert piper.model == config_file.parent / "models" / "fr_FR-siwis-medium.onnx"
     assert app._speaker.player is app._player  # même flux de sortie que les bips
-    assert app._agent.phrases is app._speaker.cache
+    assert app._agent.phrases is app._speaker.cache is router
     # Phase 4 : outils, minuteurs annoncés dans le casque, coût, mémoire long terme.
     tools = app._agent.tools
     assert tools is not None and tools.ctx.announce == app.announce

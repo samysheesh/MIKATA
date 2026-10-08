@@ -176,7 +176,25 @@ class SkinsTab(QWidget):
             lines.append("Tous les états sont fournis.")
         if skin.warnings and not skin.builtin:
             lines.append(f"{len(skin.warnings)} avertissement(s), voir data/logs/ui.log.")
+        voice = self.voice_label(key)
+        if voice:
+            lines.append(f"Voix : {voice}")
         return "\n".join(lines)
+
+    def voice_label(self, key: str) -> str:
+        """Voix du profil de ce skin (ui.profiles, phase 11), « » s'il n'en a pas."""
+        try:
+            profiles = ConfigEditor(self.config_path).get("ui.profiles") or {}
+        except (OSError, ValueError):
+            return ""
+        profile = profiles.get(key) if isinstance(profiles, dict) else None
+        if not isinstance(profile, dict):
+            return ""
+        engine = str(profile.get("voice", "kokoro"))
+        if engine == "elevenlabs":
+            name = profile.get("voice_name") or profile.get("voice_id") or "voix par défaut"
+            return f"ElevenLabs « {name} »"
+        return engine.capitalize()
 
     def _show_details(self, key: str | None) -> None:
         self.details.setText("" if key is None else self.describe(key))
@@ -207,7 +225,8 @@ class SkinsTab(QWidget):
         self._on_applied({"ui.skin": key})
         skin = self.skins.get(key)
         name = skin.name if skin is not None else "Mika"
-        self._on_status(f"Skin « {name} » appliqué.")
+        voice = self.voice_label(key)
+        self._on_status(f"Skin « {name} » appliqué{f' (voix {voice})' if voice else ''}.")
         logger.info("Skin choisi : {}", key)
         for row in range(self.list.count()):  # « (en cours) » sur le bon skin
             item = self.list.item(row)

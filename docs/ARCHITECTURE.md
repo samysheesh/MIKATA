@@ -209,6 +209,8 @@ Plus tard (v2) : capture d'écran + description (nécessite un modèle avec visi
 
 Critère de choix : latence du premier son < 200 ms pour un fragment de 8 mots, puis ton oreille. Pas de TTS cloud : il ajouterait un aller-retour réseau à chaque fragment, contraire à l'objectif de fluidité.
 
+**Écart validé en phase 11 : ElevenLabs.** Les voix locales ont été mesurées sur le PC (Piper, Kokoro, Chatterbox, XTTS-v2, Kyutai) : aucune ne tient à la fois la latence et la qualité. ElevenLabs v4 Turbo donne le premier son en ~165 ms (sous l'objectif) avec des voix françaises naturelles. Il devient la voix des profils (`ui.profiles` : un skin + une voix), en flux fragment par fragment. Kokoro reste la voix de base, et le secours automatique si le crédit, le plafond de dépense, le réseau ou l'API manquent. Détails : `tts/router.py`, `tts/elevenlabs.py`, `tts/credits.py`.
+
 **Normaliseur de texte** avant TTS (`tts/normalize.py`) : retire le markdown, remplace les URL par « le lien », écrit les unités (« °C » → « degrés »), coupe en phrases. Ceinture et bretelles si le LLM ignore le prompt.
 
 **Lecture audio** (`audio/player.py`) : `sounddevice.OutputStream` vers le périphérique de sortie choisi par nom (ton casque). File de phrases : la phrase N+1 est synthétisée pendant que N est jouée. Méthode `stop()` immédiate pour le barge-in.
@@ -260,6 +262,7 @@ mikata/
    ├─ tools/  registry.py  system.py  apps.py  web.py  media.py
    │        input.py  files.py  shell.py  ui.py  memory_tools.py
    ├─ tts/    base.py  piper_tts.py  kokoro_tts.py  normalize.py  cache.py
+   │        router.py  elevenlabs.py  credits.py   # phase 11 : profils de voix, ElevenLabs
    └─ ui/     tray.py  notify.py  hotkeys.py
 ```
 
@@ -355,9 +358,12 @@ llm:
   max_tool_rounds: 8
   request_timeout_s: 20
 tts:
-  backend: piper                   # piper | kokoro
+  backend: piper                   # piper | kokoro | elevenlabs
   voice: models/fr_FR-voice.onnx
   first_chunk_min_words: 6
+  elevenlabs:                      # phase 11 (détail dans config.yaml)
+    model: eleven_v4_turbo
+    monthly_credit_cap: 30000
 agent:
   follow_up_s: 6
   session_reset_min: 10
@@ -369,7 +375,7 @@ guard:
   confirm_after_web: false
 ```
 
-Les secrets (`LLM_API_KEY`, `SEARCH_API_KEY`) vont dans `.env`, jamais dans le dépôt.
+Les secrets (`LLM_API_KEY`, `SEARCH_API_KEY`, `ELEVENLABS_API_KEY`) vont dans `.env`, jamais dans le dépôt. Les profils de personnage (`ui.profiles`, skin -> voix) sont dans `config.yaml` : un identifiant de voix n'est pas un secret.
 
 **Démarrage automatique** : une **tâche planifiée Windows** « à l'ouverture de session », avec ton compte, via `pythonw.exe` (pas de console), option « redémarrer en cas d'échec ». Script `scripts/install_autostart.ps1`. **Pas un service Windows** : un service tourne dans la session 0, isolée du bureau, sans accès simple à tes fenêtres ni à ton audio.
 

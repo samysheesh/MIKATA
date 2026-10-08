@@ -21,6 +21,12 @@ fait foi.
 | [Piper](https://github.com/OHF-Voice/piper1-gpl) : voix `fr_FR-siwis-medium` | `models/fr_FR-siwis-medium.onnx` (+ `.json`) | voix : CC BY 4.0 (jeu de données SIWIS, d'après la fiche du modèle) | voix de MIKATA par défaut | Attribution requise si tu rediffuses la voix ou des enregistrements. |
 | [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M), fichiers ONNX de [kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx) | `models/kokoro-v1.0.onnx`, `models/voices-v1.0.bin` | Apache-2.0 (poids), MIT (kokoro-onnx) | voix alternative (`tts.backend: kokoro`) | |
 
+## Services en ligne
+
+| Service | Licence et conditions | Usage dans MIKATA | Remarques |
+| --- | --- | --- | --- |
+| [ElevenLabs](https://elevenlabs.io) : synthèse vocale (modèle `eleven_v4_turbo`), voix Lucie, Théo, Émilie et celles que tu ajoutes | **Service payant externe**, [conditions d'utilisation](https://elevenlabs.io/terms-of-use) d'ElevenLabs et licence de chaque voix de la bibliothèque. Avec un abonnement payant (Starter ou plus), l'audio généré peut être utilisé commercialement, d'après les conditions en vigueur. | voix des profils `gars` et `femme` (phase 11), quand `tts.elevenlabs` est choisi | **Rien n'est embarqué** : ni modèle ni voix dans le dépôt. Le texte des réponses est envoyé à ElevenLabs. L'audio reçu est gardé en cache sur ton PC (`data/tts_cache/elevenlabs/`, jamais commité). La clé reste dans `.env`. Les crédits sont facturés par ElevenLabs. Une voix de la bibliothèque appartient à son auteur : respecte ses conditions avant toute rediffusion. Sans clé, sans crédit ou sans connexion, MIKATA parle avec Kokoro. |
+
 ## Fichiers du dépôt
 
 | Fichier | Origine | Licence |
