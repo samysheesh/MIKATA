@@ -387,7 +387,9 @@ def extract_rirs(archive: Path, dest: Path) -> list[Path]:
     """Réponses de pièces du MIT (32 kHz) -> 16 kHz."""
     import zipfile
 
-    done = dest / ".extrait"  # marque une extraction complète (pas celle d'un essai interrompu)
+    # Marqueur d'extraction complète : HORS de `dest`, car openwakeword lit tout ce que `dest`
+    # contient comme un son.
+    done = dest.parent / ".rirs16k_extrait"
     if done.is_file():
         return sorted(dest.glob("*.wav"))
     if not archive.is_file():
