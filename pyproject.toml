@@ -57,6 +57,9 @@ dependencies = [
     # Phase 8 (skins) : détourage des images de scripts/make_skin.py (composantes connexes).
     # Déjà installé par openwakeword ; déclaré car utilisé directement.
     "scipy>=1.11",
+    # Phase 12a : pilotage fin des applications par l'arbre d'accessibilité Windows (UIA).
+    # Pur Python, s'appuie sur comtypes (déjà présent) ; imports paresseux, mocké dans les tests.
+    "uiautomation>=2.0.25 ; sys_platform == 'win32'",
 ]
 
 [dependency-groups]

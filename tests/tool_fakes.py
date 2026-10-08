@@ -12,7 +12,14 @@ from typing import Any
 from mikata.agent.guard import Guard
 from mikata.agent.memory import LongTermMemory
 from mikata.config import Config
-from mikata.tools.base import AppEntry, ToolContext, ToolError, WindowInfo
+from mikata.tools.base import (
+    AppEntry,
+    ToolContext,
+    ToolError,
+    UiControlInfo,
+    UiWindowInfo,
+    WindowInfo,
+)
 
 NOW = datetime(2026, 10, 7, 15, 42, 7)
 
@@ -179,6 +186,62 @@ class FakeNotifier:
         self.sent.append((title, body))
 
 
+class FakeUi:
+    """Pilote UIA de test (phase 12a) : fenêtres et contrôles scriptés, appels enregistrés."""
+
+    def __init__(
+        self,
+        windows: list[UiWindowInfo] | None = None,
+        controls: list[UiControlInfo] | None = None,
+        text: str = "",
+        state: str = "",
+    ) -> None:
+        self.windows = windows or [UiWindowInfo("Discord", "Discord")]
+        self.scripted_controls = (
+            controls if controls is not None else [UiControlInfo("Rechercher", "bouton")]
+        )
+        self.text = text
+        self.state = state
+        self.paused: list[bool] = []
+        self.log: list[tuple[str, Any]] = []
+        self.fail: set[str] = set()
+
+    def _record(self, name: str, value: Any = None) -> None:
+        if name in self.fail:
+            raise ToolError(f"échec simulé de {name}")
+        self.log.append((name, value))
+
+    def window(self, title: str | None, process: str | None) -> UiWindowInfo:
+        self._record("window", (title, process))
+        return self.windows[0]
+
+    def controls(self, window: UiWindowInfo, max_controls: int) -> list[UiControlInfo]:
+        self._record("controls", (window.title, max_controls))
+        return list(self.scripted_controls)
+
+    def read(self, window: UiWindowInfo, control: str | None, max_chars: int) -> str:
+        self._record("read", (window.title, control, max_chars))
+        return self.text
+
+    def click(self, window: UiWindowInfo, control: str, kind: str | None, nth: int) -> str:
+        self._record("click", (window.title, control, kind, nth))
+        return f"« {control} » cliqué."
+
+    def set_text(self, window: UiWindowInfo, control: str, text: str) -> str:
+        self._record("set_text", (window.title, control, text))
+        return f"« {control} » rempli."
+
+    def state_summary(self) -> str:
+        self._record("state")
+        return self.state
+
+    def pause_state(self, paused: bool) -> None:
+        self.paused.append(paused)
+
+    def aclose(self) -> None:
+        pass
+
+
 def make_config(tmp_path: Path, **sections: dict[str, Any]) -> Config:
     """Config de test ; le garde-fou n'autorise que `tmp_path/home` (le « dossier perso »)."""
     data = Config().model_dump(mode="json", exclude={"secrets"})
@@ -202,6 +265,7 @@ def make_ctx(
     trash: FakeTrash | None = None,
     shell: Any = None,
     input: Any = None,
+    uia: Any = None,
 ) -> ToolContext:
     async def no_wait(seconds: float) -> None:
         await asyncio.sleep(0)
@@ -226,4 +290,5 @@ def make_ctx(
         guard=guard,
         shell=shell,
         input=input,
+        uia=uia,
     )

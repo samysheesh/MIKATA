@@ -183,6 +183,7 @@ Bonne nouvelle côté matériel : avec un casque fermé, le son du jeu ne revien
 - **PowerShell filtré.** Avant exécution, `run_powershell` refuse les commandes de suppression ou d'effacement : `Remove-Item` et ses alias (`rm`, `ri`, `del`, `erase`, `rd`, `rmdir`), `Clear-RecycleBin`, `Format-Volume`, `diskpart`, `cipher /w`, `sdelete`, `vssadmin delete`, appels `.Delete()` .NET. Le refus est renvoyé au LLM avec la consigne d'utiliser `delete_file`. C'est une liste noire, donc un filet de sécurité et pas une garantie absolue.
 - **Écrasement = sauvegarde.** Avant que `write_file` ou `move_file` n'écrase un fichier existant, une copie part dans `data/backups/` (purge après 14 jours).
 - **Extinction / redémarrage avec 5 s pour annuler** : MIKATA annonce l'action, « stop » dans les 5 s l'annule. Pas une confirmation, juste un filet contre une mauvaise transcription.
+- **Contrôles d'interface** (phase 12a, `check_ui_action`) : un clic UIA sur un contrôle destructif (suppression définitive, formatage, réinitialisation du PC) est refusé ; les contrôles sensibles (supprimer, désinstaller, payer) demandent un « oui » oral ; le texte écrit dans un champ passe le filtre de `type_text`. Le nom du contrôle est le seul signal : c'est un filet, pas une garantie — chaque clic reste journalisé dans `data/actions.log`.
 - **Droits utilisateur normaux**, jamais administrateur.
 - Option `confirm_after_web: false` dans la config. Si tu l'actives, une commande shell lancée juste après la lecture d'une page web demande ton accord : c'est la protection contre une page piégée qui dicterait des instructions au LLM. Désactivée par défaut, selon ton choix.
 
@@ -197,8 +198,9 @@ Bonne nouvelle côté matériel : avec un casque fermé, le son du jeu ne revien
 - **shell** : `run_powershell` (timeout 30 s, sortie tronquée), `run_script` pour tes scripts dans `scripts/user/`.
 - **ui** : `show_text` (fenêtre avec texte long), `clipboard_read`, `clipboard_write`.
 - **memory** : `remember`, `forget`.
+- **uia** (phase 12a) : `uia_window` (contrôles d'une fenêtre : noms, types), `uia_read` (texte d'un contrôle ou de la fenêtre), `uia_click` ★ / `uia_set_text` ★ (par nom de contrôle, vérifiés par `check_ui_action` et `check_typed_text`), `uia_state` (état ambiant en cache : présence vocale Discord...). Implémentation : `mikata/uia/controller.py`, bibliothèque `uiautomation` (comtypes, Apache-2.0), fenêtres trouvées par `tools/desktop.py`, appels sur le thread COM dédié des outils. L'état ambiant est relu par un thread à part toutes les `uia.state_poll_s` secondes, mis en pause pendant qu'un outil agit, gardé en RAM seulement (jamais loggé). `mikata/uia/client.py` s'abonne aux événements d'accessibilité au démarrage : `UiaClientsAreListening()` devient vrai et les applications Chromium/Electron exposent leur arbre complet sans drapeau de lancement.
 
-Plus tard (v2) : capture d'écran + description (nécessite un modèle avec vision), pilotage fin d'interfaces via `pywinauto`, intégrations Spotify / calendrier.
+Plus tard (v2) : capture d'écran + description (nécessite un modèle avec vision), contrôle du navigateur par CDP (phase 12b), savoir-faire appris et rejoués (skills, phase 12c), intégrations Spotify / calendrier.
 
 ## 8. Voix (TTS) et retour utilisateur
 
@@ -260,7 +262,8 @@ mikata/
    ├─ llm/    client.py  prompts.py
    ├─ agent/  loop.py  memory.py  guard.py
    ├─ tools/  registry.py  system.py  apps.py  web.py  media.py
-   │        input.py  files.py  shell.py  ui.py  memory_tools.py
+   │        input.py  files.py  shell.py  ui.py  memory_tools.py  uia.py
+   ├─ uia/    controller.py  state.py  client.py  # phase 12a : arbre d'accessibilité + état ambiant + client à l'écoute
    ├─ tts/    base.py  piper_tts.py  kokoro_tts.py  normalize.py  cache.py
    │        router.py  elevenlabs.py  credits.py   # phase 11 : profils de voix, ElevenLabs
    └─ ui/     tray.py  notify.py  hotkeys.py
@@ -373,6 +376,11 @@ guard:
   backup_days: 14
   shutdown_cancel_s: 5
   confirm_after_web: false
+uia:                                # phase 12a : pilotage fin des applications (arbre UIA)
+  enabled: true
+  state_poll_s: 2                   # état ambiant en RAM (Discord...) ; 0 = jamais
+  max_controls: 200                 # contrôles listés par uia_window (au plus)
+  max_text_chars: 2000              # texte lu par uia_read, tronqué
 ```
 
 Les secrets (`LLM_API_KEY`, `SEARCH_API_KEY`, `ELEVENLABS_API_KEY`) vont dans `.env`, jamais dans le dépôt. Les profils de personnage (`ui.profiles`, skin -> voix) sont dans `config.yaml` : un identifiant de voix n'est pas un secret.

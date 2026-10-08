@@ -13,6 +13,9 @@
   après `guard.backup_days` jours.
 - **Extinction / redémarrage / veille** (`countdown`) : annonce, puis `guard.shutdown_cancel_s`
   secondes pour dire « stop ».
+- **Contrôles d'interface** (`check_ui_action`, phase 12a) : un clic UIA sur un contrôle
+  destructif (suppression définitive, formatage...) est refusé ; les contrôles sensibles
+  (supprimer, désinstaller, payer) demandent un « oui » oral.
 - **Journal** : chaque appel d'outil est écrit dans `data/actions.log` (`log_action`).
 - Droits utilisateur normaux : toute tentative d'élévation (RunAs) est refusée.
 """
@@ -152,6 +155,21 @@ GRAYLIST = _rules(
 PYTHON_BLACKLIST = _rules(
     (r"\bos\.(remove|unlink|rmdir|removedirs)\s*\(|\bshutil\.rmtree\s*\(|\.(unlink|rmdir)\s*\(",
      f"le script supprime définitivement des fichiers ; {DELETE_HINT}"),
+)  # fmt: skip
+
+# Contrôles d'interface (phase 12a, outils UIA) : le nom du contrôle est le seul signal
+# fiable pour un clic. Refusés : destructifs ou irréversibles ; à confirmer : les autres
+# actions sensibles (les noms sont en français, casse et accents ignorés).
+UI_DENY = _rules(
+    (r"supprimer\s+d[ée]finitivement", f"suppression définitive ; {DELETE_HINT}"),
+    (r"vider\s+la\s+corbeille", "vider la corbeille est interdit"),
+    (r"formater|r[ée]initialiser\s+(ce\s+)?pc|effacer\s+le\s+disque",
+     "action destructive sur le système"),
+)  # fmt: skip
+UI_CONFIRM = _rules(
+    (r"\bsupprimer\b", "supprimer quelque chose"),
+    (r"d[ée]sinstaller", "désinstaller un logiciel"),
+    (r"\b(acheter|payer|commander|abonner|abonnement)\b", "dépenser de l'argent"),
 )  # fmt: skip
 
 
@@ -313,6 +331,19 @@ class Guard:
         """Maj+Suppr supprime sans passer par la corbeille : refusé."""
         if "shift" in keys and "delete" in keys:
             return Decision(Verdict.DENY, f"Maj+Suppr supprime définitivement ; {DELETE_HINT}")
+        return Decision(Verdict.ALLOW)
+
+    def check_ui_action(self, control_name: str) -> Decision:
+        """Cliquer (ou remplir) un contrôle d'interface par son nom (outils UIA) : refusé,
+        à confirmer, ou autorisé. Filet de sécurité, pas une garantie : un bouton sans nom
+        lisible passe toujours — mais une vraie action destructive est presque toujours
+        nommée, et chaque clic est journalisé dans actions.log."""
+        denied = check_patterns(control_name, UI_DENY)
+        if denied is not None:
+            return denied
+        risky = check_patterns(control_name, UI_CONFIRM)
+        if risky is not None and self.cfg.confirm_risky:
+            return Decision(Verdict.CONFIRM, risky.reason, risky.match)
         return Decision(Verdict.ALLOW)
 
     # -- corbeille --------------------------------------------------------------------

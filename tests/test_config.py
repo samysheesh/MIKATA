@@ -83,6 +83,10 @@ def test_defaults_match_section_10(config_file: Path) -> None:
     assert config.guard.confirm_risky is True and config.guard.confirm_timeout_s == 6
     assert config.guard.trash_max_mb == 4096 and config.tools.shell_timeout_s == 30
     assert config.logging.actions_file == Path("data/actions.log")
+    # ajouts phase 12a
+    assert config.uia.enabled is True and config.uia.state_poll_s == 2
+    assert config.uia.max_controls == 200 and config.uia.max_text_chars == 2000
+    assert config.uia.accessibility_client is True
 
 
 def test_repo_config_keys_are_exactly_the_model_fields() -> None:

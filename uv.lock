@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = "==3.11.*"
 resolution-markers = [
     "sys_platform == 'win32'",
@@ -608,6 +608,7 @@ dependencies = [
     { name = "sounddevice" },
     { name = "soxr" },
     { name = "trafilatura" },
+    { name = "uiautomation", marker = "sys_platform == 'win32'" },
     { name = "win11toast", marker = "sys_platform == 'win32'" },
 ]
 
@@ -652,6 +653,7 @@ requires-dist = [
     { name = "sounddevice", specifier = ">=0.5.1" },
     { name = "soxr", specifier = ">=0.5" },
     { name = "trafilatura", specifier = ">=2.0" },
+    { name = "uiautomation", marker = "sys_platform == 'win32'", specifier = ">=2.0.25" },
     { name = "win11toast", marker = "sys_platform == 'win32'", specifier = ">=0.35" },
 ]
 
@@ -1438,6 +1440,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/81/5b/879b2f932adfa7a053c360d50bc896c977fa6426109185f7c12ebdd0cb9d/tzlocal-5.4.4.tar.gz", hash = "sha256:8dbb8660838688a7b6ba4fed31d18dedf842afb4d47ca050d6d891c2c15f3be4", size = 31170, upload-time = "2026-06-29T08:03:40.026Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9e/a4/017a7a6cbe387d961a688ec31364ae60a5c4e22c96ae9921b79a947c855d/tzlocal-5.4.4-py3-none-any.whl", hash = "sha256:aae09f0126a8a86fa736be266eb4a471380d26a0de3bc14844e7821fee3e2a15", size = 18115, upload-time = "2026-06-29T08:03:38.666Z" },
+]
+
+[[package]]
+name = "uiautomation"
+version = "2.0.29"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "comtypes" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/bc/23/8238b5cb73e54c3618ce4d443c1830a2749264a0d61a9b61637096b8dc7a/uiautomation-2.0.29.tar.gz", hash = "sha256:3c169112043ce21065aead1d79c3baebdafc9cf03bd24ded02b2db11d423d88d", size = 203970, upload-time = "2025-08-05T05:14:41.194Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b0/27/b9c4b33b4129805fa2c437fa13da06c71e74213ae46da098d194d89834fe/uiautomation-2.0.29-py3-none-any.whl", hash = "sha256:5dd51c9e77e70470142a13d903be67f256c445e7cf20b47ada0ece2bdaff9f32", size = 198985, upload-time = "2025-08-05T05:14:39.552Z" },
 ]
 
 [[package]]

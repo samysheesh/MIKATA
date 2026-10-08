@@ -153,6 +153,15 @@ def build_tool_context(config: Config) -> ToolContext:
 
         ctx.desktop, ctx.audio, ctx.notifier = WindowsDesktop(), PycawAudio(), ToastNotifier()
         ctx.input = PynputInput()
+        if config.uia.enabled:  # phase 12a : pilotage fin des applications (arbre UIA)
+            from mikata.uia.controller import UiController
+
+            ctx.uia = UiController(config, ctx.desktop)
+            if config.uia.state_poll_s > 0:
+                logger.info(
+                    "Pilotage des applications : actif (état ambiant toutes les {} s).",
+                    config.uia.state_poll_s,
+                )
     else:
         logger.warning("Hors Windows : outils du bureau, du volume et des notifications inactifs.")
     return ctx

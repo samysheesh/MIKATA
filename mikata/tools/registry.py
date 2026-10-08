@@ -23,8 +23,20 @@ from mikata.agent.guard import log_action
 from mikata.llm.base import ToolCallReq
 from mikata.tools.base import ActionCancelled, GuardDenied, Tool, ToolContext, ToolError
 
-# Phase 4 : system, apps, web, media, ui, memory ; phase 5 : input, files, shell (§7, §11).
-FAMILIES = ("system", "apps", "web", "media", "ui", "memory_tools", "input", "files", "shell")
+# Phase 4 : system, apps, web, media, ui, memory ; phase 5 : input, files, shell (§7, §11) ;
+# phase 12a : uia (pilotage fin des applications par l'arbre d'accessibilité).
+FAMILIES = (
+    "system",
+    "apps",
+    "web",
+    "media",
+    "ui",
+    "memory_tools",
+    "input",
+    "files",
+    "shell",
+    "uia",
+)
 
 _REGISTRY: dict[str, type[Any]] = {}
 T = TypeVar("T", bound=type)
@@ -155,6 +167,11 @@ class ToolRegistry:
             ok, content = False, f"outil inconnu : {call.name}"
         else:
             limit = self.time_limit(tool)
+            # Phase 12a : le poller d'état ambiant (UIA) saute ses lectures pendant qu'un
+            # outil agit, pour ne pas lire un écran en train de changer.
+            uia = self.ctx.uia
+            if uia is not None:
+                uia.pause_state(True)
             try:
                 args = tool.params.model_validate(call.arguments)
                 async with asyncio.timeout(limit):
@@ -177,6 +194,9 @@ class ToolRegistry:
             except Exception as exc:
                 logger.exception("Outil {} : erreur inattendue.", call.name)
                 ok, content = False, f"erreur inattendue dans {call.name} : {exc}"
+            finally:
+                if uia is not None:
+                    uia.pause_state(False)
         log_action(call.name, call.arguments, status, content)
         limit = self.ctx.config.tools.result_max_chars
         if len(content) > limit:

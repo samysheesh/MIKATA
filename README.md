@@ -2155,3 +2155,126 @@ Select-String -Path data\logs\mikata.log -Pattern "Voix de base|de nouveau dispo
 
 Le passage sur Kokoro au renouvellement du crédit et la reprise après un 429 sont vérifiés par
 les tests (horloge simulée).
+
+## Phase 12a — vérification sur le PC Windows
+
+Pilotage fin des applications (premier étage de la phase 12 : lire l'écran sans le voir).
+
+Comment ça marche :
+
+- **Cinq nouveaux outils** (famille `uia`, un module dans `mikata/tools/`) : `uia_window`
+  (liste les contrôles d'une fenêtre : noms et types, par titre ou processus, sans argument :
+  la fenêtre active), `uia_read` (texte d'un contrôle ou de toute la fenêtre), `uia_click` ★
+  et `uia_set_text` ★ (cliquer ou remplir un contrôle **par son nom**, au lieu de taper à
+  l'aveugle), `uia_state` (état ambiant gardé en mémoire).
+- **Arbre d'accessibilité Windows (UIA)** : `mikata/uia/controller.py`, bibliothèque
+  `uiautomation` (pur Python, comtypes — pas de pywinauto). La fenêtre est trouvée par le
+  bureau existant (`tools/desktop.py`), les noms sont comparés sans casse ni accents
+  (« discorde » trouve « Discord », « envoie » trouve « Envoyer »). Tout tourne sur le
+  thread COM dédié des outils, borné (`uia.max_controls`) et tronqué (`uia.max_text_chars`).
+- **État ambiant** (`mikata/uia/state.py`) : un thread à part relit toutes les
+  `uia.state_poll_s` secondes la présence vocale Discord (salon connecté + membres) et la
+  garde en RAM. Jamais écrit sur disque, jamais loggé, mis en pause pendant qu'un outil
+  agit. `uia_state` la lit sans rien ouvrir.
+- **Client d'accessibilité** (`mikata/uia/client.py`) : au démarrage, MIKATA s'abonne aux
+  événements d'accessibilité Windows (`UiaClientsAreListening`). Les applications
+  Chromium/Electron (Discord, VS Code, Spotify...) exposent alors leur arbre complet
+  **sans aucun drapeau**. `uia.accessibility_client: false` coupe l'abonnement ; le script
+  `scripts\discord_accessibility.ps1` (drapeau `--force-renderer-accessibility` sur les
+  raccourcis et le démarrage automatique) reste le secours si l'abonnement est coupé ou
+  indisponible :
+
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File scripts\discord_accessibility.ps1          # installe
+  powershell -ExecutionPolicy Bypass -File scripts\discord_accessibility.ps1 -Status  # état
+  powershell -ExecutionPolicy Bypass -File scripts\discord_accessibility.ps1 -Restore # retire
+  ```
+
+  Quitte Discord complètement puis relance-le depuis le raccourci (l'icône de la barre des
+  tâches peut demander un redémarrage de l'Explorateur).
+- **Garde-fou** (`check_ui_action`) : un clic sur un contrôle destructif (« Supprimer
+  définitivement », « Vider la corbeille », « Réinitialiser ce PC », « Formater ») est
+  refusé ; les contrôles sensibles (« Supprimer », « Désinstaller », « Acheter ») demandent
+  « Tu confirmes ? » à voix haute ; le texte d'un champ passe le même filtre que `type_text`.
+  Chaque clic est journalisé dans `data/actions.log`.
+- **Config** : nouvelle section `uia` (`enabled`, `state_poll_s`, `max_controls`,
+  `max_text_chars`). `uia.enabled: false` coupe tout ; `state_poll_s: 0` coupe le suivi.
+
+### 1. Récupérer la branche, installer
+
+```powershell
+git fetch origin
+git checkout phase-12a-uia
+git pull
+uv sync
+```
+
+Si tu as modifié `config.yaml` en local, garde tes réglages pendant la mise à jour (une
+section `uia:` est ajoutée) :
+
+```powershell
+git stash
+git pull
+git stash pop
+Select-String -Path config.yaml -Pattern "state_poll_s|max_controls"
+```
+
+### 2. Lint et tests
+
+```powershell
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
+uv run pytest tests\test_uia_tools.py tests\test_guard_ui.py tests\test_uia_state.py -v
+```
+
+Attendu : tout en `passed`. Ce que vérifient ces tests :
+
+- chaque outil sur pilote simulé, erreurs en français, « aucun contrôle lisible » ;
+- les contrôles destructifs ne sont **jamais** cliqués (`REFUSÉ` dans `actions.log`), les
+  contrôles sensibles posent la question exacte et n'agissent que sur « oui », sans micro
+  c'est refusé ;
+- une commande de suppression ne s'écrit jamais dans un champ ;
+- le cache d'état se remplit sur son propre thread, saute ses lectures pendant une action,
+  s'arrête proprement et ne fuit rien dans les logs.
+
+### 3. Lire une application (sans micro)
+
+```powershell
+notepad
+uv run python -m mikata --ask "quels boutons y a-t-il dans le bloc-notes"
+```
+
+Attendu : MIKATA liste les contrôles (Fichier, Édition, la zone de texte...) et les dit.
+Sans le Bloc-notes d'ouvert, il répond qu'aucune fenêtre ne correspond.
+
+### 4. Cliquer par nom (avec le micro)
+
+```powershell
+notepad
+uv run python -m mikata
+```
+
+1. « MIKATA, tape bonjour dans le bloc-notes avec le champ de texte » → `uia_set_text`
+   écrit dans la zone de texte, sans `type_text` aveugle.
+2. « MIKATA, clique sur le menu fichier » → `uia_click` clique le menu « Fichier ».
+3. « MIKATA, qui est dans mon salon vocal discord » (Discord lancé avec le drapeau, voir
+   plus haut, et connecté en vocal) → `uia_state` répond avec le salon et les membres,
+   sans toucher à Discord.
+
+### 5. Le garde-fou en vrai
+
+1. « MIKATA, clique sur supprimer définitivement » → refus, rien ne se passe, et
+   `Select-String -Path data\actions.log -Pattern "REFUSÉ"` montre la ligne.
+2. « MIKATA, clique sur désinstaller » → « Tu confirmes ? » ; réponds « non » : rien.
+3. `uv run python -m mikata --ask "clique sur désinstaller"` (sans micro) → refus.
+
+### 6. Non-régression
+
+```powershell
+uv run pytest tests\test_guard_criteria.py tests\test_voice_stop.py -v
+uv run python -m mikata --check-config
+```
+
+Attendu : tout en `passed`, config valide ; bip < 150 ms et CPU au repos inchangés (le suivi
+d'état tourne sur son propre thread, en pause pendant les actions).

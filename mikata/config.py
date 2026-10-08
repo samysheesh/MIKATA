@@ -268,6 +268,20 @@ class GuardConfig(_Section):
     trash_max_mb: float = Field(default=4096, gt=0)
 
 
+class UiaConfig(_Section):
+    """Ajout phase 12a : pilotage fin des applications par l'arbre d'accessibilité Windows
+    (lire les contrôles, cliquer par nom). L'état ambiant (présence vocale Discord...) est
+    gardé en RAM seulement, jamais loggé."""
+
+    enabled: bool = True  # false : les outils UIA répondent « désactivé »
+    state_poll_s: float = Field(default=2, ge=0)  # état ambiant ; 0 = jamais rafraîchi
+    max_controls: int = Field(default=200, ge=10, le=2000)  # contrôles listés par uia_window
+    max_text_chars: int = Field(default=2000, ge=100, le=20000)  # texte lu, tronqué
+    # Client d'accessibilité à l'écoute (UiaClientsAreListening) : les applications
+    # Chromium/Electron (Discord...) exposent leur arbre complet sans drapeau de lancement.
+    accessibility_client: bool = True
+
+
 class LoggingConfig(_Section):
     level: Literal["TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR"] = "INFO"
     file: Path = Path("data/logs/mikata.log")
@@ -335,6 +349,7 @@ class Config(_Section):
     web: WebConfig = Field(default_factory=WebConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
     guard: GuardConfig = Field(default_factory=GuardConfig)
+    uia: UiaConfig = Field(default_factory=UiaConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     ui: UiConfig = Field(default_factory=UiConfig)
     secrets: Secrets = Field(default_factory=Secrets, exclude=True)

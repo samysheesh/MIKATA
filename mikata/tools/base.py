@@ -150,6 +150,24 @@ class WindowInfo:
     process: str  # nom de l'exécutable, sans « .exe »
 
 
+@dataclass(frozen=True)
+class UiWindowInfo:
+    """Fenêtre trouvée pour les outils UIA (phase 12a) : identifiée par titre et processus."""
+
+    title: str
+    process: str
+    handle: int = 0  # natif Windows, 0 dans les simulations
+
+
+@dataclass(frozen=True)
+class UiControlInfo:
+    """Contrôle lisible d'une application : nom, type en français, texte affiché (tronqué)."""
+
+    name: str
+    kind: str  # « bouton », « champ », « texte », « élément »...
+    text: str = ""
+
+
 class Desktop(Protocol):
     """Bureau Windows (tools/desktop.py), simulé dans les tests."""
 
@@ -182,6 +200,20 @@ class ProcessRunner(Protocol):
     async def run(
         self, argv: list[str], timeout_s: float, cwd: Path | None = None
     ) -> tuple[int, str]: ...
+
+
+class UiAutomation(Protocol):
+    """Pilotage fin des applications (mikata/uia/controller.py, phase 12a), simulé dans les
+    tests. Les méthodes sont bloquantes : appelées via `ToolContext.run_blocking`."""
+
+    def window(self, title: str | None, process: str | None) -> UiWindowInfo: ...
+    def controls(self, window: UiWindowInfo, max_controls: int) -> list[UiControlInfo]: ...
+    def read(self, window: UiWindowInfo, control: str | None, max_chars: int) -> str: ...
+    def click(self, window: UiWindowInfo, control: str, kind: str | None, nth: int) -> str: ...
+    def set_text(self, window: UiWindowInfo, control: str, text: str) -> str: ...
+    def state_summary(self) -> str: ...  # état ambiant en cache (Discord...), "" si rien
+    def pause_state(self, paused: bool) -> None: ...  # le poller d'état saute ses lectures
+    def aclose(self) -> None: ...  # arrête le poller d'état (arrêt propre)
 
 
 class AudioControl(Protocol):
@@ -218,6 +250,8 @@ class ToolContext:
     guard: Guard | None = None
     input: InputControl | None = None
     shell: ProcessRunner | None = None
+    # Ajout phase 12a : pilotage fin des applications (arbre d'accessibilité Windows).
+    uia: UiAutomation | None = None
     _executor: ThreadPoolExecutor | None = field(default=None, repr=False)
 
     async def run_blocking(self, fn: Callable[..., R], *args: Any) -> R:
@@ -257,6 +291,11 @@ class ToolContext:
             raise ToolError("le contrôle du volume Windows n'est pas disponible ici")
         return self.audio
 
+    def require_uia(self) -> UiAutomation:
+        if self.uia is None:
+            raise ToolError("le pilotage fin des applications n'est pas disponible ici")
+        return self.uia
+
     def spawn(self, coro: Awaitable[Any], name: str) -> None:
         """Tâche de fond gardée en vie (minuteurs, rappels)."""
         task = asyncio.ensure_future(coro)
@@ -265,10 +304,16 @@ class ToolContext:
         task.add_done_callback(self.tasks.discard)
 
     async def aclose(self) -> None:
-        """Arrêt : minuteurs annulés, client HTTP fermé, thread des outils arrêté."""
+        """Arrêt : minuteurs annulés, client HTTP fermé, poller UIA arrêté, thread des
+        outils fermé."""
         for task in list(self.tasks):
             task.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)
+        if self.uia is not None:
+            try:
+                self.uia.aclose()
+            except Exception as exc:
+                logger.debug("Fermeture du pilotage UIA : {}", exc)
         if self.http is not None:
             try:
                 await self.http.aclose()
