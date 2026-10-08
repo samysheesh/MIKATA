@@ -517,6 +517,21 @@ def prepare(s: Settings) -> Path:
     return path
 
 
+FEATURE_FILES = (
+    "positive_features_train.npy",
+    "positive_features_test.npy",
+    "negative_features_train.npy",
+    "negative_features_test.npy",
+)
+
+
+def incomplete_features(model_dir: Path) -> bool:
+    """Vrai si un essai interrompu a laissé une partie seulement des caractéristiques :
+    openwakeword saute alors leur calcul dès que le premier fichier existe, puis plante."""
+    present = [(model_dir / name).is_file() for name in FEATURE_FILES]
+    return any(present) and not all(present)
+
+
 def train(s: Settings) -> int:
     if Path(sys.prefix).resolve() != s.venv.resolve():  # relance dans l'environnement 3.11
         if not s.python.is_file():
@@ -524,10 +539,12 @@ def train(s: Settings) -> int:
         return subprocess.run([str(s.python), __file__, *sys.argv[1:]]).returncode
     config = prepare(s)
     exported = s.model_dir.parent / "mikata.onnx"
-    result = subprocess.run(
-        [sys.executable, "-m", "openwakeword.train", "--training_config", str(config),
-         "--augment_clips", "--train_model"],
-    )  # fmt: skip
+    command = [sys.executable, "-m", "openwakeword.train", "--training_config", str(config),
+               "--augment_clips", "--train_model"]  # fmt: skip
+    if incomplete_features(s.model_dir):
+        log("caractéristiques d'un essai interrompu : elles sont recalculées")
+        command.append("--overwrite")
+    result = subprocess.run(command)
     # La conversion finale en .tflite échoue sans TensorFlow : seul le .onnx compte (§4).
     if not exported.is_file():
         log(f"échec de l'entraînement (code {result.returncode}) : voir les messages ci-dessus")

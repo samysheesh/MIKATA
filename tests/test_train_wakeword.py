@@ -289,3 +289,12 @@ def test_extract_rirs_redoes_an_interrupted_extraction(tmp_path: Path) -> None:
     )  # essai interrompu : un seul fichier
 
     assert [p.name for p in tw.extract_rirs(archive, dest)] == ["a.wav", "b.wav"]
+
+
+def test_incomplete_features_from_an_interrupted_run_are_detected(tmp_path: Path) -> None:
+    assert not tw.incomplete_features(tmp_path)  # rien : openwakeword calcule tout
+    (tmp_path / "positive_features_train.npy").write_bytes(b"x")
+    assert tw.incomplete_features(tmp_path)  # reste d'un essai interrompu : à recalculer
+    for name in tw.FEATURE_FILES:
+        (tmp_path / name).write_bytes(b"x")
+    assert not tw.incomplete_features(tmp_path)  # tout est là : rien à refaire
