@@ -37,7 +37,9 @@ def _install(root: Path, key: str, name: str, color: tuple[int, ...] = (0, 120, 
 @pytest.fixture
 def base(tmp_path: Path) -> Path:
     shutil.copy2(ROOT / "config.yaml", tmp_path / "config.yaml")
-    shutil.copytree(ROOT / "assets" / "mascot", tmp_path / "assets" / "mascot")
+    shutil.copytree(  # seul le skin par défaut : les tests ne dépendent pas des skins du dépôt
+        ROOT / "assets" / "mascot" / "default", tmp_path / "assets" / "mascot" / "default"
+    )
     root = tmp_path / "assets" / "mascot"
     _install(root, "sakura", "Sakura")
     (root / "casse").mkdir()

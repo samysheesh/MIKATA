@@ -33,8 +33,11 @@ scripts/user/*
 # Captures de l'interface rendues ailleurs que dans docs/ui/
 data/captures/
 
-# Skins de la mascotte : seuls Mika (default) et la notice sont suivis ; tes skins (créés
-# avec scripts/make_skin.py ou importés) restent sur ton PC.
+# Skins de la mascotte : Mika (default), les deux personnages du dépôt (gars, femme) et la
+# notice sont suivis ; les autres skins (créés avec scripts/make_skin.py ou importés) restent
+# sur ton PC.
 assets/mascot/*
 !assets/mascot/README.md
 !assets/mascot/default/
+!assets/mascot/gars/
+!assets/mascot/femme/
