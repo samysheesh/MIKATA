@@ -40,6 +40,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+# Colab fixe MPLBACKEND sur un backend de Jupyter absent de l'environnement 3.11 isolé :
+# matplotlib plante au chargement (openwakeword -> torchmetrics). On impose un backend sans écran.
+os.environ["MPLBACKEND"] = "agg"
+
 HERE = Path(__file__).resolve().parent
 SAMPLE_RATE = 16_000
 VENV_PYTHON = "3.11"
@@ -67,6 +71,7 @@ PACKAGES = [
     "torchinfo==1.8.0",
     "torchmetrics==1.2.0",
     "pathvalidate==3.2.0",
+    "setuptools==69.5.1",  # pronouncing a besoin de pkg_resources (retiré des setuptools récents)
 ]
 NO_DEPS = ["openwakeword==0.6.0", "piper-tts==1.8.0"]  # sans tflite-runtime ni onnxruntime CPU
 
@@ -382,15 +387,20 @@ def extract_rirs(archive: Path, dest: Path) -> list[Path]:
     """Réponses de pièces du MIT (32 kHz) -> 16 kHz."""
     import zipfile
 
-    if count_wavs(dest):
+    done = dest / ".extrait"  # marque une extraction complète (pas celle d'un essai interrompu)
+    if done.is_file():
         return sorted(dest.glob("*.wav"))
     if not archive.is_file():
         return []
+    # Les fichiers d'origine vont HORS de `dest` : openwakeword lit tout ce que contient `dest`
+    # et plante sur un sous-dossier.
+    raw_dir = dest.parent / "rirs_raw"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    dest.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(archive) as z:
         for name in z.namelist():
             if name.lower().endswith(".wav"):
-                raw = dest / "raw" / Path(name).name
-                raw.parent.mkdir(parents=True, exist_ok=True)
+                raw = raw_dir / Path(name).name
                 raw.write_bytes(z.read(name))
                 try:
                     audio, rate = read_wav(raw)
@@ -398,6 +408,8 @@ def extract_rirs(archive: Path, dest: Path) -> list[Path]:
                     log(f"réponse de pièce ignorée (format non géré) : {raw.name}")
                     continue
                 write_wav(dest / raw.name, to_16k(audio, rate))
+    done.write_text("ok", encoding="utf-8")
+    log(f"réponses de pièces : {count_wavs(dest)} fichiers")
     return sorted(dest.glob("*.wav"))
 
 
@@ -505,6 +517,21 @@ def prepare(s: Settings) -> Path:
     return path
 
 
+FEATURE_FILES = (
+    "positive_features_train.npy",
+    "positive_features_test.npy",
+    "negative_features_train.npy",
+    "negative_features_test.npy",
+)
+
+
+def incomplete_features(model_dir: Path) -> bool:
+    """Vrai si un essai interrompu a laissé une partie seulement des caractéristiques :
+    openwakeword saute alors leur calcul dès que le premier fichier existe, puis plante."""
+    present = [(model_dir / name).is_file() for name in FEATURE_FILES]
+    return any(present) and not all(present)
+
+
 def train(s: Settings) -> int:
     if Path(sys.prefix).resolve() != s.venv.resolve():  # relance dans l'environnement 3.11
         if not s.python.is_file():
@@ -512,10 +539,12 @@ def train(s: Settings) -> int:
         return subprocess.run([str(s.python), __file__, *sys.argv[1:]]).returncode
     config = prepare(s)
     exported = s.model_dir.parent / "mikata.onnx"
-    result = subprocess.run(
-        [sys.executable, "-m", "openwakeword.train", "--training_config", str(config),
-         "--augment_clips", "--train_model"],
-    )  # fmt: skip
+    command = [sys.executable, "-m", "openwakeword.train", "--training_config", str(config),
+               "--augment_clips", "--train_model"]  # fmt: skip
+    if incomplete_features(s.model_dir):
+        log("caractéristiques d'un essai interrompu : elles sont recalculées")
+        command.append("--overwrite")
+    result = subprocess.run(command)
     # La conversion finale en .tflite échoue sans TensorFlow : seul le .onnx compte (§4).
     if not exported.is_file():
         log(f"échec de l'entraînement (code {result.returncode}) : voir les messages ci-dessus")

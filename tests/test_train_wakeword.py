@@ -225,3 +225,76 @@ def test_verifier_main_needs_the_model_and_takes(
     model.write_bytes(b"x")
     assert tv.main(["--model", str(model), "--root", str(tmp_path / "ww")]) == 1
     assert "Pas assez de prises" in capsys.readouterr().out
+
+
+def _pcm_bytes(width: int, samples: int = 3200) -> bytes:
+    t = np.sin(np.linspace(0, 60, samples)) * 0.4
+    if width == 1:
+        return ((t * 127) + 128).astype(np.uint8).tobytes()
+    if width == 2:
+        return (t * 32767).astype(np.int16).tobytes()
+    if width == 3:
+        v = (t * 8388607).astype(np.int32)
+        return np.stack([v & 255, (v >> 8) & 255, (v >> 16) & 255], 1).astype(np.uint8).tobytes()
+    return (t * 2147483647).astype(np.int32).tobytes()
+
+
+def test_extract_rirs_handles_any_sample_width_and_keeps_dest_flat(tmp_path: Path) -> None:
+    """Réponses de pièces : 16, 24 et 32 bits sont lues, un fichier illisible est ignoré, et
+    `dest` ne contient que des .wav (openwakeword plante sur un sous-dossier)."""
+    import io
+    import zipfile
+
+    archive = tmp_path / "mit_rirs.zip"
+    with zipfile.ZipFile(archive, "w") as z:
+        for width in (2, 3, 4):
+            buffer = io.BytesIO()
+            with wave.open(buffer, "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(width)
+                w.setframerate(32_000)
+                w.writeframes(_pcm_bytes(width))
+            z.writestr(f"rirs/w{width}.wav", buffer.getvalue())
+        z.writestr("rirs/casse.wav", b"RIFFnot-a-wav")
+    dest = tmp_path / "downloads" / "rirs16k"
+
+    found = tw.extract_rirs(archive, dest)
+
+    assert [p.name for p in found] == ["w2.wav", "w3.wav", "w4.wav"]
+    assert all(p.is_file() for p in dest.iterdir())  # aucun sous-dossier
+    assert (dest / ".extrait").is_file()
+    with wave.open(str(dest / "w3.wav"), "rb") as w:
+        assert w.getframerate() == SR
+    assert tw.extract_rirs(archive, dest) == found  # déjà fait : rien n'est refait
+
+
+def test_extract_rirs_redoes_an_interrupted_extraction(tmp_path: Path) -> None:
+    import io
+    import zipfile
+
+    archive = tmp_path / "mit_rirs.zip"
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(32_000)
+        w.writeframes(_pcm_bytes(2))
+    with zipfile.ZipFile(archive, "w") as z:
+        z.writestr("a.wav", buffer.getvalue())
+        z.writestr("b.wav", buffer.getvalue())
+    dest = tmp_path / "rirs16k"
+    dest.mkdir()
+    tw.write_wav(
+        dest / "a.wav", np.zeros(100, dtype=np.int16)
+    )  # essai interrompu : un seul fichier
+
+    assert [p.name for p in tw.extract_rirs(archive, dest)] == ["a.wav", "b.wav"]
+
+
+def test_incomplete_features_from_an_interrupted_run_are_detected(tmp_path: Path) -> None:
+    assert not tw.incomplete_features(tmp_path)  # rien : openwakeword calcule tout
+    (tmp_path / "positive_features_train.npy").write_bytes(b"x")
+    assert tw.incomplete_features(tmp_path)  # reste d'un essai interrompu : à recalculer
+    for name in tw.FEATURE_FILES:
+        (tmp_path / name).write_bytes(b"x")
+    assert not tw.incomplete_features(tmp_path)  # tout est là : rien à refaire
