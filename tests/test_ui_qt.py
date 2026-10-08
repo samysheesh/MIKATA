@@ -339,7 +339,9 @@ def base(tmp_path: Path) -> Path:
     )
     usage = {"cost_usd": 1.25, "commands": 40, "since": "2026-10-01T08:00:00"}
     (tmp_path / "data" / "llm_usage.json").write_text(json.dumps(usage), encoding="utf-8")
-    shutil.copytree(ROOT / "assets" / "mascot", tmp_path / "assets" / "mascot")
+    shutil.copytree(  # seul le skin par défaut : les tests ne dépendent pas des skins du dépôt
+        ROOT / "assets" / "mascot" / "default", tmp_path / "assets" / "mascot" / "default"
+    )
     return tmp_path
 
 
