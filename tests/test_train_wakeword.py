@@ -261,8 +261,9 @@ def test_extract_rirs_handles_any_sample_width_and_keeps_dest_flat(tmp_path: Pat
     found = tw.extract_rirs(archive, dest)
 
     assert [p.name for p in found] == ["w2.wav", "w3.wav", "w4.wav"]
-    assert all(p.is_file() for p in dest.iterdir())  # aucun sous-dossier
-    assert (dest / ".extrait").is_file()
+    assert all(p.suffix == ".wav" for p in dest.iterdir())  # que des .wav : ni dossier ni marqueur
+    # (openwakeword essaie de lire tout ce que contient `dest` comme un son)
+    assert (dest.parent / ".rirs16k_extrait").is_file()
     with wave.open(str(dest / "w3.wav"), "rb") as w:
         assert w.getframerate() == SR
     assert tw.extract_rirs(archive, dest) == found  # déjà fait : rien n'est refait
