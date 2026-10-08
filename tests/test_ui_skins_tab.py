@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import shutil
 import zipfile
 from pathlib import Path
@@ -37,6 +38,11 @@ def _install(root: Path, key: str, name: str, color: tuple[int, ...] = (0, 120, 
 @pytest.fixture
 def base(tmp_path: Path) -> Path:
     shutil.copy2(ROOT / "config.yaml", tmp_path / "config.yaml")
+    text = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+    # le skin choisi dans le dépôt (femme) ne doit pas changer ces tests : on repart de Mika
+    (tmp_path / "config.yaml").write_text(
+        re.sub(r"(?m)^(  skin: )\S+", r"\g<1>default", text), encoding="utf-8"
+    )
     shutil.copytree(  # seul le skin par défaut : les tests ne dépendent pas des skins du dépôt
         ROOT / "assets" / "mascot" / "default", tmp_path / "assets" / "mascot" / "default"
     )

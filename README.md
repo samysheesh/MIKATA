@@ -2125,6 +2125,15 @@ toutes les 5 s. S'il reste sur « pas encore de relevé » et que le journal dit
 le droit de lire le solde », ajoute la permission « User » en lecture à la clé sur
 elevenlabs.io. Sans elle, la voix marche mais le solde et le plafond ne sont pas suivis.
 
+### 9. Redémarrer MIKATA depuis l'interface
+
+Le skin par défaut est maintenant **femme** (voix Lucie). Un bouton **Redémarrer MIKATA** est dans
+la fenêtre de réglages (en bas, à côté de « Fermer ») et dans le menu du clic droit de la mascotte.
+MIKATA s'arrête proprement (code 75) puis revient seul, mascotte comprise :
+- lancé par le démarrage automatique (`--supervise`), le superviseur le relance tout de suite, sans
+  compter ça comme un plantage (`data\logs\supervise.log` : « Redémarrage demandé ») ;
+- lancé à la main, il se relance lui-même dans un processus détaché.
+
 ### 8. Retour sur Kokoro, en vrai
 
 Pour chaque cas, édite `config.yaml`, relance MIKATA, pose une question, puis remets la valeur.

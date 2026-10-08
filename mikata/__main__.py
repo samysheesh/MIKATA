@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -33,6 +34,7 @@ EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_CONFIG = 2
 EXIT_STARTUP = 3  # matériel indisponible (GPU, DLL CUDA...)
+EXIT_RESTART = 75  # « Redémarrer » dans l'interface (cf. supervise.RESTART_CODE)
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -410,6 +412,20 @@ async def ask(config: Config, question: str, *, audio: bool) -> str:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Point d'entrée. Un redémarrage demandé dans l'interface sort avec le code 75 : sous
+    supervision, le superviseur relance ; sinon on se relance soi-même (processus détaché)."""
+    code = _main(argv)
+    if code != EXIT_RESTART:
+        return code
+    from mikata.supervise import SUPERVISED_ENV, relaunch_self
+
+    if os.environ.get(SUPERVISED_ENV):
+        return EXIT_RESTART
+    relaunch_self(sys.argv[1:] if argv is None else argv)
+    return EXIT_OK
+
+
+def _main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     config_path = resolve_config_path(args.config)
     if args.supervise:  # ajout phase 7 : processus de relance, MIKATA tourne dans un enfant
@@ -467,7 +483,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         except StartupError as exc:
             logger.error("{}", exc)
             return EXIT_STARTUP
-        return EXIT_OK
+        return EXIT_RESTART if app.restart_requested else EXIT_OK
     except Exception:
         logger.exception("Erreur fatale.")
         return EXIT_ERROR

@@ -3,9 +3,9 @@ au-dessus, qui ne prend jamais le focus (le jeu ou la fenêtre active le garde).
 
 - Glisser avec le bouton gauche, sur n'importe quel écran : position et écran mémorisés
   (data/ui_state.json) ; un écran débranché ramène la mascotte sur l'écran principal.
-- Clic droit : taille, bulle on/off, pause de l'écoute, réglages, masquer. Pour cliquer sur
-  ce qu'il y a dessous, on déplace la mascotte (pas de mode « clics à travers » : une fois
-  activé, le clic droit ne l'atteindrait plus).
+- Clic droit : taille, bulle on/off, pause de l'écoute, réglages, redémarrer MIKATA, masquer.
+  Pour cliquer sur ce qu'il y a dessous, on déplace la mascotte (pas de mode « clics à
+  travers » : une fois activé, le clic droit ne l'atteindrait plus).
 - Double-clic : réglages.
 - Le skin (`ui.skin`) ne fournit que les images : `SkinPainter` dessine Mika en code, ou
   l'image du skin pour l'état courant, déformée par ses effets (`skins.pose`).
@@ -404,6 +404,10 @@ class MascotWindow(QWidget):
         settings = QAction("Réglages…", menu)
         settings.triggered.connect(self._open_settings)
         menu.addAction(settings)
+        restart = QAction("Redémarrer MIKATA", menu)
+        restart.setEnabled(self.model.connected)
+        restart.triggered.connect(lambda: self._send({"type": "restart"}))
+        menu.addAction(restart)
         menu.addSeparator()
         hide = QAction("Masquer", menu)
         hide.triggered.connect(lambda: self.set_hidden(True))

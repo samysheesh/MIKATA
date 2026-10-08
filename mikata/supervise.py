@@ -13,6 +13,7 @@ fichier de log.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
@@ -23,6 +24,8 @@ from pathlib import Path
 from loguru import logger
 
 NO_RESTART_CODES = (0, 2)  # EXIT_OK, EXIT_CONFIG (cf. __main__)
+RESTART_CODE = 75  # EXIT_RESTART : « Redémarrer » demandé dans l'interface (cf. __main__)
+SUPERVISED_ENV = "MIKATA_SUPERVISED"  # posée dans l'enfant : il sait qu'on le relancera
 LOG_NAME = "supervise.log"
 
 
@@ -40,12 +43,15 @@ def supervise(
     if run is None:
 
         def run(cmd: Sequence[str]) -> int:
-            return subprocess.run(list(cmd)).returncode
+            return subprocess.run(list(cmd), env={**os.environ, SUPERVISED_ENV: "1"}).returncode
 
     restarts: deque[float] = deque()
     while True:
         started = clock()
         code = run(command)
+        if code == RESTART_CODE:  # voulu par l'utilisateur : tout de suite, sans compter
+            logger.info("Redémarrage demandé : MIKATA est relancé.")
+            continue
         if code in NO_RESTART_CODES:
             logger.info("MIKATA arrêté (code {}) : pas de relance.", code)
             return code
@@ -74,6 +80,18 @@ def supervise(
 def child_command(argv: Sequence[str]) -> list[str]:
     """Même interpréteur (pythonw.exe : pas de console), mêmes options, sans --supervise."""
     return [sys.executable, "-m", "mikata", *(a for a in argv if a != "--supervise")]
+
+
+def relaunch_self(argv: Sequence[str]) -> None:
+    """Redémarrage sans supervision : nouveau processus détaché (sans console), puis on quitte."""
+    flags = 0
+    if sys.platform == "win32":
+        flags = (
+            subprocess.DETACHED_PROCESS  # type: ignore[attr-defined,unused-ignore]
+            | subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined,unused-ignore]
+            | subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined,unused-ignore]
+        )
+    subprocess.Popen(child_command(argv), creationflags=flags, close_fds=True)
 
 
 def setup_supervisor_log(log_dir: Path) -> None:

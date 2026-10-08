@@ -296,6 +296,7 @@ class App:
         self._ui_launcher = ui_launcher
         self._config_path = config_path or config.base_dir / "config.yaml"
         self.paused = False  # micro coupé côté logiciel (phase 8)
+        self.restart_requested = False  # « Redémarrer » dans l'interface : __main__ relance
         self._mic_status = "ok"
         self._last_frame_at = 0.0
         self.state = State.IDLE
@@ -374,6 +375,10 @@ class App:
             self._spawn(self.reload_config(), "relecture de la config")
         elif kind == "pause":
             self.set_paused(bool(command.get("paused")))
+        elif kind == "restart":
+            logger.info("Redémarrage demandé depuis l'interface.")
+            self.restart_requested = True
+            self.request_shutdown("redémarrage demandé depuis l'interface")
 
     def _on_tray_action(self, action: str) -> None:
         """Menu de l'icône (thread pystray) : renvoyé dans la boucle asyncio."""

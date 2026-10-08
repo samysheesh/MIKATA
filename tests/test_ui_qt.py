@@ -215,6 +215,7 @@ def test_context_menu(mascot: Any) -> None:
         "Bulle de texte",
         "Mettre en pause l'écoute",
         "Réglages…",
+        "Redémarrer MIKATA",
         "Masquer",
     ]
     assert actions["Taille/Moyenne (128 px)"].isChecked()
@@ -225,6 +226,8 @@ def test_context_menu(mascot: Any) -> None:
     assert mascot.sent == [{"type": "pause", "paused": True}]
     actions["Réglages…"].trigger()
     assert mascot.opened == [True]
+    actions["Redémarrer MIKATA"].trigger()
+    assert mascot.sent[-1] == {"type": "restart"}
     actions["Bulle de texte"].trigger()
     assert not load_prefs(mascot.prefs_path).bubble
     actions["Masquer"].trigger()
@@ -565,3 +568,20 @@ def test_screenshot_script(tmp_path: Path) -> None:
         with Image.open(path) as image:
             colors = image.convert("RGB").getcolors(maxcolors=1_000_000) or []
             assert min(image.size) > 20 and len(colors) > 8, (path.name, image.size, len(colors))
+
+
+def test_restart_button_asks_mikata_to_restart(base: Path) -> None:
+    sent: list[dict[str, Any]] = []
+    window = _settings(base, sent)
+    window.restart_button.click()
+    assert sent == [{"type": "restart"}]
+    assert not window.restart_button.isEnabled() and "Redémarrage" in window.status.text()
+    window.close()
+
+
+def test_restart_button_says_so_when_mikata_is_not_running(base: Path) -> None:
+    sent: list[dict[str, Any]] = []
+    window = _settings(base, sent, connected=False)
+    window.restart_button.click()
+    assert window.restart_button.isEnabled() and "pas lancé" in window.status.text()
+    window.close()

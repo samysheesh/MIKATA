@@ -91,3 +91,43 @@ def test_main_supervise_runs_the_supervisor(
     assert entry.main(["--config", str(config_file), "--supervise"]) == 0
     assert seen == [[sys.executable, "-m", "mikata", "--config", str(config_file)]]
     assert (config_file.parent / "data" / "logs" / "supervise.log").is_file()
+
+
+def test_a_requested_restart_is_immediate_and_not_counted_as_a_crash() -> None:
+    """« Redémarrer » dans l'interface (code 75) : relance tout de suite, sans attente et
+    sans entamer la limite horaire de relances après plantage."""
+    from mikata.supervise import RESTART_CODE
+
+    clock = Clock()
+    calls, run = _runner([RESTART_CODE] * 6 + [0], clock, lasts_s=5)
+    result = supervise(  # type: ignore[arg-type]
+        ["m"], run=run, sleep=clock.sleep, clock=clock, max_restarts=1, delay_s=30
+    )
+    assert result == 0 and len(calls) == 7  # six redémarrages, malgré max_restarts=1
+    assert clock.t == 7 * 5  # aucune attente de 30 s
+
+
+def test_main_relaunches_itself_on_restart_without_supervisor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launched: list[list[str]] = []
+    monkeypatch.setattr(entry, "_main", lambda argv=None: entry.EXIT_RESTART)
+    monkeypatch.setattr("mikata.supervise.relaunch_self", lambda argv: launched.append(list(argv)))
+    monkeypatch.delenv("MIKATA_SUPERVISED", raising=False)
+    assert entry.main(["--no-tray"]) == entry.EXIT_OK  # le nouveau processus prend le relais
+    assert launched == [["--no-tray"]]
+
+
+def test_main_leaves_the_relaunch_to_the_supervisor(monkeypatch: pytest.MonkeyPatch) -> None:
+    launched: list[list[str]] = []
+    monkeypatch.setattr(entry, "_main", lambda argv=None: entry.EXIT_RESTART)
+    monkeypatch.setattr("mikata.supervise.relaunch_self", lambda argv: launched.append(list(argv)))
+    monkeypatch.setenv("MIKATA_SUPERVISED", "1")
+    assert entry.main(["--no-tray"]) == entry.EXIT_RESTART == 75  # le superviseur relance
+    assert launched == []
+
+
+def test_ui_can_ask_for_a_restart() -> None:
+    from mikata.ui.protocol import UI_COMMANDS
+
+    assert "restart" in UI_COMMANDS

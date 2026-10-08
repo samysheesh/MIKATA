@@ -189,8 +189,14 @@ class SettingsWindow(QWidget):
         save.clicked.connect(self.save)
         close = QPushButton("Fermer")
         close.clicked.connect(self.close)
+        self.restart_button = QPushButton("Redémarrer MIKATA")
+        self.restart_button.setToolTip(
+            "Arrête MIKATA proprement puis le relance (modèles et réglages rechargés)."
+        )
+        self.restart_button.clicked.connect(self.restart_mikata)
         buttons = QHBoxLayout()
         buttons.addWidget(self.status, 1)
+        buttons.addWidget(self.restart_button)
         buttons.addWidget(close)
         buttons.addWidget(save)
         layout = QVBoxLayout(self)
@@ -443,6 +449,15 @@ class SettingsWindow(QWidget):
         logger.info("Réglages enregistrés : {}", ", ".join(changed))
         self._on_applied({k: self.values().get(k) for k in changed})
         return changed
+
+    def restart_mikata(self) -> bool:
+        """Demande à MIKATA de redémarrer ; la fenêtre se ferme avec lui (« bye »)."""
+        if not self._send({"type": "restart"}):
+            self.status.setText("MIKATA n'est pas lancé : rien à redémarrer.")
+            return False
+        self.restart_button.setEnabled(False)
+        self.status.setText("Redémarrage de MIKATA… (la mascotte revient dans une minute)")
+        return True
 
     def _skin_applied(self, values: dict[str, Any]) -> None:
         """Skin choisi : la mascotte change tout de suite, et MIKATA relit config.yaml pour
