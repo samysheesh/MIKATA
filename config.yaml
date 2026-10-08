@@ -8,13 +8,13 @@ audio:
   input_channel: null              # 1, 2... = canal du micro ; null = moyenne des canaux
   earcon_volume: 0.5               # volume des sons d'interface (0 à 1)
 wake:
-  model: models/hey_jarvis.onnx    # -> models/mikata.onnx en phase 7
-  verifier: null                   # -> models/mikata_verifier.pkl
-  threshold: 0.5                   # fixé ensuite par eval_wakeword.py
+  model: models/mikata.onnx        # modèle entraîné pour « MIKATA » (hey_jarvis.onnx : ancien)
+  verifier: models/mikata_verifier.pkl
+  threshold: 0.1                   # réglage conseillé par eval_wakeword.py
   consecutive_frames: 1
   refractory_s: 1.0
   hotkey: "<ctrl>+<alt>+m"
-  verifier_threshold: 0.5          # vérificateur : probabilité « ta voix » minimale (eval_wakeword.py)
+  verifier_threshold: 0.7          # vérificateur : probabilité « ta voix » minimale (eval_wakeword.py)
   collect_negatives: false         # true : enregistre data/negatives/ par extraits de 10 s
   negatives_max_hours: 12          # ... et s'arrête après N heures de collecte (~115 Mo / h)
   log_days: 7                      # purge (corbeille) de data/wake_logs/ après N jours
