@@ -299,3 +299,10 @@ def test_incomplete_features_from_an_interrupted_run_are_detected(tmp_path: Path
     for name in tw.FEATURE_FILES:
         (tmp_path / name).write_bytes(b"x")
     assert not tw.incomplete_features(tmp_path)  # tout est là : rien à refaire
+
+
+def test_missing_modules_are_reported_before_training() -> None:
+    assert tw.missing_modules(["sys", "json"]) == []
+    assert tw.missing_modules(["sys", "module_qui_n_existe_pas"]) == ["module_qui_n_existe_pas"]
+    assert "onnx" in tw.REQUIRED_MODULES  # son absence a fait perdre un entraînement
+    assert any(p.startswith("onnx==") for p in tw.PACKAGES)
