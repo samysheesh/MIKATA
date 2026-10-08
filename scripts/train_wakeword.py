@@ -40,6 +40,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+# Colab fixe MPLBACKEND sur un backend de Jupyter absent de l'environnement 3.11 isolé :
+# matplotlib plante au chargement (openwakeword -> torchmetrics). On impose un backend sans écran.
+os.environ["MPLBACKEND"] = "agg"
+
 HERE = Path(__file__).resolve().parent
 SAMPLE_RATE = 16_000
 VENV_PYTHON = "3.11"
