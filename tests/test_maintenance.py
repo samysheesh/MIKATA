@@ -17,6 +17,7 @@ from test_app_reply import FeedAudio, MarkerVAD
 from mikata.app import App, State
 from mikata.config import PROJECT_ROOT, load_config
 from mikata.maintenance import BACKUPS_DIR, WAKE_LOGS_DIR, run_maintenance, trash_entries_older_than
+from mikata.wake.recordings import MISSES_DIR
 
 NOW = 1_000_000_000.0
 DAY = 86_400
@@ -44,16 +45,19 @@ def test_run_maintenance_purges_wake_logs_and_backups(tmp_path: Path, monkeypatc
     config = load_config(write_test_config(tmp_path / "config.yaml"))
     wav = tmp_path / WAKE_LOGS_DIR / "old_score0.90.wav"
     backup = tmp_path / BACKUPS_DIR / "20260101-000000"
-    wav.parent.mkdir(parents=True)
-    wav.write_bytes(b"RIFF")
+    old_miss = tmp_path / MISSES_DIR / "20260101-000000-000000_rate.wav"
+    recent_miss = tmp_path / MISSES_DIR / "20260301-000000-000000_rate.wav"
+    for path in (wav, old_miss, recent_miss):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"RIFF")
     backup.mkdir(parents=True)
-    old = 30 * DAY
-    for path in (wav, backup):
-        os.utime(path, (path.stat().st_mtime - old, path.stat().st_mtime - old))
+    for path, age in ((wav, 30 * DAY), (backup, 30 * DAY), (old_miss, 31 * DAY),
+                      (recent_miss, 29 * DAY)):  # fmt: skip
+        os.utime(path, (path.stat().st_mtime - age, path.stat().st_mtime - age))
     trashed: list[str] = []
     counts = run_maintenance(config, trash=trashed.append)
-    assert counts == {WAKE_LOGS_DIR: 1, BACKUPS_DIR: 1}
-    assert sorted(trashed) == sorted([str(wav), str(backup)])
+    assert counts == {WAKE_LOGS_DIR: 1, MISSES_DIR: 1, BACKUPS_DIR: 1}  # ratés : 30 jours
+    assert sorted(trashed) == sorted([str(wav), str(backup), str(old_miss)])
 
 
 def test_maintenance_runs_at_startup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

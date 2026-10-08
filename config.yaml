@@ -18,6 +18,8 @@ wake:
   collect_negatives: false         # true : enregistre data/negatives/ par extraits de 10 s
   negatives_max_hours: 12          # ... et s'arrête après N heures de collecte (~115 Mo / h)
   log_days: 7                      # purge (corbeille) de data/wake_logs/ après N jours
+  save_misses: true                # Ctrl+Alt+M après un « MIKATA » raté : 4 s d'audio dans data/wakeword/misses/
+  miss_days: 30                    # purge (corbeille) de data/wakeword/misses/ après N jours
 vad:
   end_silence_ms: 500
   speculative_ms: 250

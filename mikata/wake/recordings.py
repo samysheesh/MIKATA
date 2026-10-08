@@ -2,6 +2,8 @@
 
 - `data/wake_logs/` : 2 s d'audio à chaque détection, nom = date + score (purge après N jours).
 - `data/negatives/` : mode `collect_negatives`, extraits de 10 s de la vie courante.
+- `data/wakeword/misses/` (phase 9) : les 4 dernières secondes quand tu appuies sur le
+  raccourci parce que « MIKATA » n'a pas été entendu (purge après N jours).
 La purge envoie à la corbeille (send2trash), jamais de suppression définitive.
 Les fonctions d'écriture sont appelées dans un executor, jamais dans la boucle asyncio.
 """
@@ -20,6 +22,8 @@ from mikata.audio.base import SAMPLE_RATE
 from mikata.audio.wavfile import write_wav
 
 NEGATIVE_CLIP_S = 10.0
+MISSES_DIR = "data/wakeword/misses"
+MISS_CLIP_S = 4.0
 
 
 def detection_path(directory: Path, score: float, now: datetime) -> Path:
@@ -28,6 +32,17 @@ def detection_path(directory: Path, score: float, now: datetime) -> Path:
 
 def save_detection(directory: Path, audio: np.ndarray, score: float, now: datetime) -> Path:
     path = detection_path(directory, score, now)
+    write_wav(path, audio, SAMPLE_RATE)
+    return path
+
+
+def miss_path(directory: Path, now: datetime) -> Path:
+    return directory / f"{now:%Y%m%d-%H%M%S-%f}_rate.wav"
+
+
+def save_miss(directory: Path, audio: np.ndarray, now: datetime) -> Path:
+    """Audio d'un « MIKATA » raté (16 kHz mono), pour le prochain entraînement."""
+    path = miss_path(directory, now)
     write_wav(path, audio, SAMPLE_RATE)
     return path
 

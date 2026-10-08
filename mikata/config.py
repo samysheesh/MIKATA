@@ -65,6 +65,11 @@ class WakeConfig(_Section):
     verifier_threshold: float = Field(default=0.5, ge=0, le=1)
     # Collecte de la vie courante (collect_negatives) : arrêt après N heures (~115 Mo / h).
     negatives_max_hours: float = Field(default=12, gt=0)
+    # Ajouts phase 9. Raccourci clavier quand « MIKATA » n'a pas été entendu : les dernières
+    # secondes d'audio vont dans data/wakeword/misses/ (prochain entraînement), purgées
+    # (corbeille) après `miss_days` jours.
+    save_misses: bool = True
+    miss_days: int = Field(default=30, ge=1)
 
 
 class VadConfig(_Section):

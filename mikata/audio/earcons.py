@@ -14,7 +14,7 @@ from loguru import logger
 
 from mikata.audio.wavfile import read_wav
 
-EARCON_NAMES = ("wake", "end", "thinking", "error", "timer")  # timer : ajout phase 4
+EARCON_NAMES = ("wake", "end", "thinking", "error", "timer", "miss")  # timer : phase 4, miss : 9
 DEFAULT_RATE = 48_000
 
 
@@ -50,6 +50,10 @@ def synthesize(name: str, rate: int = DEFAULT_RATE) -> np.ndarray:
         note = _tone([(1046, 1046), (1568, 1568)], 0.18, rate)
         gap = np.zeros(round(0.08 * rate), dtype=np.float32)
         return np.concatenate((note, gap, note, gap, note))
+    if name == "miss":  # deux tics aigus brefs : raté du mot d'activation noté (phase 9)
+        tick = 0.6 * _tone([(2093, 2093)], 0.04, rate)
+        gap = np.zeros(round(0.05 * rate), dtype=np.float32)
+        return np.concatenate((tick, gap, tick))
     raise KeyError(name)
 
 

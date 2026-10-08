@@ -264,10 +264,11 @@ def test_collect_negatives(config_file: Path) -> None:
 
 def test_ring_buffer_holds_pre_roll(config_file: Path) -> None:
     app = _app(config_file)
-    app._audio = ScriptedAudio(40, on_exhausted=lambda: app.request_shutdown("test"))
+    app._audio = ScriptedAudio(70, on_exhausted=lambda: app.request_shutdown("test"))
     _run_app(app)
-    assert len(app.ring) == 48_000  # pre_roll_s (2 s) + 1 s de marge, plein
-    assert app.ring.read_last(1)[0] == 39
+    # max(pre_roll_s (2 s), raté du mot d'activation (4 s, phase 9)) + 1 s de marge, plein
+    assert len(app.ring) == 80_000
+    assert app.ring.read_last(1)[0] == 69
 
 
 def test_stats_loop(config_file: Path) -> None:
