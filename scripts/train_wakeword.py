@@ -387,15 +387,20 @@ def extract_rirs(archive: Path, dest: Path) -> list[Path]:
     """Réponses de pièces du MIT (32 kHz) -> 16 kHz."""
     import zipfile
 
-    if count_wavs(dest):
+    done = dest / ".extrait"  # marque une extraction complète (pas celle d'un essai interrompu)
+    if done.is_file():
         return sorted(dest.glob("*.wav"))
     if not archive.is_file():
         return []
+    # Les fichiers d'origine vont HORS de `dest` : openwakeword lit tout ce que contient `dest`
+    # et plante sur un sous-dossier.
+    raw_dir = dest.parent / "rirs_raw"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    dest.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(archive) as z:
         for name in z.namelist():
             if name.lower().endswith(".wav"):
-                raw = dest / "raw" / Path(name).name
-                raw.parent.mkdir(parents=True, exist_ok=True)
+                raw = raw_dir / Path(name).name
                 raw.write_bytes(z.read(name))
                 try:
                     audio, rate = read_wav(raw)
@@ -403,6 +408,8 @@ def extract_rirs(archive: Path, dest: Path) -> list[Path]:
                     log(f"réponse de pièce ignorée (format non géré) : {raw.name}")
                     continue
                 write_wav(dest / raw.name, to_16k(audio, rate))
+    done.write_text("ok", encoding="utf-8")
+    log(f"réponses de pièces : {count_wavs(dest)} fichiers")
     return sorted(dest.glob("*.wav"))
 
 
