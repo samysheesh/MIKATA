@@ -189,11 +189,14 @@ class SpeechStream:
         self.fragments = 0
         self.first_sound_at: float | None = None
         self.on_first_sound: Callable[[], None] | None = None
+        self.on_say: Callable[[str], None] | None = None  # ajout phase 8 : bulle de la mascotte
 
     def say(self, text: str) -> None:
         """Ajoute une phrase : synthèse lancée tout de suite, lecture à son tour."""
         if self.closed or self.cancelled or not text.strip():
             return
+        if self.on_say is not None:
+            self.on_say(text)
         cached = self._speaker.cache.lookup(text) if self._speaker.cache else None
         if cached is not None:
             self.say_audio(cached, self._speaker.cache.sample_rate)  # type: ignore[union-attr]

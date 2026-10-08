@@ -249,6 +249,16 @@ class LoggingConfig(_Section):
         return value.upper() if isinstance(value, str) else value
 
 
+class UiConfig(_Section):
+    """Ajout phase 8 : interface (mascotte, réglages) dans un processus à part, reliée à
+    MIKATA par un canal local (mikata/ui/protocol.py)."""
+
+    enabled: bool = True  # canal local ouvert : mascotte et réglages utilisables
+    mascot: bool = True  # lancer la mascotte au démarrage de MIKATA
+    theme: str = "default"  # dossier assets/mascot/<theme>/
+    bubble_s: float = Field(default=8, ge=1, le=120)  # bulle visible après la dernière phrase
+
+
 class Secrets(BaseSettings):
     """Secrets lus dans les variables d'environnement puis dans `.env`."""
 
@@ -283,6 +293,7 @@ class Config(_Section):
     agent: AgentConfig = Field(default_factory=AgentConfig)
     guard: GuardConfig = Field(default_factory=GuardConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    ui: UiConfig = Field(default_factory=UiConfig)
     secrets: Secrets = Field(default_factory=Secrets, exclude=True)
 
     _base_dir: Path = PrivateAttr(default=PROJECT_ROOT)

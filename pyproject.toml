@@ -3,6 +3,8 @@ name = "mikata"
 version = "0.0.1"
 description = "MIKATA — assistant vocal local pour PC Windows"
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.11,<3.12"
 # Dépendances ajoutées phase par phase (docs/ARCHITECTURE.md §9 et §11).
 # Les versions exactes sont épinglées dans uv.lock.
@@ -46,6 +48,12 @@ dependencies = [
     "pycaw>=20240316 ; sys_platform == 'win32'",
     "comtypes>=1.4 ; sys_platform == 'win32'",
     "win11toast>=0.35 ; sys_platform == 'win32'",
+    # Phase 8 : interface dans un processus à part (mascotte, réglages) ; PySide6 sans les
+    # modules optionnels (LGPL-3.0, liée dynamiquement). ruamel.yaml situe les clés de
+    # config.yaml pour les réécrire sans perdre les commentaires ; python-dotenv pour .env.
+    "pyside6-essentials>=6.7",
+    "ruamel-yaml>=0.18",
+    "python-dotenv>=1.0",
 ]
 
 [dependency-groups]
@@ -55,7 +63,7 @@ dev = [
 ]
 
 [build-system]
-requires = ["hatchling>=1.25"]
+requires = ["hatchling>=1.27"]  # 1.27 : license = "SPDX" (PEP 639)
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
