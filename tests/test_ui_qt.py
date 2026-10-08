@@ -359,7 +359,12 @@ def _settings(base: Path, sent: list[dict[str, Any]], connected: bool = True, **
 def test_settings_show_the_current_values(base: Path) -> None:
     window = _settings(base, [])
     values = window.values()
-    assert values["wake.threshold"] == 0.5 and values["agent.follow_up_s"] == 6
+    from mikata.config import load_config
+
+    wake = load_config(
+        base / "config.yaml"
+    ).wake  # le seuil réglé dans config.yaml (pas une valeur figée)
+    assert values["wake.threshold"] == wake.threshold and values["agent.follow_up_s"] == 6
     assert values["audio.input_device"] == "NT-USB" and values["llm.reasoning_effort"] == "none"
     assert "ui.skin" not in values and values["ui.mascot"] is True  # onglet Skins : immédiat
     assert window.tabs.count() == 7
