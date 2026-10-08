@@ -72,6 +72,7 @@ PACKAGES = [
     "torchmetrics==1.2.0",
     "pathvalidate==3.2.0",
     "setuptools==69.5.1",  # pronouncing a besoin de pkg_resources (retiré des setuptools récents)
+    "onnx==1.15.0",  # export du modèle (torch.onnx.export)
 ]
 NO_DEPS = ["openwakeword==0.6.0", "piper-tts==1.8.0"]  # sans tflite-runtime ni onnxruntime CPU
 
@@ -534,11 +535,33 @@ def incomplete_features(model_dir: Path) -> bool:
     return any(present) and not all(present)
 
 
+REQUIRED_MODULES = (
+    "torch", "torchinfo", "torchmetrics", "scipy", "yaml", "tqdm", "openwakeword", "onnx",
+    "pkg_resources", "matplotlib", "pronouncing", "speechbrain", "audiomentations",
+    "torch_audiomentations", "acoustics", "mutagen", "soundfile", "pathvalidate",
+)  # fmt: skip
+
+
+def missing_modules(names: Iterable[str] = REQUIRED_MODULES) -> list[str]:
+    """Modules dont openwakeword/train.py a besoin et qui manquent à l'environnement : on le
+    sait tout de suite plutôt qu'après 30 minutes d'entraînement."""
+    import importlib.util
+
+    return [name for name in names if importlib.util.find_spec(name) is None]
+
+
 def train(s: Settings) -> int:
     if Path(sys.prefix).resolve() != s.venv.resolve():  # relance dans l'environnement 3.11
         if not s.python.is_file():
             raise SystemExit("Environnement absent : lance d'abord « setup ».")
         return subprocess.run([str(s.python), __file__, *sys.argv[1:]]).returncode
+    missing = missing_modules()
+    if missing:
+        raise SystemExit(
+            "Modules manquants dans l'environnement d'entraînement : "
+            + ", ".join(missing)
+            + ". Relance « setup » ou installe-les avec uv pip install --python <venv>/bin/python."
+        )
     config = prepare(s)
     exported = s.model_dir.parent / "mikata.onnx"
     command = [sys.executable, "-m", "openwakeword.train", "--training_config", str(config),
