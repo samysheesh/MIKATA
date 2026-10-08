@@ -18,7 +18,7 @@ Données d'entraînement (§4) :
 - négatifs difficiles : tes mots proches (mikado, Nikita...) et les mêmes en voix synthétiques ;
 - négatifs généraux : ~2 000 h de features publiques d'openWakeWord (ACAV100M), plus ta vie
   courante (data/negatives), qui sert aussi de bruit de fond mélangé aux positifs.
-Le jeu d'évaluation (tes 30 prises « eval » et 3 h de vie courante) n'est pas dans l'archive.
+Le jeu d'évaluation (tes 30 prises « eval » et 2 h de vie courante) n'est pas dans l'archive.
 
 Dépendances : installées par `setup` dans un environnement Python 3.11 à part (versions
 épinglées, compatibles avec openwakeword 0.6.0), jamais dans le projet MIKATA.

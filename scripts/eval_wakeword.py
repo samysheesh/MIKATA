@@ -3,7 +3,7 @@
 Jeu d'évaluation figé, jamais vu à l'entraînement :
 - tes 30 « MIKATA » de data/wakeword/positives/eval, chacun placé dans 1,5 s de vie courante
   avant et 1 s après (comme en vrai : le micro tourne en continu) ;
-- ~3 h de ta vie courante (data/negatives, liste figée dans data/wakeword/eval_negatives.txt),
+- ~2 h de ta vie courante (data/negatives, liste figée dans data/wakeword/eval_negatives.txt),
   passées d'un bloc dans le détecteur comme en vrai.
 
 Le détecteur ne tourne qu'une fois ; on rejoue ensuite les règles de déclenchement de MIKATA

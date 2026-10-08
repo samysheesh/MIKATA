@@ -8,7 +8,7 @@ l'entraînement et ce qui est mis de côté pour le benchmark.
       eval_negatives.txt                    extraits de data/negatives figés pour le benchmark
     data/negatives/AAAA-MM-JJ/HHMMSS.wav    ta vie courante (mode wake.collect_negatives)
 
-Le jeu d'évaluation (positifs `eval` + ~3 h de négatifs listés dans eval_negatives.txt) n'entre
+Le jeu d'évaluation (positifs `eval` + ~2 h de négatifs listés dans eval_negatives.txt) n'entre
 jamais dans l'entraînement ni dans le vérificateur : c'est lui qui dit si le modèle tient
 ses promesses (< 0,2 faux déclenchement par heure, < 5 % de ratés).
 """
@@ -26,7 +26,7 @@ import numpy as np
 
 from mikata.audio.base import SAMPLE_RATE
 
-EVAL_NEGATIVE_HOURS = 3.0
+EVAL_NEGATIVE_HOURS = 2.0
 NEGATIVE_CLIP_S = 10.0
 
 
