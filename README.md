@@ -8,6 +8,8 @@ interroge un LLM cloud, agit sur le PC et répond à voix haute dans le casque.
 - Lancement : `uv run python -m mikata` (options : `--check-config`, `--config CHEMIN`, `--no-tray`, `--no-audio`, `--no-llm`, `--ask "question"`)
 - Réglages : `config.yaml` ; secrets : `.env` (copier `.env.example`, jamais commité) : `LLM_API_KEY`, `SEARCH_API_KEY` (Tavily, voir phase 4)
 - Logs : `data/logs/mikata.log` (rotation 5 Mo × 5, anciennes archives à la corbeille)
+- Interface (phase 8) : mascotte et réglages, lancées par MIKATA (`uv run python -m mikata.ui [--settings]`) ; captures dans [`docs/ui/`](docs/ui/), skins : [`docs/MASCOT_SKIN_GUIDE.md`](docs/MASCOT_SKIN_GUIDE.md)
+- Licence : Apache-2.0 ([`LICENSE`](LICENSE)) ; composants tiers et leurs licences : [`THIRD_PARTY.md`](THIRD_PARTY.md)
 - Modèles : `uv run python scripts/download_models.py` (dans `models/`, non commités ; Whisper ~1,6 Go, voix ~420 Mo)
 
 ## Avancement
@@ -21,8 +23,9 @@ interroge un LLM cloud, agit sur le PC et répond à voix haute dans le casque.
 | 4 | Outils (system, apps, web, media, ui, memory), réflexion choisie à la voix, coût par commande | fusionnée |
 | 5 | Outils puissants (clavier/souris, fichiers, PowerShell, extinction) + garde-fou | fusionnée |
 | 6 | Confort : fenêtre de suivi, barge-in, annulation, mémoire long terme | fusionnée |
-| 6b | Arrêt vocal sans mot d'activation, Whisper sur les suites courtes | livrée, à valider sur le PC |
-| 7 | Mot d'activation « MIKATA » (enregistrement, entraînement Colab, vérificateur de voix, benchmark), démarrage automatique, purge | livrée, à valider sur le PC |
+| 6b | Arrêt vocal sans mot d'activation, Whisper sur les suites courtes | fusionnée |
+| 7 | Mot d'activation « MIKATA » (enregistrement, entraînement Colab, vérificateur de voix, benchmark), démarrage automatique, purge | fusionnée |
+| 8 | Interface : mascotte de bureau (skins), fenêtre de réglages ; licence Apache-2.0, contrôle de secrets en CI | livrée, à valider sur le PC |
 
 ## Développement
 
@@ -1572,3 +1575,299 @@ Compare au nombre de fois où tu as vraiment dit « MIKATA ». Chaque détection
 dans `data\wake_logs\` (le nom contient le score) : écoute celles que tu n'as pas
 provoquées. Si les faux déclenchements dépassent ~1 par jour, envoie-moi ces audios : on les
 ajoute aux négatifs pour le prochain entraînement.
+
+## Phase 8 — vérification sur le PC Windows
+
+Deux composants, dans un **processus à part** (`python -m mikata.ui`), lancé par MIKATA :
+
+1. **La mascotte « Mika »** :
+   - une petite fenêtre sans bordure, transparente, toujours au-dessus, qui ne prend jamais le
+     focus ;
+   - tu la glisses où tu veux sur tes deux écrans ; la position et l'écran sont gardés dans
+     `data\ui_state.json` ;
+   - **clic droit** : taille, bulle de texte, pause de l'écoute, réglages, masquer. Pour
+     cliquer sur ce qu'il y a dessous, on la déplace : il n'y a pas de mode « clics à
+     travers » (une fois activé, le clic droit ne l'atteindrait plus) ;
+   - **double-clic** : réglages ;
+   - une animation et une couleur par état (captures : [`docs/ui/`](docs/ui/)) :
+
+     | État | Mika |
+     | --- | --- |
+     | repos | grise, elle dort (zzz) |
+     | mot d'activation | jaune, « ! » (0,9 s) |
+     | écoute | bleue, ondes |
+     | réflexion | orange, bulles de pensée |
+     | action (outil) | orange, engrenage |
+     | parole | verte, bouche qui bouge, ondes sonores |
+     | c'est fait | verte, coche (1,6 s) |
+     | erreur | rouge, yeux en croix (2,4 s) |
+     | fenêtre de suivi | turquoise, anneau qui se vide en 6 s |
+     | micro coupé ou occupé, MIKATA pas lancé | anthracite, micro barré |
+
+   - la **bulle** (désactivable) montre ce que MIKATA a compris (« Tu : ... ») et ce qu'il
+     dit ;
+   - **skins** : Mika est dessinée en code ; tes propres personnages s'installent dans
+     `assets\mascot\<nom>\` (voir « Skins » plus bas).
+2. **La fenêtre de réglages** : icône MIKATA (zone de notification) > **Réglages…**
+   (ou clic gauche sur l'icône). Onglets :
+   - Audio : micro et sortie, avec test ;
+   - Mot d'activation : seuils du modèle et du vérificateur ;
+   - Conversation : réflexion par défaut, fenêtre de suivi, durée de l'historique ;
+   - Coût et clés : coût LLM cumulé, crédit restant, clés masquées ;
+   - Mascotte : durée de la bulle, mascotte au démarrage ;
+   - Skins : les skins installés avec un aperçu ; un clic change de skin tout de suite (choix
+     gardé), import d'un .zip, suppression (à la corbeille, jamais Mika) ;
+   - Journal : en direct, filtré par niveau.
+
+Comment ça marche :
+
+- **Aucun impact sur MIKATA** :
+  - MIKATA publie ses événements sur un canal local : TCP sur 127.0.0.1, port choisi au
+    démarrage, et un jeton secret écrit dans `data\ui_channel.json`.
+  - Publier ne fait qu'ajouter à une file bornée. Aucun travail n'est fait dans le callback
+    audio.
+  - Une interface plantée, lente ou absente ne change rien : MIKATA continue, et l'interface
+    se reconnecte seule.
+  - L'interface tourne en priorité basse et écrit son propre journal,
+    `data\logs\ui.log`.
+- **Réglages** :
+  - Ils sont écrits dans `config.yaml`, **seulement sur la ligne modifiée** : commentaires et
+    ordre restent intacts.
+  - La config est validée avant l'écriture ; l'ancienne est sauvegardée dans
+    `data\backups\`.
+  - Chaque réglage porte un badge :
+    - **tout de suite** : seuils, réflexion, fenêtre de suivi, historique, skin, bulle ;
+    - **au redémarrage** : micro, sortie audio, mascotte au démarrage, clés.
+  - Les clés restent dans `.env` et ne s'affichent jamais en clair : 8 points, puis les 4
+    derniers caractères.
+- **Section `ui:` de `config.yaml`** :
+  - `enabled: false` coupe tout (MIKATA seul, comme avant) ;
+  - `mascot: false` : pas de mascotte au démarrage, mais les réglages restent accessibles
+    depuis l'icône.
+- **Skins** :
+  - un dossier par skin dans `assets\mascot\` : un manifeste `skin.json` (nom, auteur,
+    licence) et une image par état ;
+  - **une seule image par état suffit** : le programme l'anime (respiration, petit rebond,
+    clignement, lueur, balancement), avec des réglages par état dans le manifeste. Des
+    images multiples (PNG numérotés, GIF, APNG) sont jouées image par image ;
+  - un état absent reprend l'image de repos, avec un avertissement dans `data\logs\ui.log` ;
+  - `scripts\make_skin.py` fabrique un skin à partir d'images générées (Nano Banana...) :
+    fond uni ou damier retiré, recadrage, taille, bords propres, manifeste ;
+  - guide complet, avec des prompts d'exemple : [`docs/MASCOT_SKIN_GUIDE.md`](docs/MASCOT_SKIN_GUIDE.md) ;
+  - tes skins ne sont pas suivis par git.
+
+### 1. Récupérer la branche, installer
+
+```powershell
+git fetch origin
+git checkout phase-8-ui
+git pull
+uv sync
+```
+
+`uv sync` installe PySide6-Essentials (Qt 6, ~230 Mo), ruamel.yaml et python-dotenv
+(scipy, utilisé par `make_skin.py`, était déjà installé).
+
+**Tu as déjà la branche et `config.yaml` modifié en local** (seuils du mot d'activation...) :
+garde tes modifications pendant la mise à jour (`ui.theme` devient `ui.skin`) :
+
+```powershell
+git stash
+git pull
+git stash pop
+Select-String -Path config.yaml -Pattern "skin:"
+```
+
+Attendu : `skin: default` dans la section `ui:` et tes autres réglages intacts.
+
+### 2. Lint et tests
+
+```powershell
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
+uv run pytest tests\test_ui_channel.py tests\test_ui_model.py tests\test_ui_skins.py tests\test_ui_skins_tab.py tests\test_skin_maker.py tests\test_ui_settings_store.py tests\test_ui_qt.py tests\test_app_ui.py -v
+```
+
+Attendu : tout en `passed`. Les tests de l'interface tournent hors écran : aucune fenêtre
+n'apparaît.
+
+### 3. Captures sur ton PC (facultatif)
+
+```powershell
+uv run python scripts\ui_screenshots.py --out data\captures --gif
+explorer data\captures
+```
+
+Compare avec `docs\ui\` (rendu dans la session cloud, sous Linux).
+
+### 4. Lancer MIKATA : la mascotte apparaît
+
+```powershell
+uv run python -m mikata
+```
+
+Attendu :
+
+- la mascotte apparaît en bas à droite de l'écran principal, grise, endormie ;
+- le jeu ou la fenêtre active garde le focus quand tu cliques ailleurs.
+
+Vérification du canal :
+
+```powershell
+Select-String -Path data\logs\mikata.log -Pattern "Canal de l'interface|Interface connectée" | Select-Object -Last 2
+Get-Content data\logs\ui.log -Tail 5
+```
+
+### 5. Les états, à la voix
+
+| Ce que tu fais | Mika |
+| --- | --- |
+| « MIKATA » | jaune « ! », puis bleue (écoute) |
+| « quelle heure est-il ? » | orange (réflexion), puis verte qui parle ; bulle « Tu : quelle heure est-il » + la réponse |
+| « MIKATA, ouvre le bloc-notes » | engrenage, puis coche verte « c'est fait » |
+| juste après une réponse | anneau turquoise qui se vide en 6 s (fenêtre de suivi) |
+| Wi-Fi coupé, puis « MIKATA, bonjour » | rouge, yeux en croix ; bulle « Je n'arrive pas à joindre le serveur. » |
+| clic droit > Mettre en pause l'écoute | micro barré ; « MIKATA » ne fait plus rien. Reprendre : même menu, ou icône > Pause / reprise |
+| micro USB débranché | micro barré après 2 s ; ligne `Micro : aucune trame` dans le journal |
+
+### 6. Glisser sur les deux écrans, position gardée
+
+1. Glisse Mika sur le second écran.
+2. Quitte MIKATA (icône > Quitter) : la mascotte se ferme avec lui.
+3. Relance `uv run python -m mikata` : Mika revient au même endroit, sur le même écran.
+
+```powershell
+Get-Content data\ui_state.json
+```
+
+Si l'écran mémorisé est débranché, Mika revient en bas à droite de l'écran principal.
+
+### 7. Menu du clic droit
+
+- **Taille** : petite, moyenne, grande (96, 128, 192 px). Les pieds restent en place.
+- **Bulle de texte** : on/off.
+- Plus de « Mode traversable » : pour cliquer dessous, glisse Mika ailleurs. Si tu l'avais
+  activé avant cette mise à jour, il est ignoré au prochain lancement (`data\ui_state.json`
+  n'est pas à modifier).
+- **Masquer** : pour la faire revenir, icône MIKATA > **Afficher la mascotte**.
+
+### 8. Fenêtre de réglages
+
+1. Icône MIKATA > **Réglages…**.
+2. **Audio** : clique « Tester le micro » et parle : la barre bouge. « Tester la sortie »
+   joue un bip dans le casque.
+3. **Conversation** : passe la fenêtre de suivi à 4, puis **Enregistrer**. Attendu :
+   - le statut affiche « Tout de suite : Fenêtre de suivi (s) » ;
+   - après une réponse, l'anneau dure 4 s.
+4. Le fichier ne change que sur cette ligne, commentaire compris :
+
+   ```powershell
+   git diff config.yaml
+   ```
+
+5. Remets 6 et **Enregistrer** (ou `git checkout config.yaml`).
+6. **Mot d'activation** : n'y touche pas pendant l'entraînement de `mikata.onnx`. Les
+   seuils s'appliquent tout de suite quand tu les changes.
+7. **Coût et clés** : coût cumulé et crédit restant (`llm.credit_usd`), clés masquées.
+   « Remplacer… » écrit la nouvelle clé dans `.env`, prise en compte au redémarrage.
+8. **Journal** : les lignes arrivent en direct ; le filtre « Avertissements et erreurs » ne
+   garde que les problèmes.
+9. Une valeur refusée par MIKATA s'affiche en bas de la fenêtre, et `config.yaml` n'est pas
+   modifié.
+
+### 9. MIKATA survit à l'interface
+
+Tue l'interface :
+
+```powershell
+Get-CimInstance Win32_Process -Filter "Name like 'python%'" | Where-Object CommandLine -like '*mikata.ui*' | ForEach-Object { Stop-Process -Id $_.ProcessId }
+```
+
+Attendu :
+
+- MIKATA répond toujours à « MIKATA, quelle heure est-il ? » ;
+- icône > **Afficher la mascotte** relance l'interface ;
+- `uv run python -m mikata.ui --settings`, lancé une deuxième fois, ouvre les réglages dans
+  l'instance déjà lancée (une seule mascotte).
+
+Latence inchangée : compare les délais du bip avec et sans interface (`ui.enabled: false`
+dans `config.yaml`, puis redémarrage).
+
+```powershell
+Select-String -Path data\logs\mikata.log -Pattern "bip ≈" | Select-Object -Last 10
+```
+
+### 10. CPU de l'interface
+
+```powershell
+Get-CimInstance Win32_Process -Filter "Name like 'python%'" | Where-Object CommandLine -like '*mikata.ui*' | ForEach-Object { Get-Process -Id $_.ProcessId } | Select-Object Id, CPU, WorkingSet64, PriorityClass
+```
+
+Relance la commande après une minute au repos : `CPU` (en secondes) doit à peine bouger.
+L'animation tourne à ~12 images/s au repos et à ~30 pendant une action. `PriorityClass`
+doit valoir `BelowNormal`.
+
+### 11. Skins
+
+**Changer de skin** :
+
+1. Icône MIKATA > **Réglages… > Skins**.
+2. Clique sur un skin : la mascotte change tout de suite, sans redémarrer, et le choix est
+   gardé (`ui.skin` dans `config.yaml`).
+3. Ferme et relance MIKATA : le skin choisi est toujours là.
+
+**Créer le tien** (détail et prompts : [`docs/MASCOT_SKIN_GUIDE.md`](docs/MASCOT_SKIN_GUIDE.md)) :
+
+1. Génère une image par état avec Nano Banana. Les prompts d'exemple d'un personnage chibi
+   sont dans le guide, section 4.
+2. Range-les dans un dossier, par exemple `C:\Users\<toi>\Images\mika_chibi`, nommées
+   `repos.png`, `activation.png`, `ecoute.png`, `reflexion.png`, `action.png`,
+   `parole.png`, `fait.png`, `erreur.png`, `suivi.png`, `micro_coupe.png`. Seul
+   `repos.png` est obligatoire.
+3. Fabrique le skin et ouvre l'aperçu dans la mascotte :
+
+   ```powershell
+   uv run python scripts\make_skin.py C:\Users\<toi>\Images\mika_chibi --name "Mika chibi" --author "Moi" --license "usage personnel" --preview
+   start assets\mascot\mika-chibi\apercu.png
+   ```
+
+   - Attendu : le fond (uni ou damier) a disparu, les bords sont nets, sans liseré clair sur
+     un fond sombre.
+   - Dans la petite fenêtre d'aperçu, chaque état s'affiche ; « Défilement automatique »
+     les enchaîne.
+   - En cas de liseré ou de morceaux manquants : voir les options `--tolerance`, `--holes`
+     et `--shadow` dans le guide, puis relance avec `--replace`.
+4. Réglages > Skins > **Actualiser**, puis clique sur « Mika chibi ».
+5. Un état manquant reprend l'image de repos. Vérifie l'avertissement dans le journal :
+
+   ```powershell
+   Select-String -Path data\logs\ui.log -Pattern "image de repos utilisée" | Select-Object -Last 5
+   ```
+
+**Importer et supprimer** :
+
+1. Fais un .zip de ton skin : clic droit sur `assets\mascot\mika-chibi` > **Compresser dans
+   un fichier ZIP**. Déplace ce .zip ailleurs, par exemple sur le Bureau.
+2. Réglages > Skins : sélectionne « Mika chibi » > **Supprimer** > Oui. Le dossier part à la
+   **corbeille** et Mika revient si c'était le skin en cours.
+3. **Importer un .zip…** > choisis le .zip : le skin revient et s'applique.
+4. Importe un fichier qui n'est pas un skin (un .zip quelconque) : il est refusé, et la
+   raison s'affiche en bas de la fenêtre. Rien n'est écrit dans `assets\mascot\`.
+5. Mika : le bouton **Supprimer** reste grisé.
+
+### 12. Publication (licence, secrets)
+
+- Licence : **Apache-2.0** (`LICENSE`, `NOTICE`).
+- `THIRD_PARTY.md` liste les composants tiers et leurs licences.
+  - Attention : le modèle `hey_jarvis` est **non commercial** (CC BY-NC-SA 4.0).
+  - Attention : piper-tts est sous GPL-3.0.
+- La CI lance **gitleaks** sur tout l'historique. Pour le lancer chez toi :
+
+  ```powershell
+  winget install Gitleaks.Gitleaks
+  gitleaks git . --redact
+  ```
+
+- `.gitignore` ignore `.commandcode/` et tes scripts de `scripts\user\`. `bonjour.ps1`
+  reste dans le dépôt comme exemple.

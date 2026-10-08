@@ -56,7 +56,7 @@ class AutoQuitTray:
         self.stopped = False
         AutoQuitTray.instances.append(self)
 
-    def start(self, on_quit: Callable[[], None]) -> None:
+    def start(self, on_quit: Callable[[], None], on_action: object = None) -> None:
         threading.Timer(0.05, on_quit).start()
 
     def set_state(self, state: State) -> None:
@@ -77,7 +77,7 @@ def test_run_and_quit_from_tray(config_file: Path, monkeypatch: pytest.MonkeyPat
 
 def test_tray_failure_is_fatal(config_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     class BrokenTray(AutoQuitTray):
-        def start(self, on_quit: Callable[[], None]) -> None:
+        def start(self, on_quit: Callable[[], None], on_action: object = None) -> None:
             raise ImportError("No module named 'pystray'")
 
     monkeypatch.setattr(entry, "TrayIcon", BrokenTray)
@@ -188,7 +188,7 @@ def test_gpu_unavailable_exit_code(config_file: Path, monkeypatch: pytest.Monkey
         def close(self) -> None:
             pass
 
-    def build(config: object, *, tray: bool, audio: bool, llm: bool = True) -> App:
+    def build(config: object, *, tray: bool, audio: bool, llm: bool = True, **_: object) -> App:
         return App(entry.load_config(config_file), stt=NoGpu())  # type: ignore[arg-type]
 
     monkeypatch.setattr(entry, "build_app", build)

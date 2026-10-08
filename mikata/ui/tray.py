@@ -58,11 +58,23 @@ class TrayIcon:
         self._thread: threading.Thread | None = None
         self._on_quit: Callable[[], None] | None = None
 
-    def start(self, on_quit: Callable[[], None]) -> None:
+    def start(
+        self, on_quit: Callable[[], None], on_action: Callable[[str], None] | None = None
+    ) -> None:
+        """`on_action` (ajout phase 8) : « settings », « mascot », « pause » ; sans lui, le
+        menu n'a que « Quitter » (interface désactivée)."""
         import pystray  # Windows uniquement
 
         self._on_quit = on_quit
-        menu = pystray.Menu(pystray.MenuItem("Quitter", self._quit_clicked))
+        items = []
+        if on_action is not None:
+            items = [
+                pystray.MenuItem("Réglages…", lambda *_: on_action("settings"), default=True),
+                pystray.MenuItem("Afficher la mascotte", lambda *_: on_action("mascot")),
+                pystray.MenuItem("Pause / reprise de l'écoute", lambda *_: on_action("pause")),
+                pystray.Menu.SEPARATOR,
+            ]
+        menu = pystray.Menu(*items, pystray.MenuItem("Quitter", self._quit_clicked))
         self._icon = pystray.Icon(
             "mikata",
             icon=make_icon_image(STATE_COLORS[State.IDLE]),

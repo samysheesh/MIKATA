@@ -107,3 +107,8 @@ logging:                           # ajout phase 0 (§10 « Logs »)
   retention_files: 5
   stats_interval_s: 60             # ligne « CPU du processus » toutes les N s (0 = jamais)
   actions_file: data/actions.log   # journal de chaque action des outils (garde-fou)
+ui:                                # ajout phase 8 : mascotte et réglages (processus à part)
+  enabled: true                    # canal local vers l'interface (false : MIKATA seul, comme avant)
+  mascot: true                     # lancer la mascotte au démarrage de MIKATA
+  skin: default                    # dossier assets/mascot/<skin>/ ; default : Mika, dessinée en code
+  bubble_s: 8                      # la bulle reste N s après la dernière phrase

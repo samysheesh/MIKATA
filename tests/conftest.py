@@ -87,12 +87,15 @@ class FakeIcon:
 
 
 class FakeMenuItem:
-    def __init__(self, text: str, action: Any) -> None:
+    def __init__(self, text: str, action: Any, **options: Any) -> None:
         self.text = text
         self.action = action
+        self.options = options
 
 
 class FakeMenu:
+    SEPARATOR = FakeMenuItem("-", None)
+
     def __init__(self, *items: FakeMenuItem) -> None:
         self.items = items
 
@@ -236,3 +239,14 @@ def caplog_loguru() -> Iterator[list[str]]:
     handler = logger.add(lambda m: messages.append(m.record["message"]), level="DEBUG")
     yield messages
     logger.remove(handler)
+
+
+@pytest.fixture(scope="session")
+def qapp() -> Any:
+    """QApplication hors écran (phase 8) : aucune fenêtre n'apparaît, même sous Windows.
+    Test sauté si Qt est absent (sous Linux : libegl1, libxkbcommon0, libfontconfig1...)."""
+    import os
+
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    widgets = pytest.importorskip("PySide6.QtWidgets", reason="Qt indisponible")
+    return widgets.QApplication.instance() or widgets.QApplication([])

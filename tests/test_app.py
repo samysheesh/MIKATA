@@ -23,7 +23,7 @@ class RecordingTray:
         self.stopped = 0
         self.states: list[State] = []
 
-    def start(self, on_quit: Callable[[], None]) -> None:
+    def start(self, on_quit: Callable[[], None], on_action: object = None) -> None:
         self.started = True
         if self.quit_from_thread:
             # Comme pystray : le clic sur « Quitter » arrive depuis le thread de l'icône.

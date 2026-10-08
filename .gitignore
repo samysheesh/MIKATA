@@ -20,3 +20,21 @@ tests/**/data/
 # Modèles (lourds, téléchargés ou entraînés localement)
 models/*
 !models/.gitkeep
+
+# Scripts personnels lancés par MIKATA (run_script) : propres à chaque PC. Le dossier et
+# l'exemple bonjour.ps1 restent suivis.
+scripts/user/*
+!scripts/user/.gitkeep
+!scripts/user/bonjour.ps1
+
+# Dossier local d'outil (jamais commité)
+.commandcode/
+
+# Captures de l'interface rendues ailleurs que dans docs/ui/
+data/captures/
+
+# Skins de la mascotte : seuls Mika (default) et la notice sont suivis ; tes skins (créés
+# avec scripts/make_skin.py ou importés) restent sur ton PC.
+assets/mascot/*
+!assets/mascot/README.md
+!assets/mascot/default/

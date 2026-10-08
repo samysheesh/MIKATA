@@ -235,7 +235,38 @@ def find_output_device(config: Config) -> Any:
     )
 
 
-def build_app(config: Config, *, tray: bool, audio: bool, llm: bool = True) -> App:
+def build_ui(config: Config) -> dict[str, Any]:
+    """Phase 8 : canal vers l'interface (mascotte, réglages) et son lanceur ; {} si
+    `ui.enabled` est faux. L'interface tourne dans un autre processus (`python -m mikata.ui`)."""
+    if not config.ui.enabled:
+        return {}
+    from mikata.ui.bridge import UiBridge, launch_ui
+    from mikata.ui.protocol import CHANNEL_FILE
+
+    holder: dict[str, App] = {}
+
+    def on_command(command: dict[str, Any]) -> None:
+        holder["app"]._on_ui_command(command)
+
+    def snapshot() -> dict[str, Any]:
+        return holder["app"]._ui_snapshot() if "app" in holder else {}
+
+    bridge = UiBridge(config.resolve(CHANNEL_FILE), on_command, snapshot)
+    return {
+        "ui": bridge,
+        "ui_launcher": lambda argv: launch_ui(config.base_dir, argv),
+        "_holder": holder,
+    }
+
+
+def build_app(
+    config: Config,
+    *,
+    tray: bool,
+    audio: bool,
+    llm: bool = True,
+    config_path: Path | None = None,
+) -> App:
     """Assemble l'orchestrateur avec les composants réels (imports lourds paresseux)."""
     if llm and audio:  # avant de charger quoi que ce soit : refus immédiat et clair
         from mikata.llm.client import check_llm_config
@@ -296,6 +327,7 @@ def build_app(config: Config, *, tray: bool, audio: bool, llm: bool = True) -> A
     stt = WhisperSTT(
         config.stt, download_root=config.resolve(WHISPER_DIR), vocabulary=app_vocabulary(agent)
     )
+    ui = build_ui(config)
     app = App(
         config,
         tray=icon,
@@ -311,7 +343,11 @@ def build_app(config: Config, *, tray: bool, audio: bool, llm: bool = True) -> A
         stt=stt,
         agent=agent,
         speaker=speaker,
+        config_path=config_path,
+        **{k: v for k, v in ui.items() if not k.startswith("_")},
     )
+    if "_holder" in ui:
+        ui["_holder"]["app"] = app
     if agent is not None and agent.tools is not None:
         agent.tools.ctx.announce = app.announce  # minuteurs et rappels dits dans le casque
     return app
@@ -409,7 +445,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         try:
             app = build_app(
-                config, tray=not args.no_tray, audio=not args.no_audio, llm=not args.no_llm
+                config,
+                tray=not args.no_tray,
+                audio=not args.no_audio,
+                llm=not args.no_llm,
+                config_path=config_path,
             )
         except ConfigError as exc:
             logger.error("{}", exc)

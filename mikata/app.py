@@ -32,6 +32,12 @@ coupent le son de cette réponse et arrêtent sa commande si elle travaille enco
 Phase 7 : score du vérificateur de voix dans le log de détection, purge quotidienne
 (`maintenance.run_maintenance`), collecte de la vie courante bornée à
 `wake.negatives_max_hours`.
+Phase 8 : **interface** dans un processus à part (mascotte, réglages), reliée par le canal
+local `ui.bridge.UiBridge`. L'orchestrateur y publie ses changements d'état et ce qu'il
+comprend et dit (`_ui`, qui ne fait qu'ajouter à une file) ; il reçoit `reload_config`
+(réglages appliqués sans redémarrer, `LIVE_SETTINGS`) et `pause` (micro coupé côté
+logiciel, §8). Sans interface, ou si elle plante, rien ne change. Un chien de garde signale
+un micro qui ne donne plus de trames (occupé, débranché).
 
 Commandes en parallèle : chaque commande a son propre état (`_Request.state`). Il n'y a
 qu'un micro, donc une seule commande **écoute** à la fois (`_listening`) ; dès que sa fin de
@@ -48,11 +54,12 @@ import functools
 import itertools
 import time
 from collections import deque
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
+from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
@@ -90,6 +97,7 @@ from mikata.wake.trigger import WakeTrigger
 if TYPE_CHECKING:
     from mikata.agent.loop import Agent, TurnResult
     from mikata.audio.player import Speaker, SpeechStream
+    from mikata.ui.bridge import UiBridge
 
 WAKE_LOG_S = 2.0
 HOTKEY_PRE_ROLL_S = 0.3  # raccourci : pas de mot d'activation à retirer, peu de pré-roll
@@ -103,6 +111,41 @@ FOLLOW_UP_SOURCE = "suivi"
 # « stop » à un compte à rebours (garde-fou : dans le doute, rien n'est fait).
 INTERRUPTED_ANSWER = "stop"
 VOICE_STOP_TARGET_MS = 300  # arrêt vocal : coupure visée après la fin de parole
+MIC_SILENT_S = 2.0  # phase 8 : plus aucune trame du micro depuis N s -> « micro occupé »
+# Phase 8 : réglages appliqués sans redémarrer quand l'interface réécrit config.yaml (le
+# reste demande un redémarrage). Préfixe « section. » : toute la section.
+LIVE_SETTINGS = frozenset(
+    {
+        "wake.threshold",
+        "wake.verifier_threshold",
+        "wake.consecutive_frames",
+        "wake.refractory_s",
+        "agent.follow_up_s",
+        "agent.follow_up_min_confidence",
+        "agent.follow_up_use_llm_gate",
+        "agent.history_persist_h",
+        "agent.thinking_sound_after_s",
+        "llm.reasoning_effort",
+        "ui.skin",  # lus par l'interface elle-même
+        "ui.bubble_s",
+    }
+)
+
+
+def is_live_setting(key: str) -> bool:
+    return any(key == k or (k.endswith(".") and key.startswith(k)) for k in LIVE_SETTINGS)
+
+
+def changed_settings(old: Config, new: Config) -> list[str]:
+    """Clés (« section.clé ») dont la valeur diffère entre deux configurations."""
+    a = old.model_dump(mode="json", exclude={"secrets"})
+    b = new.model_dump(mode="json", exclude={"secrets"})
+    return sorted(
+        f"{section}.{key}"
+        for section in b
+        for key in b[section]
+        if a.get(section, {}).get(key) != b[section][key]
+    )
 
 
 class State(StrEnum):
@@ -129,7 +172,9 @@ DISPLAY_PRIORITY = (
 class StatusIcon(Protocol):
     """Icône de la zone de notification (implémentée par `ui.tray.TrayIcon`)."""
 
-    def start(self, on_quit: Callable[[], None]) -> None: ...
+    def start(
+        self, on_quit: Callable[[], None], on_action: Callable[[str], None] | None = None
+    ) -> None: ...
     def set_state(self, state: State) -> None: ...
     def stop(self) -> None: ...
 
@@ -221,7 +266,12 @@ class App:
         stt: SpeechToText | None = None,
         agent: Agent | None = None,
         speaker: Speaker | None = None,
+        ui: UiBridge | None = None,
+        ui_launcher: Callable[[Sequence[str]], object] | None = None,
+        config_path: Path | None = None,
     ) -> None:
+        """Ajouts phase 8 : `ui` (canal vers l'interface), `ui_launcher` (lance l'interface
+        avec des options : `launch_ui`), `config_path` (relu sur `reload_config`)."""
         self.config = config
         self.bus = bus or EventBus()
         self._tray = tray
@@ -235,6 +285,12 @@ class App:
         self._stt = stt
         self._agent = agent
         self._speaker = speaker
+        self._ui = ui
+        self._ui_launcher = ui_launcher
+        self._config_path = config_path or config.base_dir / "config.yaml"
+        self.paused = False  # micro coupé côté logiciel (phase 8)
+        self._mic_status = "ok"
+        self._last_frame_at = 0.0
         self.state = State.IDLE
         self._wake_pattern = wake_word_pattern(config.stt.wake_words)
         self._listening: _Request | None = None  # la commande qui a le micro
@@ -284,6 +340,110 @@ class App:
         self.state = state
         if self._tray is not None:
             self._tray.set_state(state)
+        self._publish_ui("state", state=state.value, follow_up_s=self.config.agent.follow_up_s)
+
+    # -- interface (phase 8) ----------------------------------------------------------------
+
+    def _publish_ui(self, kind: str, **fields: object) -> None:
+        """Message pour l'interface : ajouté à une file, rien d'autre (jamais bloquant)."""
+        if self._ui is not None:
+            self._ui.publish({"type": kind, **fields})
+
+    def _ui_snapshot(self) -> dict[str, object]:
+        return {
+            "state": self.state.value,
+            "follow_up_s": self.config.agent.follow_up_s,
+            "mic": self._mic_status,
+        }
+
+    def _on_ui_command(self, command: dict[str, object]) -> None:
+        kind = command.get("type")
+        if kind == "reload_config":
+            self._spawn(self.reload_config(), "relecture de la config")
+        elif kind == "pause":
+            self.set_paused(bool(command.get("paused")))
+
+    def _on_tray_action(self, action: str) -> None:
+        """Menu de l'icône (thread pystray) : renvoyé dans la boucle asyncio."""
+        loop = self.bus.loop
+        if loop is not None:
+            loop.call_soon_threadsafe(self.ui_action, action)
+
+    def ui_action(self, action: str) -> None:
+        """« settings » / « mascot » : demandé à l'interface si elle tourne, sinon lancée ;
+        « pause » : bascule le micro."""
+        if action == "pause":
+            self.set_paused(not self.paused)
+            return
+        message = {"settings": "open_settings", "mascot": "show_mascot"}.get(action)
+        if message is None:
+            return
+        if self._ui is not None and self._ui.connected:
+            self._publish_ui(message)
+        elif self._ui_launcher is not None:
+            self._ui_launcher(["--settings"] if action == "settings" else [])
+
+    def set_paused(self, paused: bool) -> None:
+        """Micro coupé côté logiciel : plus de mot d'activation, d'écoute ni de collecte."""
+        if paused == self.paused:
+            return
+        self.paused = paused
+        logger.info("Écoute {}.", "en pause (micro coupé)" if paused else "reprise")
+        if paused:
+            for request in list(self._active.values()):
+                if request is self._listening and request.recorder is not None:
+                    request.recorder.cancel()
+                    self._finish(request)
+        self._set_mic_status("paused" if paused else "ok")
+
+    def _set_mic_status(self, status: str) -> None:
+        if status != self._mic_status:
+            self._mic_status = status
+            self._publish_ui("mic", status=status)
+
+    async def _mic_watchdog(self) -> None:
+        """Micro occupé ou débranché : plus aucune trame depuis `MIC_SILENT_S`."""
+        while True:
+            await asyncio.sleep(MIC_SILENT_S / 2)
+            if self.paused:
+                continue
+            silent = time.monotonic() - self._last_frame_at > MIC_SILENT_S
+            if silent and self._mic_status == "ok":
+                logger.warning("Micro : aucune trame depuis {:.0f} s (occupé ?).", MIC_SILENT_S)
+            self._set_mic_status("busy" if silent else "ok")
+
+    async def reload_config(self) -> None:
+        """config.yaml réécrit par l'interface : applique ce qui peut l'être sans
+        redémarrer, et dit le reste à l'interface."""
+        from mikata.config import ConfigError, load_config
+
+        try:
+            new = await asyncio.to_thread(load_config, self._config_path)
+        except ConfigError as exc:
+            logger.error("Réglages non appliqués : {}", exc)
+            self._publish_ui("config", applied=[], restart=[], error=str(exc))
+            return
+        changed = changed_settings(self.config, new)
+        live = [k for k in changed if is_live_setting(k)]
+        restart = [k for k in changed if not is_live_setting(k)]
+        self.config = new
+        wake = new.wake
+        self._trigger.threshold = wake.threshold
+        self._trigger.consecutive_frames = wake.consecutive_frames
+        self._trigger.refractory_s = wake.refractory_s
+        for name in ("threshold", "verifier_threshold"):
+            if hasattr(self._detector, name):
+                setattr(self._detector, name, getattr(wake, name))
+        if self._agent is not None:
+            self._agent.config = new
+            if "agent.history_persist_h" in live:
+                self._agent.memory.set_keep(new.agent.history_persist_h * 3600)
+        logger.info(
+            "Réglages relus : {} appliqué(s) tout de suite{}.",
+            len(live),
+            f", {len(restart)} au prochain démarrage ({', '.join(restart)})" if restart else "",
+        )
+        self._publish_ui("config", applied=live, restart=restart, error=None)
 
     def _refresh_state(self) -> None:
         """État affiché = le plus prioritaire des états des commandes en cours."""
@@ -319,7 +479,19 @@ class App:
         self._io_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mikata-io")
         try:
             if self._tray is not None:
-                self._tray.start(on_quit=lambda: self.request_shutdown("menu Quitter"))
+                self._tray.start(
+                    on_quit=lambda: self.request_shutdown("menu Quitter"),
+                    on_action=self._on_tray_action if self._ui is not None else None,
+                )
+            if self._ui is not None:
+                try:
+                    await self._ui.start()
+                except OSError as exc:  # l'interface est un plus : jamais bloquante
+                    logger.warning("Canal de l'interface indisponible : {}", exc)
+                    self._ui = None
+                else:
+                    if self.config.ui.mascot and self._ui_launcher is not None:
+                        self._ui_launcher([])
             if self._player is not None:
                 self._player.start(loop)
             if self._stt is not None:
@@ -333,6 +505,11 @@ class App:
             if self._audio is not None:
                 self._audio.start(loop)
                 self._tasks.append(asyncio.create_task(self._audio_loop(), name="audio"))
+                self._last_frame_at = time.monotonic()
+                if self._ui is not None:
+                    self._tasks.append(
+                        asyncio.create_task(self._mic_watchdog(), name="chien de garde micro")
+                    )
             if self._hotkeys is not None:
                 self._start_hotkeys()
             if self._cpu is not None and self.config.logging.stats_interval_s > 0:
@@ -375,6 +552,11 @@ class App:
             self._hotkeys = None
 
     async def _shutdown(self) -> None:
+        if self._ui is not None:
+            try:
+                await self._ui.close()  # « bye » : l'interface se ferme aussi
+            except Exception:
+                logger.exception("Erreur à la fermeture du canal de l'interface.")
         if self._voice_stop is not None:
             self._voice_stop.reset()
         for request in self._active.values():
@@ -424,6 +606,9 @@ class App:
         half_threshold = self._trigger.threshold / 2
         while True:
             captured = await self._audio.read()
+            self._last_frame_at = time.monotonic()
+            if self.paused:  # micro coupé côté logiciel (phase 8) : la trame est jetée
+                continue
             self.ring.write(captured.samples)
             self._written += len(captured.samples)
             # Pas d'await entre l'écriture dans le tampon et cette lecture : une trame est soit
@@ -529,6 +714,9 @@ class App:
             logger.debug("Événement non géré : {}", type(event).__name__)
 
     def _on_wake(self, event: WakeDetected) -> None:
+        if self.paused:
+            logger.info("Écoute en pause : {} ignoré.", event.source)
+            return
         now = time.monotonic()
         listening = self._listening
         if listening is not None:  # le micro sert déjà à une commande
@@ -542,6 +730,7 @@ class App:
             return
         barged = self._barge_in(event)
         self._play("wake")
+        self._publish_ui("wake", score=round(event.score, 3), voice=event.verifier)
         self.detections += 1
         out_ms = (self._player.output_latency_s if self._player else 0.0) * 1000
         pipeline_ms = (now - event.ts) * 1000
@@ -775,10 +964,12 @@ class App:
         except asyncio.CancelledError:
             if request.stream is not None:
                 request.stream.cancel()  # plus un mot de cette réponse
+            self._publish_ui("result", id=request.id, outcome="cancelled")
             raise
-        except Exception:
+        except Exception as exc:
             logger.exception("Commande #{} : erreur.", request.id)
             self._play("error")
+            self._publish_ui("error", id=request.id, message=str(exc) or type(exc).__name__)
         finally:
             if request.stream is not None:
                 request.stream.close()
@@ -849,6 +1040,7 @@ class App:
             )
         logger.success("Commande #{} : « {} » (texte brut : « {} »)", request.id, text, raw)
         self.commands.append(text)
+        self._publish_ui("heard", id=request.id, text=text)
         return text
 
     async def _respond(self, request: _Request, text: str) -> None:
@@ -857,6 +1049,8 @@ class App:
         stream = self._speaker.open(label=f"#{request.id}")
         request.stream = stream
         stream.on_first_sound = functools.partial(self._on_first_sound, request)
+        if self._ui is not None:
+            stream.on_say = functools.partial(self._on_say, request)
         gated = request.source == FOLLOW_UP_SOURCE and self.config.agent.follow_up_use_llm_gate
         if not gated:  # suivi jugé par le LLM : pas de son tant qu'on ne sait pas si on répond
             self._spawn(self._thinking_sound(request), f"réflexion #{request.id}")
@@ -872,6 +1066,7 @@ class App:
         stream.close()
         await stream.wait()
         request.marks["done"] = time.monotonic()
+        self._publish_ui("result", id=request.id, outcome=ui_outcome(result, stream.cancelled))
         if result.outcome == "ignored":  # pas pour MIKATA : bip de fin, retour au repos
             self._play("end")
             return
@@ -879,6 +1074,9 @@ class App:
         if result.answer:
             self.answers.append(result.answer)
         self._log_response(request, result)
+
+    def _on_say(self, request: _Request, text: str) -> None:
+        self._publish_ui("say", id=request.id, text=text)
 
     async def _listen_for(self, stream: SpeechStream, timeout_s: float) -> str:
         """Réponse orale pour une commande. Si sa réponse a été coupée (barge-in), la
@@ -1038,3 +1236,17 @@ class App:
                 dropped,
                 overflows,
             )
+
+
+def ui_outcome(result: TurnResult, cancelled: bool) -> str:
+    """Issue d'une commande pour l'interface : success (« C'est fait », outils réussis), ok
+    (réponse), error, ignored (suivi pas pour MIKATA), cancelled (réponse coupée)."""
+    if cancelled:
+        return "cancelled"
+    if result.outcome in ("server", "timeout", "limit"):
+        return "error"
+    if result.outcome == "ignored":
+        return "ignored"
+    if result.shortcut or (result.tool_results and all(r.ok for r in result.tool_results)):
+        return "success"
+    return "ok"

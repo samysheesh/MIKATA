@@ -82,6 +82,11 @@ class EventBus:
         """Associe la boucle cible de `publish_threadsafe`."""
         self._loop = loop
 
+    @property
+    def loop(self) -> asyncio.AbstractEventLoop | None:
+        """Boucle associée (ajout phase 8 : menus de l'icône, autre thread)."""
+        return self._loop
+
     def publish(self, event: BusEvent) -> None:
         """Publie depuis la boucle asyncio (non bloquant)."""
         self._queue.put_nowait(event)

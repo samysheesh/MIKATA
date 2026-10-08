@@ -175,8 +175,10 @@ def test_tool_calls_without_registry_are_not_run() -> None:
 
 def test_parallel_turns_do_not_block_each_other() -> None:
     """Deux tours en parallèle durent à peu près un tour, pas deux. Comparaison relative :
-    le temps propre à la machine (disque, CI chargée) est dans les deux mesures."""
-    llm = ScriptedLLM(*[[TextDelta(f"Réponse {i}."), Done("stop")] for i in range(4)], delay=0.25)
+    le temps propre à la machine (disque, CI chargée) est dans les deux mesures. Meilleure de
+    trois mesures : un à-coup ponctuel de la CI (~200 ms) ne compte pas, alors qu'un vrai
+    blocage ralentit les trois."""
+    llm = ScriptedLLM(*[[TextDelta(f"Réponse {i}."), Done("stop")] for i in range(10)], delay=0.25)
     agent = _agent(llm)
 
     async def timed(turns: int) -> float:
@@ -186,11 +188,13 @@ def test_parallel_turns_do_not_block_each_other() -> None:
 
     async def scenario() -> tuple[float, float]:
         await timed(1)  # premier tour : fichiers et imports
-        return await timed(1), await timed(2)
+        singles = [await timed(1) for _ in range(3)]
+        boths = [await timed(2) for _ in range(3)]
+        return min(singles), min(boths)
 
     single, both = asyncio.run(scenario())
     assert both < 1.6 * single  # l'un après l'autre : ~2 fois plus long
-    assert len(agent.memory) == 4
+    assert len(agent.memory) == 10
 
 
 def test_prewarm_delegates() -> None:
