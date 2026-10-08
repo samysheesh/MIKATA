@@ -85,7 +85,9 @@ def log_config_summary(config: Config) -> None:
     logger.info(
         "STT : {} sur {} ({})", config.stt.model, config.stt.device, config.stt.compute_type
     )
-    logger.info("TTS : {}", config.tts.backend)
+    from mikata.tts.router import choose_voice
+
+    logger.info("TTS : {} (skin « {} »)", choose_voice(config).describe, config.ui.skin)
     if config.llm.is_placeholder:
         logger.warning("LLM non renseigné dans config.yaml (llm.base_url / llm.model).")
     else:
@@ -99,6 +101,7 @@ def log_config_summary(config: Config) -> None:
     for name, value in (
         ("LLM_API_KEY", config.secrets.llm_api_key),
         ("SEARCH_API_KEY", config.secrets.search_api_key),
+        ("ELEVENLABS_API_KEY", config.secrets.elevenlabs_api_key),
     ):
         logger.info("{} : {}", name, "définie" if value is not None else "absente (.env)")
 
@@ -112,13 +115,14 @@ MEMORY_FILE = "data/memory.json"  # faits mémorisés (remember / forget)
 
 
 def build_speaker(config: Config, player: Any) -> Speaker:
-    """Voix (Piper ou Kokoro) + cache de phrases + file de phrases, non chargés."""
+    """Voix + phrases fréquentes + file de phrases, non chargées. Phase 11 : routeur de voix
+    (profil du skin en cours : Piper, Kokoro ou ElevenLabs, Kokoro en secours)."""
     from mikata.audio.player import Speaker
-    from mikata.tts.base import create_tts
-    from mikata.tts.cache import PhraseCache
+    from mikata.tts.credits import USAGE_FILE as VOICE_USAGE_FILE
+    from mikata.tts.router import build_router
 
-    tts, voice_id = create_tts(config)
-    return Speaker(tts, player, PhraseCache(tts, config.resolve(TTS_CACHE_DIR), voice_id))
+    router = build_router(config, config.resolve(TTS_CACHE_DIR), config.resolve(VOICE_USAGE_FILE))
+    return Speaker(router, player, router)
 
 
 def build_tool_context(config: Config) -> ToolContext:
@@ -350,6 +354,8 @@ def build_app(
         ui["_holder"]["app"] = app
     if agent is not None and agent.tools is not None:
         agent.tools.ctx.announce = app.announce  # minuteurs et rappels dits dans le casque
+    if speaker is not None and hasattr(speaker.tts, "on_event"):
+        speaker.tts.on_event = app.voice_event  # secours Kokoro, retour ElevenLabs (phase 11)
     return app
 
 
@@ -365,7 +371,7 @@ async def ask(config: Config, question: str, *, audio: bool) -> str:
         player = AudioPlayer(find_output_device(config))
         player.start(loop)
         speaker = build_speaker(config, player)
-        logger.info("Chargement de la voix ({})...", config.tts.backend)
+        logger.info("Chargement de la voix...")
         await asyncio.to_thread(speaker.load)
     agent = build_agent(config, speaker.cache if speaker else None)
     try:

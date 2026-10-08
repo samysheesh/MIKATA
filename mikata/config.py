@@ -176,8 +176,35 @@ class WebConfig(_Section):
     default_city: str | None = None  # ville de la météo si aucune n'est dite
 
 
+VoiceEngine = Literal["piper", "kokoro", "elevenlabs"]
+
+
+class ElevenLabsConfig(_Section):
+    """Ajout phase 11 : voix ElevenLabs (service payant en ligne, clé ELEVENLABS_API_KEY dans
+    .env). Retour automatique sur Kokoro (local, gratuit) si le crédit, le plafond ou la
+    connexion manquent ; retour sur ElevenLabs au renouvellement (mikata/tts/elevenlabs.py)."""
+
+    model: str = "eleven_v4_turbo"
+    language: str = "fr"
+    voice_id: str = "YxrwjAKoUKULGd0g8K9Y"  # voix si aucun profil n'en donne (Lucie)
+    backup_voice_id: str | None = "d3AXX0BlgJHYFCuH9X88"  # voix introuvable : celle-ci (Émilie)
+    output_format: Literal["pcm_16000", "pcm_22050", "pcm_24000", "pcm_44100"] = "pcm_24000"
+    base_url: str = "https://api.elevenlabs.io"
+    timeout_s: float = Field(default=10, gt=0)
+    # Crédits : plafond de dépense mensuel (sur le compteur de l'abonnement), crédit restant
+    # minimal, relevé de l'abonnement toutes les N synthèses (déduit localement entre deux).
+    monthly_credit_cap: float = Field(default=30_000, ge=0)
+    min_remaining_credits: float = Field(default=500, ge=0)
+    subscription_refresh_every: int = Field(default=20, ge=1)
+    # Coût par caractère tant qu'il n'a pas été mesuré (prudent : 1 crédit / caractère).
+    estimated_credits_per_char: float = Field(default=1.0, gt=0)
+    calibration_hours: float = Field(default=24, ge=0)  # 0 : jamais de mesure au démarrage
+    retry_after_s: float = Field(default=300, gt=0)  # après une panne réseau ou serveur
+    cache_max_mb: float = Field(default=300, ge=0)  # phrases gardées sur le disque (0 : aucune)
+
+
 class TtsConfig(_Section):
-    backend: Literal["piper", "kokoro"] = "piper"
+    backend: VoiceEngine = "piper"
     voice: Path = Path("models/fr_FR-siwis-medium.onnx")  # voix Piper (+ .onnx.json)
     first_chunk_min_words: int = Field(default=6, ge=1)
     # Ajouts phase 3 : Kokoro (ONNX), vitesse de parole, threads CPU (§10 : 4 max).
@@ -186,6 +213,7 @@ class TtsConfig(_Section):
     kokoro_voice: str = "ff_siwis"
     speed: float = Field(default=1.0, ge=0.5, le=2.0)
     cpu_threads: int = Field(default=4, ge=1, le=16)
+    elevenlabs: ElevenLabsConfig = Field(default_factory=ElevenLabsConfig)  # ajout phase 11
 
 
 class AgentConfig(_Section):
@@ -262,6 +290,15 @@ class UiConfig(_Section):
     mascot: bool = True  # lancer la mascotte au démarrage de MIKATA
     skin: str = "default"  # dossier assets/mascot/<skin>/ (default : Mika, dessinée en code)
     bubble_s: float = Field(default=8, ge=1, le=120)  # bulle visible après la dernière phrase
+    # Ajout phase 11 : profil = skin de la mascotte + voix. Changer de skin change la voix,
+    # à chaud. Un skin sans profil parle avec tts.backend.
+    profiles: dict[str, VoiceProfile] = Field(default_factory=dict)
+
+
+class VoiceProfile(_Section):
+    voice: VoiceEngine = "kokoro"
+    voice_id: str | None = None  # ElevenLabs : identifiant de voix (pas un secret)
+    voice_name: str = ""  # pour les messages et les réglages
 
 
 class Secrets(BaseSettings):
@@ -275,8 +312,9 @@ class Secrets(BaseSettings):
 
     llm_api_key: SecretStr | None = None
     search_api_key: SecretStr | None = None
+    elevenlabs_api_key: SecretStr | None = None  # ajout phase 11
 
-    @field_validator("llm_api_key", "search_api_key", mode="after")
+    @field_validator("llm_api_key", "search_api_key", "elevenlabs_api_key", mode="after")
     @classmethod
     def _empty_is_none(cls, value: SecretStr | None) -> SecretStr | None:
         if value is not None and not value.get_secret_value().strip():

@@ -8,7 +8,7 @@ ralentir la boucle audio ni faire tomber MIKATA. Les deux parlent par une connex
   processus qui peut lire ce fichier (ta session) connaît le jeton.
 - L'interface se connecte et envoie d'abord `{"type": "hello", "token": ...}` ; sans le bon
   jeton, la connexion est fermée.
-- MIKATA → interface : `state`, `wake`, `heard`, `say`, `result`, `error`, `mic`, `config`,
+- MIKATA → interface : `state`, `wake`, `heard`, `say`, `result`, `error`, `mic`, `config`, `voice`,
   `open_settings`, `show_mascot`, `bye` (voir `MIKATA_EVENTS`).
 - Interface → MIKATA : `reload_config` (après écriture de config.yaml), `pause`.
 
@@ -40,6 +40,7 @@ MIKATA_EVENTS = (
     "error",  # message
     "mic",  # status : ok | paused | busy
     "config",  # applied, restart, error : réponse à reload_config
+    "voice",  # event (fallback | resume | profile), engine, message : voix (phase 11)
     "open_settings",
     "show_mascot",
     "bye",  # MIKATA s'arrête : l'interface se ferme

@@ -50,6 +50,7 @@ L'état affiché (icône) est le plus « actif » des états en cours.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import functools
 import itertools
 import time
@@ -129,8 +130,11 @@ LIVE_SETTINGS = frozenset(
         "agent.history_persist_h",
         "agent.thinking_sound_after_s",
         "llm.reasoning_effort",
-        "ui.skin",  # lus par l'interface elle-même
+        "ui.skin",  # lus par l'interface elle-même ; phase 11 : la voix du profil aussi
         "ui.bubble_s",
+        "ui.profiles",  # ajouts phase 11 : profils (skin + voix) et voix ElevenLabs
+        "tts.backend",
+        "tts.elevenlabs",
     }
 )
 
@@ -446,6 +450,15 @@ class App:
             self._agent.config = new
             if "agent.history_persist_h" in live:
                 self._agent.memory.set_keep(new.agent.history_persist_h * 3600)
+        voice_keys = ("ui.skin", "ui.profiles", "tts.backend", "tts.elevenlabs")
+        apply_voice = getattr(self._speaker.tts, "apply", None) if self._speaker else None
+        if apply_voice is not None and any(k in live for k in voice_keys):
+            try:
+                await apply_voice(new)
+            except Exception as exc:  # modèle de voix absent, etc. : la voix d'avant reste
+                logger.exception("Voix du profil non appliquée.")
+                self._publish_ui("config", applied=[], restart=[], error=str(exc))
+                return
         logger.info(
             "Réglages relus : {} appliqué(s) tout de suite{}.",
             len(live),
@@ -506,7 +519,7 @@ class App:
                 logger.info("Chargement de Whisper ({})...", self.config.stt.model)
                 await asyncio.to_thread(self._stt.load)
             if self._speaker is not None:
-                logger.info("Chargement de la voix ({})...", self.config.tts.backend)
+                logger.info("Chargement de la voix...")
                 await asyncio.to_thread(self._speaker.load)
             if self._agent is not None:
                 self._spawn(self._agent.prewarm(), "préchauffage LLM")
@@ -1120,6 +1133,26 @@ class App:
             self._set_request_state(request, State.SPEAKING)
         else:
             self._set_request_state(request, State.THINKING)
+
+    def voice_event(self, kind: str, text: str) -> None:
+        """Routeur de voix (phase 11, thread de synthèse) : « fallback » (ElevenLabs
+        indisponible, raison), « resume » (de retour), « profile » (voix changée). L'annonce
+        orale du secours part avec le fragment lui-même (tts/router.py)."""
+        loop = self.bus.loop
+        if loop is None:
+            return
+        with contextlib.suppress(RuntimeError):  # boucle fermée
+            loop.call_soon_threadsafe(self._publish_voice, kind, text)
+
+    def _publish_voice(self, kind: str, text: str) -> None:
+        engine = "kokoro" if kind == "fallback" else "elevenlabs" if kind == "resume" else ""
+        if kind == "fallback":
+            message = f"Je passe sur ma voix de base : {text}."
+        elif kind == "resume":
+            message = f"Retour sur la voix {text}."
+        else:
+            message = f"Voix : {text}."
+        self._publish_ui("voice", event=kind, engine=engine, message=message)
 
     async def announce(self, text: str) -> None:
         """Annonce hors commande (minuteur, rappel) : son « timer » puis phrase dite, à la
