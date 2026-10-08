@@ -1628,7 +1628,7 @@ Deux composants, dans un **processus à part** (`python -m mikata.ui`), lancé p
      | fenêtre de suivi | turquoise, anneau qui se vide en 6 s |
      | micro coupé ou occupé, MIKATA pas lancé | anthracite, micro barré |
 
-   - la **bulle** (désactivable) montre ce que MIKATA a compris (« Tu : ... ») et ce qu'il
+   - la **bulle** (désactivable) montre ce que MIKATA a compris (en italique) et ce qu'il
      dit ;
    - **skins** : Mika est dessinée en code ; tes propres personnages s'installent dans
      `assets\mascot\<nom>\` (voir « Skins » plus bas).
@@ -1748,7 +1748,7 @@ Get-Content data\logs\ui.log -Tail 5
 | Ce que tu fais | Mika |
 | --- | --- |
 | « MIKATA » | jaune « ! », puis bleue (écoute) |
-| « quelle heure est-il ? » | orange (réflexion), puis verte qui parle ; bulle « Tu : quelle heure est-il » + la réponse |
+| « quelle heure est-il ? » | orange (réflexion), puis verte qui parle ; bulle « quelle heure est-il » (en italique) + la réponse |
 | « MIKATA, ouvre le bloc-notes » | engrenage, puis coche verte « c'est fait » |
 | juste après une réponse | anneau turquoise qui se vide en 6 s (fenêtre de suivi) |
 | Wi-Fi coupé, puis « MIKATA, bonjour » | rouge, yeux en croix ; bulle « Je n'arrive pas à joindre le serveur. » |
