@@ -84,6 +84,10 @@ C'est le point difficile avec un générateur d'images. Ce qui marche :
 
 ## 4. Exemple : un personnage chibi de style anime
 
+**Le plus simple avec Gemini** : joins [`GEMINI_SKIN_BRIEF.md`](GEMINI_SKIN_BRIEF.md) dans une
+nouvelle conversation et écris « Suis ce brief. ». Gemini pose ses questions, puis génère
+les états un par un, avec le bon nom de fichier pour chacun.
+
 ### La fiche personnage
 
 À recopier telle quelle au début de **chaque** prompt. Les prompts sont en anglais : les

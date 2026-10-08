@@ -25,7 +25,8 @@ interroge un LLM cloud, agit sur le PC et répond à voix haute dans le casque.
 | 6 | Confort : fenêtre de suivi, barge-in, annulation, mémoire long terme | fusionnée |
 | 6b | Arrêt vocal sans mot d'activation, Whisper sur les suites courtes | fusionnée |
 | 7 | Mot d'activation « MIKATA » (enregistrement, entraînement Colab, vérificateur de voix, benchmark), démarrage automatique, purge | fusionnée |
-| 8 | Interface : mascotte de bureau (skins), fenêtre de réglages ; licence Apache-2.0, contrôle de secrets en CI | livrée, à valider sur le PC |
+| 8 | Interface : mascotte de bureau (skins), fenêtre de réglages ; licence Apache-2.0, contrôle de secrets en CI | fusionnée |
+| 9 | Finitions : ratés du mot d'activation notés au raccourci, tests de parallélisme déterministes | livrée, à valider sur le PC |
 
 ## Développement
 
@@ -1576,6 +1577,29 @@ dans `data\wake_logs\` (le nom contient le score) : écoute celles que tu n'as p
 provoquées. Si les faux déclenchements dépassent ~1 par jour, envoie-moi ces audios : on les
 ajoute aux négatifs pour le prochain entraînement.
 
+### 13. Noter les « MIKATA » ratés (ajout phase 9)
+
+Quand tu as dit « MIKATA » et qu'il n'a pas réagi, appuie sur **Ctrl+Alt+M** (le raccourci
+habituel). En plus de lancer l'écoute :
+
+- tu entends le bip d'écoute **suivi de deux petits tics aigus** : le raté est noté ;
+- les **4 dernières secondes** d'audio (16 kHz mono) sont enregistrées dans
+  `data\wakeword\misses\`, un .wav par raté (`<date>_rate.wav`) ;
+- une ligne `Raté du mot d'activation noté` apparaît dans le journal.
+
+Les ratés de plus de 30 jours partent à la corbeille (`wake.miss_days`). Pour couper la
+collecte : `wake.save_misses: false` dans `config.yaml`, puis redémarre.
+
+```powershell
+Get-ChildItem data\wakeword\misses
+(Select-String -Path data\logs\mikata.log -Pattern "Raté du mot d'activation noté").Count
+```
+
+Appuie vite après le « MIKATA » raté : au-delà de 4 s, il n'est plus dans le tampon.
+Écoute quelques fichiers : le « MIKATA » doit s'y entendre. Ces ratés sont des positifs de
+plus pour le prochain entraînement. `train_wakeword.py` ne les lit pas encore tout seul : on
+les branchera au prochain réentraînement.
+
 ## Phase 8 — vérification sur le PC Windows
 
 Deux composants, dans un **processus à part** (`python -m mikata.ui`), lancé par MIKATA :
@@ -1819,8 +1843,9 @@ doit valoir `BelowNormal`.
 
 **Créer le tien** (détail et prompts : [`docs/MASCOT_SKIN_GUIDE.md`](docs/MASCOT_SKIN_GUIDE.md)) :
 
-1. Génère une image par état avec Nano Banana. Les prompts d'exemple d'un personnage chibi
-   sont dans le guide, section 4.
+1. Génère une image par état avec Nano Banana (Gemini). Le plus simple : joins
+   `docs\GEMINI_SKIN_BRIEF.md` dans une nouvelle conversation Gemini et écris « Suis ce
+   brief. ». Les prompts d'exemple d'un personnage chibi sont aussi dans le guide, section 4.
 2. Range-les dans un dossier, par exemple `C:\Users\<toi>\Images\mika_chibi`, nommées
    `repos.png`, `activation.png`, `ecoute.png`, `reflexion.png`, `action.png`,
    `parole.png`, `fait.png`, `erreur.png`, `suivi.png`, `micro_coupe.png`. Seul
@@ -1871,3 +1896,60 @@ doit valoir `BelowNormal`.
 
 - `.gitignore` ignore `.commandcode/` et tes scripts de `scripts\user\`. `bonjour.ps1`
   reste dans le dépôt comme exemple.
+
+## Phase 9 — vérification sur le PC Windows
+
+Deux finitions :
+
+1. **Ratés du mot d'activation** : Ctrl+Alt+M après un « MIKATA » non entendu garde les
+   4 dernières secondes dans `data\wakeword\misses\` (voir « Phase 7 », étape 13).
+2. **Tests de parallélisme déterministes** : trois tests échouaient au hasard en CI.
+   - Les tests concernés : `test_parallel_turns_do_not_block_each_other`,
+     `test_two_commands_run_in_parallel` et `test_open_spotify_then_brave_in_parallel`.
+   - Ils ne mesurent plus le temps et ne dépendent plus de l'ordre d'exécution des tâches.
+     Chaque faux appel au LLM attend que l'autre ait commencé (`tests\rendezvous.py`).
+   - Des commandes traitées l'une après l'autre ne se rencontreraient jamais : le test
+     échoue alors avec un message clair. Le défaut protégé reste donc vérifié.
+
+### 1. Récupérer la branche, installer
+
+```powershell
+git fetch origin
+git checkout phase-9-polish
+git pull
+uv sync
+```
+
+Si tu as modifié `config.yaml` en local, garde tes réglages pendant la mise à jour (deux
+lignes sont ajoutées dans `wake:`) :
+
+```powershell
+git stash
+git pull
+git stash pop
+Select-String -Path config.yaml -Pattern "save_misses|miss_days"
+```
+
+### 2. Lint et tests
+
+```powershell
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
+uv run pytest tests\test_wake_misses.py tests\test_maintenance.py tests\test_agent.py tests\test_app_conversation.py tests\test_app_tools.py -v
+```
+
+Attendu : tout en `passed`. Les trois tests de parallélisme passent à chaque fois. Pour le
+vérifier, relance-les 10 fois :
+
+```powershell
+1..10 | ForEach-Object { uv run pytest -q tests\test_agent.py::test_parallel_turns_do_not_block_each_other tests\test_app_conversation.py::test_two_commands_run_in_parallel tests\test_app_tools.py::test_open_spotify_then_brave_in_parallel | Select-Object -Last 1 }
+```
+
+### 3. Un raté, en vrai
+
+1. Lance MIKATA (`uv run python -m mikata`).
+2. Dis quelque chose, puis appuie tout de suite sur **Ctrl+Alt+M**. Attendu : bip d'écoute
+   puis deux tics, puis MIKATA t'écoute comme d'habitude.
+3. Vérifie le fichier et la ligne du journal (« Phase 7 », étape 13).
+

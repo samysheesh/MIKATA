@@ -86,11 +86,14 @@ from mikata.stt.voice_stop import StopHeard, VoiceStopSpotter
 from mikata.vad.base import VAD
 from mikata.wake.base import WakeWordDetector
 from mikata.wake.recordings import (
+    MISS_CLIP_S,
+    MISSES_DIR,
     NEGATIVE_CLIP_S,
     NegativeCollector,
     estimate_tail_silence_s,
     purge_older_than,
     save_detection,
+    save_miss,
 )
 from mikata.wake.trigger import WakeTrigger
 
@@ -301,13 +304,18 @@ class App:
         self.commands: deque[str] = deque(maxlen=100)
         self.answers: deque[str] = deque(maxlen=100)
 
-        self.ring = RingBuffer.for_seconds(config.audio.pre_roll_s + RING_MARGIN_S)
+        # Assez long pour le pré-roll et pour un raté du mot d'activation (phase 9).
+        self.ring = RingBuffer.for_seconds(
+            max(config.audio.pre_roll_s + RING_MARGIN_S, MISS_CLIP_S + RING_MARGIN_S)
+        )
         self._written = 0  # échantillons écrits dans le tampon depuis le démarrage
         self._wake_written = 0  # valeur de `_written` à la dernière détection
         wake = config.wake
         self._trigger = WakeTrigger(wake.threshold, wake.consecutive_frames, wake.refractory_s)
         self._collector = NegativeCollector() if wake.collect_negatives else None
         self._wake_logs_dir = config.resolve("data/wake_logs")
+        self._misses_dir = config.resolve(MISSES_DIR)
+        self.misses = 0  # ratés du mot d'activation notés au raccourci (phase 9)
         self._negatives_dir = config.resolve("data/negatives")
         self._negatives_saved = 0  # extraits de vie courante sur le disque (phase 7)
         self._wake_executor: Executor | None = None
@@ -729,7 +737,11 @@ class App:
             logger.debug("Mot d'activation ignoré pendant une écoute ({}).", event.source)
             return
         barged = self._barge_in(event)
-        self._play("wake")
+        miss = self._miss_audio(event)
+        if miss is None:
+            self._play("wake")
+        else:  # bip d'écoute puis deux tics : le raté est noté (un seul effet à la fois)
+            self._play_chain("wake", "miss")
         self._publish_ui("wake", score=round(event.score, 3), voice=event.verifier)
         self.detections += 1
         out_ms = (self._player.output_latency_s if self._player else 0.0) * 1000
@@ -742,6 +754,14 @@ class App:
         if event.source == "hotkey":
             self._trigger.suppress(now)
             logger.info("Raccourci clavier : bip lancé (+ sortie {:.0f} ms).", out_ms)
+            if miss is not None:
+                self.misses += 1
+                logger.info(
+                    "Raté du mot d'activation noté (raccourci) : {:.1f} s d'audio gardées "
+                    "pour le prochain entraînement.",
+                    len(miss) / SAMPLE_RATE,
+                )
+                self._submit_io(self._save_miss, miss, datetime.now())
             self._start_listening(event, now, barged)
             return
 
@@ -1160,6 +1180,24 @@ class App:
         if self._player is not None and earcon in self._earcons:
             self._player.play_nowait(self._earcons[earcon])
 
+    def _play_chain(self, *earcons: str) -> None:
+        """Plusieurs sons à la suite, en un seul effet (le lecteur n'en joue qu'un à la fois)."""
+        sounds = [self._earcons[name] for name in earcons if name in self._earcons]
+        if self._player is None or not sounds:
+            return
+        rate = getattr(self._earcons, "sample_rate", 48_000)
+        gap = np.zeros(round(0.06 * rate), dtype=np.float32)
+        parts = [part for sound in sounds for part in (sound, gap)][:-1]
+        self._player.play_nowait(np.concatenate(parts))
+
+    def _miss_audio(self, event: WakeDetected) -> np.ndarray | None:
+        """Raccourci clavier après un « MIKATA » raté : les dernières secondes du tampon, à
+        garder pour le prochain entraînement (phase 9). None si rien à garder."""
+        if event.source != "hotkey" or not self.config.wake.save_misses or self._audio is None:
+            return None
+        audio = self.ring.read_last(min(round(MISS_CLIP_S * SAMPLE_RATE), len(self.ring)))
+        return audio if len(audio) else None
+
     # -- écritures disque (thread mikata-io) -----------------------------------------------
 
     def _submit_io(self, fn: Callable[..., None], *args: object) -> None:
@@ -1177,6 +1215,13 @@ class App:
         path = save_detection(self._wake_logs_dir, audio, score, now)
         logger.debug("Audio de détection : {}", path)
         self._purge_wake_logs()
+
+    def _save_miss(self, audio: np.ndarray, now: datetime) -> None:
+        path = save_miss(self._misses_dir, audio, now)
+        logger.info("Raté enregistré : {}", path)
+        count = purge_older_than(self._misses_dir, self.config.wake.miss_days)
+        if count:
+            logger.info("{} ancien(s) raté(s) du mot d'activation mis à la corbeille.", count)
 
     def _purge_wake_logs(self) -> None:
         count = purge_older_than(self._wake_logs_dir, self.config.wake.log_days)

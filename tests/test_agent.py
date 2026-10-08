@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any
 
 import numpy as np
+from rendezvous import Rendezvous
 
 from mikata.agent.loop import Agent
 from mikata.config import Config
@@ -173,28 +174,38 @@ def test_tool_calls_without_registry_are_not_run() -> None:
     assert agent.memory.messages() == []
 
 
+class RendezvousLLM(ScriptedLLM):
+    """Chaque réponse ne commence qu'une fois tous les tours lancés (`Rendezvous`)."""
+
+    def __init__(self, rendezvous: Rendezvous, *scripts: list[Any]) -> None:
+        super().__init__(*scripts)
+        self.rendezvous = rendezvous
+
+    async def stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        reasoning_effort: str | None = None,
+    ) -> AsyncIterator[LLMEvent]:
+        await self.rendezvous.meet(messages[-1]["content"].split("« ")[-1].rstrip(" »"))
+        async for event in super().stream(messages, tools, reasoning_effort):
+            yield event
+
+
 def test_parallel_turns_do_not_block_each_other() -> None:
-    """Deux tours en parallèle durent à peu près un tour, pas deux. Comparaison relative :
-    le temps propre à la machine (disque, CI chargée) est dans les deux mesures. Meilleure de
-    trois mesures : un à-coup ponctuel de la CI (~200 ms) ne compte pas, alors qu'un vrai
-    blocage ralentit les trois."""
-    llm = ScriptedLLM(*[[TextDelta(f"Réponse {i}."), Done("stop")] for i in range(10)], delay=0.25)
+    """Deux tours en parallèle : le 2e appel au LLM commence avant la fin du 1er. Sans
+    horloge : chaque appel attend que l'autre ait commencé (`Rendezvous`) ; des tours faits
+    l'un après l'autre ne se rencontreraient jamais."""
+    rendezvous = Rendezvous(parties=2)
+    llm = RendezvousLLM(rendezvous, *[[TextDelta(f"Réponse {i}."), Done("stop")] for i in range(2)])
     agent = _agent(llm)
 
-    async def timed(turns: int) -> float:
-        start = asyncio.get_running_loop().time()
-        await asyncio.gather(*(agent.respond(f"commande {i}", Sink()) for i in range(turns)))
-        return asyncio.get_running_loop().time() - start
+    async def scenario() -> None:
+        await asyncio.gather(*(agent.respond(f"commande {i}", Sink()) for i in range(2)))
 
-    async def scenario() -> tuple[float, float]:
-        await timed(1)  # premier tour : fichiers et imports
-        singles = [await timed(1) for _ in range(3)]
-        boths = [await timed(2) for _ in range(3)]
-        return min(singles), min(boths)
-
-    single, both = asyncio.run(scenario())
-    assert both < 1.6 * single  # l'un après l'autre : ~2 fois plus long
-    assert len(agent.memory) == 10
+    asyncio.run(scenario())
+    rendezvous.check()
+    assert len(agent.memory) == 2
 
 
 def test_prewarm_delegates() -> None:

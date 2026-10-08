@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from rendezvous import Rendezvous
 from test_app import RecordingTray, ScriptedAudio, ScriptedDetector
 from test_app_listening import EARCONS, FakeSTT, ScriptedVAD, _run_until
 
@@ -70,9 +71,14 @@ class ContentLLM:
     """Répond selon la commande ; `delay` entre deux morceaux ; garde les horaires d'appel."""
 
     def __init__(
-        self, answer: Callable[[str], str], delay: float = 0.0, fail: bool = False
+        self,
+        answer: Callable[[str], str],
+        delay: float = 0.0,
+        fail: bool = False,
+        rendezvous: Rendezvous | None = None,
     ) -> None:
         self.answer = answer
+        self.rendezvous = rendezvous
         self.delay = delay
         self.fail = fail
         self.calls: list[tuple[str, float, float]] = []  # (commande, début, fin)
@@ -93,6 +99,8 @@ class ContentLLM:
         # lancés à 14 ms d'écart auraient le même instant de début.
         start = time.perf_counter()
         self.started.append(command)
+        if self.rendezvous is not None:  # attend que l'autre commande ait aussi commencé
+            await self.rendezvous.meet(command)
         if self.fail:
             raise LlmError("serveur injoignable")
         for word in self.answer(command).split(" "):
@@ -197,7 +205,12 @@ def test_two_commands_run_in_parallel(config_file: Path) -> None:
         frame_ids = {int(v) for v in audio[::1280]}
         return "Hey Jarvis, ouvre Brave." if 81 in frame_ids else "Hey Jarvis, ouvre Spotify."
 
-    llm = ContentLLM(lambda c: f"J'ouvre {c.split()[-1].rstrip('.')} tout de suite.", delay=0.15)
+    # Rendez-vous : chaque appel au LLM attend que l'autre ait commencé. Commandes traitées
+    # l'une après l'autre -> la 1re attend en vain et le test échoue (aucune mesure de temps).
+    rendezvous = Rendezvous(parties=2)
+    llm = ContentLLM(
+        lambda c: f"J'ouvre {c.split()[-1].rstrip('.')} tout de suite.", rendezvous=rendezvous
+    )
     app, tray, out, _ = _app(
         config_file,
         detections={31: 0.9, 80: 0.9},
@@ -210,10 +223,8 @@ def test_two_commands_run_in_parallel(config_file: Path) -> None:
     assert app.detections == 2  # la 2e commande n'a pas été refusée
     assert list(app.commands) == ["ouvre Spotify.", "ouvre Brave."]
     assert sorted(app.answers) == ["J'ouvre Brave tout de suite.", "J'ouvre Spotify tout de suite."]
-    assert llm.started == ["ouvre Spotify.", "ouvre Brave."]
-    timing = {command: (start, end) for command, start, end in llm.calls}
-    e1, s2 = timing["ouvre Spotify."][1], timing["ouvre Brave."][0]
-    assert s2 < e1  # la 2e réfléchit pendant que la 1re n'a pas fini : pas de file d'attente
+    rendezvous.check()  # la 2e réfléchit pendant que la 1re n'a pas fini : pas de file d'attente
+    assert sorted(llm.started) == ["ouvre Brave.", "ouvre Spotify."]
     assert out.effects.count("wake") == 2
     assert len(out.spoken) == 2  # les deux réponses dites, l'une après l'autre
     # La 2e écoute commence pendant que la 1re commande est encore en cours (transcription ou

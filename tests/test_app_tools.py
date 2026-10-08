@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from rendezvous import Rendezvous
 from test_app import RecordingTray, ScriptedAudio, ScriptedDetector
 from test_app_conversation import ALL_EARCONS, AudioOut, TextTTS
 from test_app_listening import FakeSTT, ScriptedVAD, _run_until
@@ -27,8 +28,9 @@ EARCONS = ALL_EARCONS
 class OpenAppLLM:
     """« ouvre X » -> appel de open_app(X), après `delay` (le temps de « réfléchir »)."""
 
-    def __init__(self, delay: float = 0.0) -> None:
+    def __init__(self, delay: float = 0.0, rendezvous: Rendezvous | None = None) -> None:
         self.delay = delay
+        self.rendezvous = rendezvous
         self.commands: list[str] = []
 
     async def prewarm(self) -> None:
@@ -43,6 +45,8 @@ class OpenAppLLM:
         command = messages[-1]["content"].split("« ")[-1].rstrip(" »")
         self.commands.append(command)
         assert any(t["function"]["name"] == "open_app" for t in tools)
+        if self.rendezvous is not None:  # attend que l'autre commande ait aussi commencé
+            await self.rendezvous.meet(command)
         await asyncio.sleep(self.delay)
         app = command.split()[-1].rstrip(".")
         yield ToolCallReq(f"call-{app}", "open_app", {"name": app})
@@ -85,7 +89,10 @@ def test_open_spotify_then_brave_in_parallel(config_file: Path, caplog_loguru: l
         frame_ids = {int(v) for v in audio[::1280]}
         return "Hey Jarvis, ouvre Brave." if 81 in frame_ids else "Hey Jarvis, ouvre Spotify."
 
-    desktop, llm = SlowDesktop(), OpenAppLLM(delay=0.3)
+    # Rendez-vous : chaque appel au LLM attend que l'autre ait commencé ; des commandes
+    # traitées l'une après l'autre ne se rencontreraient jamais (échec explicite).
+    rendezvous = Rendezvous(parties=2)
+    desktop, llm = SlowDesktop(), OpenAppLLM(rendezvous=rendezvous)
     app, tray, out, tts = _app(
         config_file,
         llm,
@@ -97,9 +104,12 @@ def test_open_spotify_then_brave_in_parallel(config_file: Path, caplog_loguru: l
     _run_until(app, lambda: len(app.answers) == 2 and app.state is State.IDLE, timeout=10)
 
     assert app.detections == 2  # la 2e commande n'a pas été refusée
-    assert llm.commands == ["ouvre Spotify.", "ouvre Brave."]
+    rendezvous.check()  # les deux commandes ont réfléchi en même temps
+    assert sorted(llm.commands) == ["ouvre Brave.", "ouvre Spotify."]
+    # Les deux applis sont lancées ; leur ordre dépend de la tâche qui finit la première,
+    # il n'est pas garanti (deux commandes parallèles) et n'est donc pas vérifié.
     launched = [value for name, value in desktop.log if name == "launch"]
-    assert launched == ["Spotify", "Brave"]
+    assert sorted(launched) == ["Brave", "Spotify"]
     assert list(app.answers) == ["C'est fait.", "C'est fait."]
     assert tts.texts == ["C'est fait.", "C'est fait."] and len(out.spoken) == 2
     assert State.ACTING in tray.states
