@@ -140,7 +140,7 @@ class BubbleWindow(QWidget):
         if note:
             lines.append(("note", note))
         if heard:
-            lines.append(("heard", f"Tu : {heard}"))
+            lines.append(("heard", heard))
         if said:
             lines.append(("said", said))
         changed = lines != self._lines
