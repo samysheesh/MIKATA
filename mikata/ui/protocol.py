@@ -10,7 +10,8 @@ ralentir la boucle audio ni faire tomber MIKATA. Les deux parlent par une connex
   jeton, la connexion est fermée.
 - MIKATA → interface : `state`, `wake`, `heard`, `say`, `result`, `error`, `mic`, `config`, `voice`,
   `open_settings`, `show_mascot`, `bye` (voir `MIKATA_EVENTS`).
-- Interface → MIKATA : `reload_config` (après écriture de config.yaml), `pause`.
+- Interface → MIKATA : `reload_config` (après écriture de config.yaml), `pause`, `restart`
+  (redémarrer MIKATA : arrêt propre avec le code 75, relancé par la supervision ou par lui-même).
 
 Ce module n'importe ni Qt ni asyncio : il sert aux deux côtés et aux tests.
 """
@@ -46,7 +47,7 @@ MIKATA_EVENTS = (
     "bye",  # MIKATA s'arrête : l'interface se ferme
 )
 # Commandes de l'interface vers MIKATA.
-UI_COMMANDS = ("hello", "reload_config", "pause")
+UI_COMMANDS = ("hello", "reload_config", "pause", "restart")
 
 
 class ProtocolError(ValueError):

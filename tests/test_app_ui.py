@@ -256,3 +256,21 @@ def test_real_channel_end_to_end(config_file: Path) -> None:
     assert hello == {"type": "hello", "version": 1, "state": "idle", "follow_up_s": 0, "mic": "ok"}
     assert mic == {"type": "mic", "status": "paused"} and bye == {"type": "bye"}
     assert app.paused
+
+
+def test_restart_request_from_the_interface_stops_mikata_for_a_restart(config_file: Path) -> None:
+    app, _, _, _ = _app(
+        config_file,
+        detections={},
+        speech=set(),
+        stt=FakeSTT(""),
+        llm=ContentLLM(lambda c: ""),
+        frames=10,
+    )
+    bridge = FakeBridge()
+    _with_ui(app, bridge)
+    stops: list[str] = []
+    app.request_shutdown = stops.append  # type: ignore[method-assign]  # pas de boucle ici
+    assert not app.restart_requested
+    app._on_ui_command({"type": "restart"})
+    assert app.restart_requested and len(stops) == 1  # __main__ sortira avec le code 75
