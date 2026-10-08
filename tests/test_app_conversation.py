@@ -76,6 +76,7 @@ class ContentLLM:
         self.delay = delay
         self.fail = fail
         self.calls: list[tuple[str, float, float]] = []  # (commande, début, fin)
+        self.started: list[str] = []  # commandes dans l'ordre où leur appel a commencé
         self.prewarmed = 0
 
     async def prewarm(self) -> None:
@@ -88,13 +89,16 @@ class ContentLLM:
         reasoning_effort: str | None = None,
     ) -> AsyncIterator[LLMEvent]:
         command = messages[-1]["content"].split("« ")[-1].rstrip(" »")
-        start = time.monotonic()
+        # perf_counter : sous Windows, monotonic n'avance que toutes les ~15 ms, et deux appels
+        # lancés à 14 ms d'écart auraient le même instant de début.
+        start = time.perf_counter()
+        self.started.append(command)
         if self.fail:
             raise LlmError("serveur injoignable")
         for word in self.answer(command).split(" "):
             await asyncio.sleep(self.delay)
             yield TextDelta(word + " ")
-        self.calls.append((command, start, time.monotonic()))
+        self.calls.append((command, start, time.perf_counter()))
         yield Done("stop")
 
 
@@ -206,8 +210,9 @@ def test_two_commands_run_in_parallel(config_file: Path) -> None:
     assert app.detections == 2  # la 2e commande n'a pas été refusée
     assert list(app.commands) == ["ouvre Spotify.", "ouvre Brave."]
     assert sorted(app.answers) == ["J'ouvre Brave tout de suite.", "J'ouvre Spotify tout de suite."]
-    (first, _, e1), (second, s2, _) = sorted(llm.calls, key=lambda c: c[1])
-    assert (first, second) == ("ouvre Spotify.", "ouvre Brave.")
+    assert llm.started == ["ouvre Spotify.", "ouvre Brave."]
+    timing = {command: (start, end) for command, start, end in llm.calls}
+    e1, s2 = timing["ouvre Spotify."][1], timing["ouvre Brave."][0]
     assert s2 < e1  # la 2e réfléchit pendant que la 1re n'a pas fini : pas de file d'attente
     assert out.effects.count("wake") == 2
     assert len(out.spoken) == 2  # les deux réponses dites, l'une après l'autre
