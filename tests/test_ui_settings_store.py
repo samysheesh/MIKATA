@@ -116,9 +116,9 @@ def test_missing_key_or_section_is_added() -> None:
     text = "wake:\n  threshold: 0.5\n\n# fin\nagent:\n  follow_up_s: 6\n"
     added = set_value(text, "wake.verifier_threshold", 0.4)
     assert added.startswith("wake:\n  threshold: 0.5\n  verifier_threshold: 0.4\n\n# fin\n")
-    added = set_value(text, "ui.theme", "chat")
-    assert added.endswith("agent:\n  follow_up_s: 6\nui:\n  theme: chat\n")
-    assert yaml.safe_load(added)["ui"] == {"theme": "chat"}
+    added = set_value(text, "ui.skin", "chat")
+    assert added.endswith("agent:\n  follow_up_s: 6\nui:\n  skin: chat\n")
+    assert yaml.safe_load(added)["ui"] == {"skin": "chat"}
 
 
 def test_multi_line_values_and_secrets_are_refused(config_file: Path) -> None:

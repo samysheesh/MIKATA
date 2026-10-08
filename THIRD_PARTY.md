@@ -26,9 +26,10 @@ fait foi.
 | Fichier | Origine | Licence |
 | --- | --- | --- |
 | `assets/sounds/*.wav` (wake, end, error, thinking, timer) | **Sons originaux générés par MIKATA** (`mikata/audio/earcons.py`, `synthesize()`). Vérifié le 2026-10-08 : chaque fichier est identique, à 1 bit de quantification près, à ce que produit ce code. Aucun son tiers. | Apache-2.0 (licence du projet) |
-| `assets/mascot/default/` | Mascotte « Mika » **dessinée en code** (`mikata/ui/qt/painter.py`), sans image ni police tierce | Apache-2.0 |
-| `tests/fixtures/hey_jarvis_ouvre_spotify.wav` | Ajouté à la phase 2 (commit a478e7f) : « enregistrement “hey jarvis ouvre Spotify” pour les tests sur les vrais modèles ». 16 kHz mono, 1,8 s, écrit par le code du projet (`mikata/audio/wavfile.py`). | **À confirmer** : ta voix ou une voix de synthèse ? Si c'est ta voix, tu acceptes de la publier sous Apache-2.0. Sinon, indique la voix et sa licence. |
-| `docs/ui/*.png`, `docs/ui/*.gif` | Captures de l'interface, rendues par `scripts/ui_screenshots.py` (données fictives) | Apache-2.0 |
+| `assets/mascot/default/` | Skin par défaut « Mika », **dessinée en code** (`mikata/ui/qt/painter.py`), sans image ni police tierce | Apache-2.0 |
+| `assets/mascot/<skin>/` (tes skins) | Images que tu génères (Nano Banana...) ou importes, mises en forme par `scripts/make_skin.py`. **Pas dans le dépôt** (`.gitignore`) : elles restent sur ton PC. Auteur et licence de chaque skin : champs `author` et `license` de son `skin.json`. | celle que tu indiques |
+| `tests/fixtures/hey_jarvis_ouvre_spotify.wav` | **Voix de synthèse** (confirmé : ce n'est pas ta voix), ajoutée à la phase 2 (commit a478e7f) pour les tests sur les vrais modèles. 16 kHz mono, 1,8 s, pic normalisé à 0,5, écrit par le code du projet (`mikata/audio/wavfile.py`). **Voix exacte non retrouvée** : aucun script de génération n'est dans le dépôt ni dans son historique, et la session de travail de la phase 2 n'est plus accessible. L'analyse du son (hauteur, bande passante) ne suffit pas à identifier la voix. | **Inconnue** tant que la voix n'est pas identifiée. Avant une publication : régénérer ce fichier avec une voix de licence connue (par exemple Kokoro, Apache-2.0), puis revérifier les tests sur les vrais modèles sur le PC. |
+| `docs/ui/*.png`, `docs/ui/*.gif` | Captures de l'interface, rendues par `scripts/ui_screenshots.py` (données fictives ; le skin de démonstration « Mika recolorée » est Mika, recolorée puis passée par `make_skin.py`) | Apache-2.0 |
 
 ## Bibliothèques Python (dépendances de `pyproject.toml`)
 
@@ -48,6 +49,7 @@ fait foi.
 | python-dotenv | BSD-3-Clause | lecture et écriture de .env (réglages, phase 8) |
 | **PySide6-Essentials**, shiboken6 (Qt 6) | **LGPL-3.0** (ou GPL-2.0/3.0) | interface : mascotte et réglages (phase 8). Liée dynamiquement, installée par pip/uv, non modifiée : les obligations de la LGPL sont respectées tant qu'on ne la fige pas dans un exécutable sans permettre de la remplacer. |
 | numpy | BSD-3-Clause (+ 0BSD, MIT, Zlib, CC0 pour des parties) | calcul audio |
+| scipy | BSD-3-Clause | détourage des images de skins (`scripts/make_skin.py`) ; déjà installé par openwakeword |
 | sounddevice | MIT | audio (PortAudio, MIT) |
 | soxr | LGPL-2.1-or-later | rééchantillonnage audio |
 | pillow | MIT-CMU (HPND) | images (icône, thèmes de la mascotte) |

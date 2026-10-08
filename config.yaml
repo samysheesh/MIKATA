@@ -110,5 +110,5 @@ logging:                           # ajout phase 0 (§10 « Logs »)
 ui:                                # ajout phase 8 : mascotte et réglages (processus à part)
   enabled: true                    # canal local vers l'interface (false : MIKATA seul, comme avant)
   mascot: true                     # lancer la mascotte au démarrage de MIKATA
-  theme: default                   # dossier assets/mascot/<theme>/ (default : dessinée en code)
+  skin: default                    # dossier assets/mascot/<skin>/ ; default : Mika, dessinée en code
   bubble_s: 8                      # la bulle reste N s après la dernière phrase

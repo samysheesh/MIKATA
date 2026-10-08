@@ -1,6 +1,6 @@
 """Préférences de la mascotte (ajout phase 8) : data/ui_state.json, écrit par l'interface.
 
-Position, écran, taille, mode traversable, masquée, bulle : ce sont des préférences de
+Position, écran, taille, masquée, bulle : ce sont des préférences de
 fenêtre qui changent souvent (à chaque déplacement), pas des réglages de MIKATA ; elles ne
 vont donc pas dans config.yaml.
 """
@@ -21,7 +21,6 @@ class MascotPrefs:
     x: int | None = None  # coin haut gauche, coordonnées du bureau
     y: int | None = None
     size: str = "moyenne"
-    click_through: bool = False
     hidden: bool = False
     bubble: bool = True
 
@@ -37,7 +36,7 @@ def load_prefs(path: Path) -> MascotPrefs:
         return MascotPrefs()
     if not isinstance(data, dict):
         return MascotPrefs()
-    known = {f.name for f in fields(MascotPrefs)}
+    known = {f.name for f in fields(MascotPrefs)}  # clés anciennes ou inconnues ignorées
     prefs = MascotPrefs(**{k: v for k, v in data.items() if k in known})
     if prefs.size not in SIZES:
         prefs.size = "moyenne"

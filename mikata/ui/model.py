@@ -130,7 +130,7 @@ class MascotModel:
         self._note = "MIKATA n'est pas lancé."
 
     def note(self, text: str) -> None:
-        """Message local (ex. : mode traversable activé), affiché dans la bulle."""
+        """Message local de l'interface, affiché dans la bulle."""
         self._note = text
         self._text_at = self._clock()
 
@@ -191,3 +191,19 @@ class MascotModel:
         if self.mic != "ok" and self.mikata_state == "idle":
             return "mic_off"
         return FROM_MIKATA.get(self.mikata_state, "idle")
+
+
+def demo_messages(state: str) -> list[dict[str, Any]]:
+    """Messages de MIKATA qui amènent la mascotte dans l'état dessiné `state` (aperçu d'un
+    skin, captures, tests) ; ils repartent du repos, micro actif."""
+    start: list[dict[str, Any]] = [
+        {"type": "mic", "status": "ok"},
+        {"type": "state", "state": "idle"},
+    ]
+    special: dict[str, dict[str, Any]] = {
+        "wake": {"type": "wake", "score": 0.9},
+        "success": {"type": "result", "outcome": "success"},
+        "error": {"type": "error", "message": "exemple d'erreur"},
+        "mic_off": {"type": "mic", "status": "paused"},
+    }
+    return [*start, special.get(state, {"type": "state", "state": state})]

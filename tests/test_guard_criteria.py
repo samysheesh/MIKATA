@@ -409,8 +409,8 @@ def test_no_permanent_deletion_anywhere_in_mikata() -> None:
 
 def test_send2trash_is_the_only_deletion_path() -> None:
     """send2trash n'est importé qu'aux endroits qui mettent à la corbeille : le garde-fou
-    (outils), la rotation des logs, la purge des audios de détection et (phase 7) la purge
-    quotidienne des sauvegardes."""
+    (outils), la rotation des logs, la purge des audios de détection, (phase 7) la purge
+    quotidienne des sauvegardes et (phase 8) la suppression d'un skin de la mascotte."""
     imports = re.compile(r"^\s*(from send2trash import|import send2trash)", re.MULTILINE)
     users = sorted(
         str(path.relative_to(PROJECT_ROOT))
@@ -421,5 +421,6 @@ def test_send2trash_is_the_only_deletion_path() -> None:
         os.path.join("mikata", "agent", "guard.py"),
         os.path.join("mikata", "logging_setup.py"),
         os.path.join("mikata", "maintenance.py"),
+        os.path.join("mikata", "ui", "skins.py"),
         os.path.join("mikata", "wake", "recordings.py"),
     ]

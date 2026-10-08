@@ -3,7 +3,8 @@ clic ou clic droit) ou `python -m mikata.ui --settings`.
 
 Onglets : Audio (micro, sortie, tests), Mot d'activation (seuils), Conversation (réflexion,
 fenêtre de suivi, historique), Coût et clés (coût cumulé, crédit, clés masquées), Mascotte
-(thème, bulle), Journal (log en direct).
+(bulle, démarrage), Skins (choix immédiat, import, suppression : `skins_tab`), Journal (log en
+direct).
 
 Chaque réglage porte un badge : « tout de suite » (MIKATA le relit sans redémarrer) ou « au
 redémarrage ». Enregistrer réécrit config.yaml en gardant commentaires et ordre
@@ -39,6 +40,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mikata.ui.qt.skins_tab import SkinsTab
 from mikata.ui.settings_store import (
     BACKUP_DIR,
     SECRET_NAMES,
@@ -52,7 +54,6 @@ from mikata.ui.settings_store import (
     read_usage,
     write_secret,
 )
-from mikata.ui.themes import list_themes
 
 REASONING = ("none", "low", "medium", "high")
 LOG_LEVELS = {"Tout": 0, "Infos et plus": 1, "Avertissements et erreurs": 2}
@@ -167,6 +168,13 @@ class SettingsWindow(QWidget):
         self.tabs.addTab(self._conversation_tab(), "Conversation")
         self.tabs.addTab(self._cost_tab(), "Coût et clés")
         self.tabs.addTab(self._mascot_tab(), "Mascotte")
+        self.skins_tab = SkinsTab(
+            base_dir / "assets" / "mascot",
+            config_path,
+            on_applied=lambda values: self._on_applied(values),
+            on_status=lambda text: self.status.setText(text),
+        )
+        self.tabs.addTab(self.skins_tab, "Skins")
         self.tabs.addTab(self._log_tab(), "Journal")
 
         self.status = QLabel("")
@@ -333,23 +341,17 @@ class SettingsWindow(QWidget):
     def _mascot_tab(self) -> QWidget:
         page = QWidget()
         form = QFormLayout(page)
-        themes = QComboBox()
-        for key, name in list_themes(self.base_dir / "assets" / "mascot"):
-            themes.addItem(name, key)
-        index = themes.findData(self.editor.get("ui.theme"))
-        themes.setCurrentIndex(max(index, 0))
-        self._row(form, "ui.theme", themes)
         self._row(form, "ui.bubble_s", self._spin("ui.bubble_s", 1, 120, 1, 0))
         startup = QCheckBox()
         startup.setChecked(bool(self.editor.get("ui.mascot")))
         self._row(form, "ui.mascot", startup)
-        show = QPushButton("Afficher la mascotte (et la rendre cliquable)")
+        show = QPushButton("Afficher la mascotte")
         show.clicked.connect(self._on_show_mascot)
         form.addRow(show)
         form.addRow(
             self._hint(
-                "Taille, bulle et mode traversable : clic droit sur la mascotte. "
-                "Ajouter un thème : assets/mascot/README.md."
+                "Taille et bulle : clic droit sur la mascotte. Pour cliquer sur ce qu'il y a "
+                "dessous, déplace-la. Changer de personnage : onglet Skins."
             )
         )
         return page

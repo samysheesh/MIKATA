@@ -126,7 +126,7 @@ LIVE_SETTINGS = frozenset(
         "agent.history_persist_h",
         "agent.thinking_sound_after_s",
         "llm.reasoning_effort",
-        "ui.theme",  # lus par l'interface elle-même
+        "ui.skin",  # lus par l'interface elle-même
         "ui.bubble_s",
     }
 )

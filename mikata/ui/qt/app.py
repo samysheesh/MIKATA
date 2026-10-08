@@ -1,4 +1,4 @@
-"""Processus de l'interface (ajout phase 8) : `python -m mikata.ui [--settings]`.
+"""Processus de l'interface (ajout phase 8) : `python -m mikata.ui [--settings | --preview SKIN]`.
 
 Lancé par MIKATA au démarrage (`ui.mascot`) ou à la demande (menu de l'icône). Une seule
 instance : une deuxième transmet sa demande (réglages, afficher la mascotte) à la première
@@ -28,7 +28,7 @@ from mikata.ui.protocol import CHANNEL_FILE
 from mikata.ui.qt.client import MikataClient
 from mikata.ui.qt.mascot import MascotWindow
 from mikata.ui.qt.settings import SettingsWindow
-from mikata.ui.themes import DEFAULT_THEME, Theme, ThemeError, load_theme
+from mikata.ui.skins import DEFAULT_SKIN, Skin, SkinError, load_skin
 
 LOG_FILE = "data/logs/ui.log"
 
@@ -37,12 +37,13 @@ def instance_name() -> str:
     return f"mikata-ui-{getpass.getuser()}"
 
 
-def load_theme_or_default(root: Path, key: str) -> Theme | None:
+def load_skin_or_default(root: Path, key: str) -> Skin | None:
+    """Le skin `key`, ou Mika (None si même son manifeste manque) : jamais d'exception."""
     try:
-        return load_theme(root, key)
-    except ThemeError as exc:
-        logger.warning("Thème « {} » ignoré : {} (thème par défaut).", key, exc)
-        return None if key == DEFAULT_THEME else load_theme_or_default(root, DEFAULT_THEME)
+        return load_skin(root, key)
+    except SkinError as exc:
+        logger.warning("Skin « {} » ignoré : {} (Mika, le skin par défaut).", key, exc)
+        return None if key == DEFAULT_SKIN else load_skin_or_default(root, DEFAULT_SKIN)
 
 
 class UiController(QObject):
@@ -51,7 +52,7 @@ class UiController(QObject):
         self.config = config
         self.config_path = config_path
         self.base_dir = config.base_dir
-        self.theme_root = self.base_dir / "assets" / "mascot"  # comme les réglages
+        self.skin_root = self.base_dir / "assets" / "mascot"  # comme les réglages
         self.model = MascotModel(bubble_s=config.ui.bubble_s)
         self.model.disconnected()
         self.client = MikataClient(config.resolve(CHANNEL_FILE), self)
@@ -62,7 +63,7 @@ class UiController(QObject):
             self.model,
             load_prefs(prefs_path),
             prefs_path,
-            load_theme_or_default(self.theme_root, config.ui.theme),
+            load_skin_or_default(self.skin_root, config.ui.skin),
             self.client.send,
             self.open_settings,
         )
@@ -109,8 +110,8 @@ class UiController(QObject):
 
     def apply(self, values: dict[str, Any]) -> None:
         """Réglages de l'interface elle-même, appliqués tout de suite."""
-        if "ui.theme" in values:
-            self.mascot.set_theme(load_theme_or_default(self.theme_root, str(values["ui.theme"])))
+        if "ui.skin" in values:
+            self.mascot.set_skin(load_skin_or_default(self.skin_root, str(values["ui.skin"])))
         if "ui.bubble_s" in values:
             self.model.bubble_s = float(values["ui.bubble_s"])
 
@@ -146,6 +147,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mikata.ui", description="Interface de MIKATA.")
     parser.add_argument("--config", type=Path, default=None)
     parser.add_argument("--settings", action="store_true", help="ouvrir les réglages")
+    parser.add_argument("--preview", metavar="SKIN", help="aperçu d'un skin, sans MIKATA")
     args = parser.parse_args(argv)
     config_path = resolve_config_path(args.config)
     try:
@@ -155,6 +157,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         config = Config()
         config._base_dir = config_path.parent
     _setup_logging(config.base_dir)
+    if args.preview:
+        from mikata.ui.qt.preview import preview_skin
+
+        try:
+            return preview_skin(config.base_dir / "assets" / "mascot", args.preview)
+        except SkinError as exc:
+            print(f"Aperçu impossible : {exc}", file=sys.stderr)
+            return 1
     app = QApplication(sys.argv[:1])
     app.setApplicationName("MIKATA")
     app.setQuitOnLastWindowClosed(False)  # mascotte masquée, réglages fermés : on reste là

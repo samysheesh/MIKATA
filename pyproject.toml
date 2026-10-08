@@ -54,6 +54,9 @@ dependencies = [
     "pyside6-essentials>=6.7",
     "ruamel-yaml>=0.18",
     "python-dotenv>=1.0",
+    # Phase 8 (skins) : détourage des images de scripts/make_skin.py (composantes connexes).
+    # Déjà installé par openwakeword ; déclaré car utilisé directement.
+    "scipy>=1.11",
 ]
 
 [dependency-groups]

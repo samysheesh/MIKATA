@@ -1,14 +1,14 @@
-"""Exporte la mascotte dessinée en code vers un thème d'images (ajout phase 8).
+"""Exporte Mika (la mascotte dessinée en code) en skin d'images (ajout phase 8).
 
-Point de départ pour créer ton propre thème : une bande d'images PNG (spritesheet) par état
-et un theme.json prêt à l'emploi, à retoucher dans n'importe quel logiciel de dessin ou à
-remplacer par tes images (voir assets/mascot/README.md).
+Exemple du format « image par image » : une bande d'images PNG (spritesheet) par état et un
+skin.json prêt à l'emploi. Pour un skin à toi à partir d'images générées, voir plutôt
+scripts/make_skin.py et docs/MASCOT_SKIN_GUIDE.md.
 
-    uv run python scripts/export_mascot_theme.py mon_theme
-    uv run python scripts/export_mascot_theme.py mon_theme --size 256 --fps 12
+    uv run python scripts/export_mascot_skin.py mika-images
+    uv run python scripts/export_mascot_skin.py mika-images --size 256 --fps 12
 
-Résultat : assets/mascot/mon_theme/theme.json + idle.png, wake.png... Puis dans les réglages
-(onglet Mascotte) ou config.yaml : ui.theme: mon_theme. Fonctionne sans écran
+Résultat : assets/mascot/mika-images/skin.json + idle.png, wake.png... Puis réglages > Skins
+(ou config.yaml : ui.skin: mika-images). Fonctionne sans écran
 (QT_QPA_PLATFORM=offscreen).
 """
 
@@ -45,7 +45,7 @@ def export(name: str, size: int = 128, fps: float = 10.0, root: Path = THEMES) -
     from PySide6.QtWidgets import QApplication
 
     from mikata.ui.qt.painter import Frame, paint_mascot
-    from mikata.ui.themes import ONE_SHOT
+    from mikata.ui.skins import ONE_SHOT
 
     app = QApplication.instance() or QApplication([])  # noqa: F841 (Qt a besoin d'une app)
     folder = root / name
@@ -70,11 +70,11 @@ def export(name: str, size: int = 128, fps: float = 10.0, root: Path = THEMES) -
             states[state]["loop"] = False
     manifest = {
         "name": name,
-        "author": "",
-        "license": "",
+        "author": "MIKATA",
+        "license": "Apache-2.0 (Mika, dessinée par MIKATA)",
         "states": states,
     }
-    (folder / "theme.json").write_text(
+    (folder / "skin.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     return folder
@@ -82,12 +82,12 @@ def export(name: str, size: int = 128, fps: float = 10.0, root: Path = THEMES) -
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("name", help="nom du dossier du thème (assets/mascot/<nom>)")
+    parser.add_argument("name", help="nom du dossier du skin (assets/mascot/<nom>)")
     parser.add_argument("--size", type=int, default=128, help="côté d'une image (px)")
     parser.add_argument("--fps", type=float, default=10.0)
     args = parser.parse_args(argv)
     folder = export(args.name, args.size, args.fps)
-    print(f"Thème exporté : {folder}")
+    print(f"Skin exporté : {folder}")
     return 0
 
 

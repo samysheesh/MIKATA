@@ -8,7 +8,7 @@ interroge un LLM cloud, agit sur le PC et répond à voix haute dans le casque.
 - Lancement : `uv run python -m mikata` (options : `--check-config`, `--config CHEMIN`, `--no-tray`, `--no-audio`, `--no-llm`, `--ask "question"`)
 - Réglages : `config.yaml` ; secrets : `.env` (copier `.env.example`, jamais commité) : `LLM_API_KEY`, `SEARCH_API_KEY` (Tavily, voir phase 4)
 - Logs : `data/logs/mikata.log` (rotation 5 Mo × 5, anciennes archives à la corbeille)
-- Interface (phase 8) : mascotte et réglages, lancées par MIKATA (`uv run python -m mikata.ui [--settings]`) ; captures dans [`docs/ui/`](docs/ui/), thèmes : [`assets/mascot/README.md`](assets/mascot/README.md)
+- Interface (phase 8) : mascotte et réglages, lancées par MIKATA (`uv run python -m mikata.ui [--settings]`) ; captures dans [`docs/ui/`](docs/ui/), skins : [`docs/MASCOT_SKIN_GUIDE.md`](docs/MASCOT_SKIN_GUIDE.md)
 - Licence : Apache-2.0 ([`LICENSE`](LICENSE)) ; composants tiers et leurs licences : [`THIRD_PARTY.md`](THIRD_PARTY.md)
 - Modèles : `uv run python scripts/download_models.py` (dans `models/`, non commités ; Whisper ~1,6 Go, voix ~420 Mo)
 
@@ -25,7 +25,7 @@ interroge un LLM cloud, agit sur le PC et répond à voix haute dans le casque.
 | 6 | Confort : fenêtre de suivi, barge-in, annulation, mémoire long terme | fusionnée |
 | 6b | Arrêt vocal sans mot d'activation, Whisper sur les suites courtes | fusionnée |
 | 7 | Mot d'activation « MIKATA » (enregistrement, entraînement Colab, vérificateur de voix, benchmark), démarrage automatique, purge | fusionnée |
-| 8 | Interface : mascotte de bureau (thèmes), fenêtre de réglages ; licence Apache-2.0, contrôle de secrets en CI | livrée, à valider sur le PC |
+| 8 | Interface : mascotte de bureau (skins), fenêtre de réglages ; licence Apache-2.0, contrôle de secrets en CI | livrée, à valider sur le PC |
 
 ## Développement
 
@@ -1585,8 +1585,9 @@ Deux composants, dans un **processus à part** (`python -m mikata.ui`), lancé p
      focus ;
    - tu la glisses où tu veux sur tes deux écrans ; la position et l'écran sont gardés dans
      `data\ui_state.json` ;
-   - **clic droit** : taille, mode traversable, bulle de texte, pause de l'écoute, réglages,
-     masquer ;
+   - **clic droit** : taille, bulle de texte, pause de l'écoute, réglages, masquer. Pour
+     cliquer sur ce qu'il y a dessous, on la déplace : il n'y a pas de mode « clics à
+     travers » (une fois activé, le clic droit ne l'atteindrait plus) ;
    - **double-clic** : réglages ;
    - une animation et une couleur par état (captures : [`docs/ui/`](docs/ui/)) :
 
@@ -1604,14 +1605,18 @@ Deux composants, dans un **processus à part** (`python -m mikata.ui`), lancé p
      | micro coupé ou occupé, MIKATA pas lancé | anthracite, micro barré |
 
    - la **bulle** (désactivable) montre ce que MIKATA a compris (« Tu : ... ») et ce qu'il
-     dit.
+     dit ;
+   - **skins** : Mika est dessinée en code ; tes propres personnages s'installent dans
+     `assets\mascot\<nom>\` (voir « Skins » plus bas).
 2. **La fenêtre de réglages** : icône MIKATA (zone de notification) > **Réglages…**
    (ou clic gauche sur l'icône). Onglets :
    - Audio : micro et sortie, avec test ;
    - Mot d'activation : seuils du modèle et du vérificateur ;
    - Conversation : réflexion par défaut, fenêtre de suivi, durée de l'historique ;
    - Coût et clés : coût LLM cumulé, crédit restant, clés masquées ;
-   - Mascotte : thème, durée de la bulle, mascotte au démarrage ;
+   - Mascotte : durée de la bulle, mascotte au démarrage ;
+   - Skins : les skins installés avec un aperçu ; un clic change de skin tout de suite (choix
+     gardé), import d'un .zip, suppression (à la corbeille, jamais Mika) ;
    - Journal : en direct, filtré par niveau.
 
 Comment ça marche :
@@ -1631,7 +1636,7 @@ Comment ça marche :
   - La config est validée avant l'écriture ; l'ancienne est sauvegardée dans
     `data\backups\`.
   - Chaque réglage porte un badge :
-    - **tout de suite** : seuils, réflexion, fenêtre de suivi, historique, thème, bulle ;
+    - **tout de suite** : seuils, réflexion, fenêtre de suivi, historique, skin, bulle ;
     - **au redémarrage** : micro, sortie audio, mascotte au démarrage, clés.
   - Les clés restent dans `.env` et ne s'affichent jamais en clair : 8 points, puis les 4
     derniers caractères.
@@ -1639,8 +1644,17 @@ Comment ça marche :
   - `enabled: false` coupe tout (MIKATA seul, comme avant) ;
   - `mascot: false` : pas de mascotte au démarrage, mais les réglages restent accessibles
     depuis l'icône.
-- **Thèmes** : un dossier par thème dans `assets\mascot\` (voir
-  [`assets/mascot/README.md`](assets/mascot/README.md)).
+- **Skins** :
+  - un dossier par skin dans `assets\mascot\` : un manifeste `skin.json` (nom, auteur,
+    licence) et une image par état ;
+  - **une seule image par état suffit** : le programme l'anime (respiration, petit rebond,
+    clignement, lueur, balancement), avec des réglages par état dans le manifeste. Des
+    images multiples (PNG numérotés, GIF, APNG) sont jouées image par image ;
+  - un état absent reprend l'image de repos, avec un avertissement dans `data\logs\ui.log` ;
+  - `scripts\make_skin.py` fabrique un skin à partir d'images générées (Nano Banana...) :
+    fond uni ou damier retiré, recadrage, taille, bords propres, manifeste ;
+  - guide complet, avec des prompts d'exemple : [`docs/MASCOT_SKIN_GUIDE.md`](docs/MASCOT_SKIN_GUIDE.md) ;
+  - tes skins ne sont pas suivis par git.
 
 ### 1. Récupérer la branche, installer
 
@@ -1651,7 +1665,20 @@ git pull
 uv sync
 ```
 
-`uv sync` installe PySide6-Essentials (Qt 6, ~230 Mo), ruamel.yaml et python-dotenv.
+`uv sync` installe PySide6-Essentials (Qt 6, ~230 Mo), ruamel.yaml et python-dotenv
+(scipy, utilisé par `make_skin.py`, était déjà installé).
+
+**Tu as déjà la branche et `config.yaml` modifié en local** (seuils du mot d'activation...) :
+garde tes modifications pendant la mise à jour (`ui.theme` devient `ui.skin`) :
+
+```powershell
+git stash
+git pull
+git stash pop
+Select-String -Path config.yaml -Pattern "skin:"
+```
+
+Attendu : `skin: default` dans la section `ui:` et tes autres réglages intacts.
 
 ### 2. Lint et tests
 
@@ -1659,7 +1686,7 @@ uv sync
 uv run ruff check .
 uv run ruff format --check .
 uv run pytest
-uv run pytest tests\test_ui_channel.py tests\test_ui_model.py tests\test_ui_themes.py tests\test_ui_settings_store.py tests\test_ui_qt.py tests\test_app_ui.py -v
+uv run pytest tests\test_ui_channel.py tests\test_ui_model.py tests\test_ui_skins.py tests\test_ui_skins_tab.py tests\test_skin_maker.py tests\test_ui_settings_store.py tests\test_ui_qt.py tests\test_app_ui.py -v
 ```
 
 Attendu : tout en `passed`. Les tests de l'interface tournent hors écran : aucune fenêtre
@@ -1719,10 +1746,10 @@ Si l'écran mémorisé est débranché, Mika revient en bas à droite de l'écra
 ### 7. Menu du clic droit
 
 - **Taille** : petite, moyenne, grande (96, 128, 192 px). Les pieds restent en place.
-- **Mode traversable** : les clics passent à travers Mika, la bulle le rappelle. Pour en
-  sortir : icône MIKATA > **Afficher la mascotte**, ou Réglages > Mascotte > « Afficher la
-  mascotte ».
 - **Bulle de texte** : on/off.
+- Plus de « Mode traversable » : pour cliquer dessous, glisse Mika ailleurs. Si tu l'avais
+  activé avant cette mise à jour, il est ignoré au prochain lancement (`data\ui_state.json`
+  n'est pas à modifier).
 - **Masquer** : pour la faire revenir, icône MIKATA > **Afficher la mascotte**.
 
 ### 8. Fenêtre de réglages
@@ -1781,19 +1808,53 @@ Relance la commande après une minute au repos : `CPU` (en secondes) doit à pei
 L'animation tourne à ~12 images/s au repos et à ~30 pendant une action. `PriorityClass`
 doit valoir `BelowNormal`.
 
-### 11. Un thème à toi
+### 11. Skins
 
-```powershell
-uv run python scripts\export_mascot_theme.py mon_theme
-explorer assets\mascot\mon_theme
-```
+**Changer de skin** :
 
-1. Retouche les PNG, ou remplace-les par tes images ou tes GIF (voir
-   `assets\mascot\README.md`).
-2. Réglages > Mascotte > Thème : « mon_theme », puis **Enregistrer** : le changement est
-   immédiat.
-3. Un thème invalide est ignoré (Mika par défaut) et la raison est écrite dans
-   `data\logs\ui.log`.
+1. Icône MIKATA > **Réglages… > Skins**.
+2. Clique sur un skin : la mascotte change tout de suite, sans redémarrer, et le choix est
+   gardé (`ui.skin` dans `config.yaml`).
+3. Ferme et relance MIKATA : le skin choisi est toujours là.
+
+**Créer le tien** (détail et prompts : [`docs/MASCOT_SKIN_GUIDE.md`](docs/MASCOT_SKIN_GUIDE.md)) :
+
+1. Génère une image par état avec Nano Banana. Les prompts d'exemple d'un personnage chibi
+   sont dans le guide, section 4.
+2. Range-les dans un dossier, par exemple `C:\Users\<toi>\Images\mika_chibi`, nommées
+   `repos.png`, `activation.png`, `ecoute.png`, `reflexion.png`, `action.png`,
+   `parole.png`, `fait.png`, `erreur.png`, `suivi.png`, `micro_coupe.png`. Seul
+   `repos.png` est obligatoire.
+3. Fabrique le skin et ouvre l'aperçu dans la mascotte :
+
+   ```powershell
+   uv run python scripts\make_skin.py C:\Users\<toi>\Images\mika_chibi --name "Mika chibi" --author "Moi" --license "usage personnel" --preview
+   start assets\mascot\mika-chibi\apercu.png
+   ```
+
+   - Attendu : le fond (uni ou damier) a disparu, les bords sont nets, sans liseré clair sur
+     un fond sombre.
+   - Dans la petite fenêtre d'aperçu, chaque état s'affiche ; « Défilement automatique »
+     les enchaîne.
+   - En cas de liseré ou de morceaux manquants : voir les options `--tolerance`, `--holes`
+     et `--shadow` dans le guide, puis relance avec `--replace`.
+4. Réglages > Skins > **Actualiser**, puis clique sur « Mika chibi ».
+5. Un état manquant reprend l'image de repos. Vérifie l'avertissement dans le journal :
+
+   ```powershell
+   Select-String -Path data\logs\ui.log -Pattern "image de repos utilisée" | Select-Object -Last 5
+   ```
+
+**Importer et supprimer** :
+
+1. Fais un .zip de ton skin : clic droit sur `assets\mascot\mika-chibi` > **Compresser dans
+   un fichier ZIP**. Déplace ce .zip ailleurs, par exemple sur le Bureau.
+2. Réglages > Skins : sélectionne « Mika chibi » > **Supprimer** > Oui. Le dossier part à la
+   **corbeille** et Mika revient si c'était le skin en cours.
+3. **Importer un .zip…** > choisis le .zip : le skin revient et s'applique.
+4. Importe un fichier qui n'est pas un skin (un .zip quelconque) : il est refusé, et la
+   raison s'affiche en bas de la fenêtre. Rien n'est écrit dans `assets\mascot\`.
+5. Mika : le bouton **Supprimer** reste grisé.
 
 ### 12. Publication (licence, secrets)
 

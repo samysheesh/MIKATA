@@ -3,12 +3,14 @@ au-dessus, qui ne prend jamais le focus (le jeu ou la fenêtre active le garde).
 
 - Glisser avec le bouton gauche, sur n'importe quel écran : position et écran mémorisés
   (data/ui_state.json) ; un écran débranché ramène la mascotte sur l'écran principal.
-- Clic droit : taille, mode traversable (les clics passent à travers), bulle on/off, pause
-  de l'écoute, réglages, masquer. En mode traversable la fenêtre ne reçoit plus de clic :
-  on le désactive depuis l'icône MIKATA (« Afficher la mascotte ») ou les réglages.
+- Clic droit : taille, bulle on/off, pause de l'écoute, réglages, masquer. Pour cliquer sur
+  ce qu'il y a dessous, on déplace la mascotte (pas de mode « clics à travers » : une fois
+  activé, le clic droit ne l'atteindrait plus).
 - Double-clic : réglages.
-- La bulle est une seconde fenêtre (toujours traversable) placée au-dessus de la mascotte,
-  ou en dessous près du haut de l'écran.
+- Le skin (`ui.skin`) ne fournit que les images : `SkinPainter` dessine Mika en code, ou
+  l'image du skin pour l'état courant, déformée par ses effets (`skins.pose`).
+- La bulle est une seconde fenêtre, simple affichage qui ne prend aucun clic, placée
+  au-dessus de la mascotte, ou en dessous près du haut de l'écran.
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from loguru import logger
-from PySide6.QtCore import QPoint, QRect, QRectF, Qt, QTimer
+from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
@@ -33,22 +35,21 @@ from PySide6.QtGui import (
     QPainterPath,
     QPen,
     QPixmap,
+    QRadialGradient,
 )
 from PySide6.QtWidgets import QMenu, QWidget
 
 from mikata.ui.model import MascotModel
 from mikata.ui.prefs import SIZES, MascotPrefs, save_prefs
 from mikata.ui.qt.painter import Frame, paint_mascot
-from mikata.ui.themes import Theme
+from mikata.ui.skins import STATE_COLORS, Skin, pose
 
 FAST_MS = 33  # ~30 images/s pendant une animation vive
 SLOW_MS = 80  # repos et micro coupé : animations lentes, moins de CPU
 MARGIN = 24
 BUBBLE_WIDTH = 300
-CLICK_THROUGH_NOTE = (
-    "Mode traversable : les clics passent à travers. Pour le quitter : icône MIKATA > "
-    "Afficher la mascotte, ou les réglages."
-)
+ART_WIDTH = 0.84  # part de la fenêtre occupée par l'image d'un skin (marge pour les effets)
+ART_HEIGHT = 0.86
 
 _FLAGS = (
     Qt.WindowType.FramelessWindowHint
@@ -66,34 +67,60 @@ def pil_to_pixmap(image: Any) -> QPixmap:
     return QPixmap.fromImage(qimage.copy())
 
 
-class ThemePainter:
-    """Dessine un état : thème par défaut en code, ou images d'un thème (mises en cache)."""
+class SkinPainter:
+    """Dessine un état : Mika en code, ou l'image du skin animée par ses effets."""
 
-    def __init__(self, theme: Theme | None) -> None:
-        self.theme = theme
-        self._cache: dict[tuple[int, int], QPixmap] = {}
+    def __init__(self, skin: Skin | None) -> None:
+        self.skin = skin
+        self._cache: dict[tuple[int, int, int, int], QPixmap] = {}
 
     def paint(self, painter: QPainter, rect: QRectF, frame: Frame) -> None:
-        animation = None
-        if self.theme is not None and not self.theme.builtin:
-            animation = self.theme.animation(frame.state)
-        if animation is None:
+        art = None
+        if self.skin is not None and not self.skin.builtin:
+            art = self.skin.art(frame.state)
+        if art is None:
             paint_mascot(painter, rect, frame)
             return
-        image = animation.frame_at(frame.age)
-        key = (id(image), int(rect.width()))
+        p = pose(art.effects, frame.t, STATE_COLORS.get(frame.state, "#ffffff"))
+        image = art.blink_frame if p.blink and art.blink_frame else art.frame_at(frame.age)
+        dpr = painter.device().devicePixelRatioF() if painter.device() is not None else 1.0
+        pixmap = self._pixmap(image, rect.width() * ART_WIDTH, rect.height() * ART_HEIGHT, dpr)
+        width, height = pixmap.width() / dpr, pixmap.height() / dpr
+        feet = QPointF(rect.center().x(), rect.bottom() - rect.height() * 0.03)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        if p.glow > 0:
+            center = QPointF(feet.x(), feet.y() - height * 0.5)
+            gradient = QRadialGradient(center, max(width, height) * 0.62)
+            color = QColor(p.glow_color)
+            color.setAlphaF(min(1.0, 0.55 * p.glow))
+            gradient.setColorAt(0.0, color)
+            color.setAlphaF(0.0)
+            gradient.setColorAt(1.0, color)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(gradient)
+            painter.drawEllipse(center, max(width, height) * 0.62, max(width, height) * 0.62)
+        painter.translate(feet.x(), feet.y() + p.dy * height)
+        painter.rotate(p.angle)
+        painter.scale(p.scale_x, p.scale_y)
+        painter.drawPixmap(
+            QRectF(-width / 2, -height, width, height), pixmap, QRectF(pixmap.rect())
+        )
+        painter.restore()
+
+    def _pixmap(self, image: Any, box_w: float, box_h: float, dpr: float) -> QPixmap:
+        key = (id(image), int(box_w), int(box_h), int(dpr * 100))
         pixmap = self._cache.get(key)
         if pixmap is None:
             pixmap = pil_to_pixmap(image).scaled(
-                int(rect.width()),
-                int(rect.height()),
+                max(1, int(box_w * dpr)),
+                max(1, int(box_h * dpr)),
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
             self._cache[key] = pixmap
-        x = rect.x() + (rect.width() - pixmap.width()) / 2
-        y = rect.y() + (rect.height() - pixmap.height()) / 2
-        painter.drawPixmap(int(x), int(y), pixmap)
+        return pixmap
 
 
 class BubbleWindow(QWidget):
@@ -178,7 +205,7 @@ class MascotWindow(QWidget):
         model: MascotModel,
         prefs: MascotPrefs,
         prefs_path: Path,
-        theme: Theme | None,
+        skin: Skin | None,
         send: Callable[[dict[str, Any]], bool],
         open_settings: Callable[[], None],
         clock: Callable[[], float] = time.monotonic,
@@ -190,7 +217,7 @@ class MascotWindow(QWidget):
         self.model = model
         self.prefs = prefs
         self.prefs_path = prefs_path
-        self.painter = ThemePainter(theme)
+        self.painter = SkinPainter(skin)
         self._send = send
         self._open_settings = open_settings
         self._clock = clock
@@ -201,13 +228,13 @@ class MascotWindow(QWidget):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.tick)
         self.apply_size()
-        self._apply_click_through(prefs.click_through, show=False)
         self.restore_position()
 
     # -- préférences ------------------------------------------------------------------------
 
-    def set_theme(self, theme: Theme | None) -> None:
-        self.painter = ThemePainter(theme)
+    def set_skin(self, skin: Skin | None) -> None:
+        """Change de skin tout de suite (None : Mika)."""
+        self.painter = SkinPainter(skin)
         self.update()
 
     def apply_size(self) -> None:
@@ -223,20 +250,6 @@ class MascotWindow(QWidget):
         self.move(bottom_center[0] - self.width() // 2, bottom_center[1] - self.height() + 1)
         self.clamp_to_screen()
         self.save()
-
-    def set_click_through(self, enabled: bool) -> None:
-        self.prefs.click_through = enabled
-        self._apply_click_through(enabled, show=not self.prefs.hidden)
-        if enabled:
-            self.model.note(CLICK_THROUGH_NOTE)
-        self.save()
-
-    def _apply_click_through(self, enabled: bool, show: bool) -> None:
-        # Changer ce drapeau recrée la fenêtre native (WS_EX_TRANSPARENT sous Windows) : il
-        # faut la réafficher.
-        self.setWindowFlag(Qt.WindowType.WindowTransparentForInput, enabled)
-        if show:
-            self.show()
 
     def set_bubble(self, enabled: bool) -> None:
         self.prefs.bubble = enabled
@@ -257,10 +270,7 @@ class MascotWindow(QWidget):
         self.save()
 
     def reveal(self) -> None:
-        """« Afficher la mascotte » (icône MIKATA, réglages) : visible et cliquable."""
-        if self.prefs.click_through:
-            self._apply_click_through(False, show=False)
-            self.prefs.click_through = False
+        """« Afficher la mascotte » (icône MIKATA, réglages) : visible, ramenée sur l'écran."""
         self.set_hidden(False)
         self.clamp_to_screen()
 
@@ -381,10 +391,6 @@ class MascotWindow(QWidget):
             action.triggered.connect(lambda _=False, n=name: self.set_size(n))
             group.addAction(action)
             sizes.addAction(action)
-        through = QAction("Mode traversable (les clics passent à travers)", menu, checkable=True)
-        through.setChecked(self.prefs.click_through)
-        through.triggered.connect(self.set_click_through)
-        menu.addAction(through)
         bubble = QAction("Bulle de texte", menu, checkable=True)
         bubble.setChecked(self.prefs.bubble)
         bubble.triggered.connect(self.set_bubble)

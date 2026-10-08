@@ -53,7 +53,7 @@ SETTINGS: tuple[SettingSpec, ...] = (
     SettingSpec("llm.reasoning_effort", "Réflexion par défaut", True, "none, low, medium, high"),
     SettingSpec("agent.follow_up_s", "Fenêtre de suivi (s)", True, "0 : désactivée"),
     SettingSpec("agent.history_persist_h", "Durée de l'historique (h)", True),
-    SettingSpec("ui.theme", "Thème de la mascotte", True),
+    SettingSpec("ui.skin", "Skin de la mascotte", True),
     SettingSpec("ui.bubble_s", "Bulle visible après la dernière phrase (s)", True),
     SettingSpec("ui.mascot", "Mascotte au démarrage de MIKATA", False),
 )

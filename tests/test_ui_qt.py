@@ -170,20 +170,30 @@ def test_size_change_keeps_the_feet_in_place(mascot: Any) -> None:
     assert mascot.width() == 192
 
 
-def test_click_through_and_reveal(mascot: Any) -> None:
+def test_hide_and_reveal(mascot: Any) -> None:
     from PySide6.QtCore import Qt
 
-    mascot.set_click_through(True)
-    assert mascot.windowFlags() & Qt.WindowType.WindowTransparentForInput
-    assert mascot.isVisible() and load_prefs(mascot.prefs_path).click_through
-    assert "traversable" in mascot.model.bubble().note
     mascot.set_hidden(True)
     assert not mascot.isVisible() and load_prefs(mascot.prefs_path).hidden
     mascot.reveal()  # « Afficher la mascotte » depuis l'icône ou les réglages
-    assert mascot.isVisible()
-    assert not mascot.windowFlags() & Qt.WindowType.WindowTransparentForInput
-    saved = load_prefs(mascot.prefs_path)
-    assert not saved.click_through and not saved.hidden
+    assert mascot.isVisible() and not load_prefs(mascot.prefs_path).hidden
+    assert not mascot.windowFlags() & Qt.WindowType.WindowTransparentForInput  # jamais
+
+
+def test_old_click_through_preference_is_ignored(tmp_path: Path) -> None:
+    """Le mode traversable a été retiré : une ancienne préférence ne le réactive pas."""
+    from PySide6.QtCore import Qt
+
+    from mikata.ui.qt.mascot import MascotWindow
+
+    path = tmp_path / "ui_state.json"
+    path.write_text(json.dumps({"size": "petite", "click_through": True}), encoding="utf-8")
+    prefs = load_prefs(path)
+    assert prefs.size == "petite" and not hasattr(prefs, "click_through")
+    window = MascotWindow(MascotModel(), prefs, path, None, lambda m: True, lambda: None)
+    assert not window.windowFlags() & Qt.WindowType.WindowTransparentForInput
+    window.bubble.close()
+    window.close()
 
 
 def _actions(menu: Any) -> dict[str, Any]:
@@ -202,7 +212,6 @@ def test_context_menu(mascot: Any) -> None:
         "Taille/Petite (96 px)",
         "Taille/Moyenne (128 px)",
         "Taille/Grande (192 px)",
-        "Mode traversable (les clics passent à travers)",
         "Bulle de texte",
         "Mettre en pause l'écoute",
         "Réglages…",
@@ -248,31 +257,53 @@ def test_bubble_follows_the_mascot(mascot: Any) -> None:
     assert not bubble.isVisible()
 
 
-STATE_MESSAGES: dict[str, dict[str, Any]] = {
-    "wake": {"type": "wake", "score": 0.9},
-    "success": {"type": "result", "outcome": "success"},
-    "error": {"type": "error", "message": "panne"},
-    "mic_off": {"type": "mic", "status": "paused"},
-}
+def _single_image_skin(root: Path, key: str = "rond") -> None:
+    """Skin d'une image par état (un disque), animé par les effets par défaut."""
+    from PIL import Image, ImageDraw
+
+    folder = root / key
+    folder.mkdir(parents=True)
+    states = {}
+    for state in VISUAL_STATES:
+        image = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+        ImageDraw.Draw(image).ellipse((4, 4, 60, 60), fill=(200, 60, 60, 255))
+        image.save(folder / f"{state}.png")
+        states[state] = {"file": f"{state}.png"}
+    manifest = {"name": "Rond", "author": "test", "license": "CC0", "states": states}
+    (folder / "skin.json").write_text(json.dumps(manifest), encoding="utf-8")
 
 
-def test_every_state_paints_with_both_themes(mascot: Any, tmp_path: Path) -> None:
-    from mikata.ui.themes import load_theme
+def test_every_state_paints_with_every_kind_of_skin(mascot: Any, tmp_path: Path) -> None:
+    from mikata.ui.model import demo_messages
+    from mikata.ui.skins import load_skin
 
-    script = load_script("export_mascot_theme")
-    script.export("images", size=32, fps=4, root=tmp_path)
-    for theme in (None, load_theme(tmp_path, "images")):
-        mascot.set_theme(theme)
+    load_script("export_mascot_skin").export("images", size=32, fps=4, root=tmp_path)
+    _single_image_skin(tmp_path)
+    for skin in (None, load_skin(tmp_path, "images"), load_skin(tmp_path, "rond")):
+        mascot.set_skin(skin)
         for state in VISUAL_STATES:
-            mascot.model.handle({"type": "state", "state": "idle"})
-            mascot.model.handle(STATE_MESSAGES.get(state, {"type": "state", "state": state}))
+            for message in demo_messages(state):
+                mascot.model.handle(message)
             assert mascot.model.visual() == state
             image = mascot.grab().toImage()
             center = image.pixelColor(image.width() // 2, image.height() // 2 + 6)
-            assert center.alpha() > 200, (theme, state)  # le personnage est dessiné
+            assert center.alpha() > 200, (skin, state)  # le personnage est dessiné
             assert image.pixelColor(0, 0).alpha() == 0  # le coin reste transparent
-            mascot.model.handle({"type": "mic", "status": "ok"})
             mascot.clock.t += 5  # fin des états joués une fois
+
+
+def test_single_image_skin_is_animated_by_its_effects(mascot: Any, tmp_path: Path) -> None:
+    from mikata.ui.skins import load_skin
+
+    _single_image_skin(tmp_path)
+    mascot.set_skin(load_skin(tmp_path, "rond"))
+    mascot.model.handle({"type": "state", "state": "speaking"})  # rebond + lueur
+    first = mascot.grab().toImage()
+    mascot.clock.t += 0.17  # au sommet du rebond (3 rebonds/s)
+    second = mascot.grab().toImage()
+    assert first != second
+    mascot.set_skin(None)  # retour à Mika, sans redémarrer
+    assert mascot.painter.skin is None
 
 
 # -- réglages -------------------------------------------------------------------------------
@@ -330,8 +361,8 @@ def test_settings_show_the_current_values(base: Path) -> None:
     values = window.values()
     assert values["wake.threshold"] == 0.5 and values["agent.follow_up_s"] == 6
     assert values["audio.input_device"] == "NT-USB" and values["llm.reasoning_effort"] == "none"
-    assert values["ui.theme"] == "default" and values["ui.mascot"] is True
-    assert window.tabs.count() == 6
+    assert "ui.skin" not in values and values["ui.mascot"] is True  # onglet Skins : immédiat
+    assert window.tabs.count() == 7
     window.close()
 
 
@@ -452,8 +483,8 @@ def test_controller_routes_mikata_messages(controller: Any) -> None:
     controller.mascot.set_hidden(True)
     controller.on_message({"type": "show_mascot"})
     assert controller.mascot.isVisible()
-    controller.apply({"ui.bubble_s": 3, "ui.theme": "inexistant"})
-    assert controller.model.bubble_s == 3.0 and controller.mascot.painter.theme is None
+    controller.apply({"ui.bubble_s": 3, "ui.skin": "inexistant"})  # skin absent : Mika
+    assert controller.model.bubble_s == 3.0 and controller.mascot.painter.skin is None
     controller.on_message({"type": "bye"})
     assert controller.quits == [True] and controller.model.visual() == "mic_off"
 
@@ -518,5 +549,7 @@ def test_screenshot_script(tmp_path: Path) -> None:
     assert names == sorted(
         ["mascotte_etats.png", "mascotte_bulle.png", "mascotte_menu.png"]
         + [f"reglages_{tab}.png" for tab in script.SETTINGS_TABS]
+        + ["skin_detourage.png", "skin_images_etats.png"]
     )
+    assert len(script.SETTINGS_TABS) == 7  # un nom par onglet des réglages
     assert all(p.stat().st_size > 1000 for p in written)

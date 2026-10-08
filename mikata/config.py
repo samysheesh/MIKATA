@@ -255,7 +255,7 @@ class UiConfig(_Section):
 
     enabled: bool = True  # canal local ouvert : mascotte et réglages utilisables
     mascot: bool = True  # lancer la mascotte au démarrage de MIKATA
-    theme: str = "default"  # dossier assets/mascot/<theme>/
+    skin: str = "default"  # dossier assets/mascot/<skin>/ (default : Mika, dessinée en code)
     bubble_s: float = Field(default=8, ge=1, le=120)  # bulle visible après la dernière phrase
 
 
