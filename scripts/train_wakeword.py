@@ -195,11 +195,21 @@ def read_wav(path: Path) -> tuple[Any, int]:
 
     with wave.open(str(path), "rb") as w:
         rate, frames = w.getframerate(), w.readframes(w.getnframes())
-        channels = w.getnchannels()
-    audio = np.frombuffer(frames, dtype=np.int16)
+        channels, width = w.getnchannels(), w.getsampwidth()
+    if width == 1:  # 8 bits non signés
+        audio = (np.frombuffer(frames, dtype=np.uint8).astype(np.int32) - 128) << 8
+    elif width == 2:
+        audio = np.frombuffer(frames, dtype=np.int16).astype(np.int32)
+    elif width == 3:  # 24 bits : on garde les 16 bits de poids fort
+        raw = np.frombuffer(frames[: len(frames) // 3 * 3], dtype=np.uint8).reshape(-1, 3)
+        audio = raw[:, 1].astype(np.int32) | (raw[:, 2].astype(np.int8).astype(np.int32) << 8)
+    elif width == 4:  # 32 bits entiers
+        audio = np.frombuffer(frames[: len(frames) // 4 * 4], dtype=np.int32) >> 16
+    else:
+        raise wave.Error(f"largeur d'échantillon non gérée : {width} octets")
     if channels > 1:
-        audio = audio.reshape(-1, channels).mean(axis=1).astype(np.int16)
-    return audio, rate
+        audio = audio[: len(audio) // channels * channels].reshape(-1, channels).mean(axis=1)
+    return np.clip(audio, -32768, 32767).astype(np.int16), rate
 
 
 def write_wav(path: Path, audio: Any, rate: int = SAMPLE_RATE) -> None:
@@ -384,7 +394,8 @@ def extract_rirs(archive: Path, dest: Path) -> list[Path]:
                 raw.write_bytes(z.read(name))
                 try:
                     audio, rate = read_wav(raw)
-                except (wave.Error, EOFError):
+                except (wave.Error, EOFError, ValueError):  # fichier illisible : on l'ignore
+                    log(f"réponse de pièce ignorée (format non géré) : {raw.name}")
                     continue
                 write_wav(dest / raw.name, to_16k(audio, rate))
     return sorted(dest.glob("*.wav"))
