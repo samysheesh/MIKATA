@@ -19,6 +19,7 @@ Usage :
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
@@ -102,6 +103,8 @@ def watch(data_dir: Path) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if sys.stderr is None:  # pythonw : pas de console, loguru écrit dans helper.log
+        sys.stderr = open(os.devnull, "w")  # noqa: SIM115  # gardé ouvert, remplace stderr
     parser = argparse.ArgumentParser(description="Helper USN de MIKATA (élevé).")
     parser.add_argument("--data", required=True, type=Path, help="dossier data/ de MIKATA")
     parser.add_argument("--once", action="store_true", help="un dump puis sortie")

@@ -26,7 +26,8 @@ if ($Remove) {
 
 $data = Join-Path $Project "data"
 $share = Join-Path $data "index"
-$python = Join-Path $Project ".venv\Scripts\python.exe"
+$python = Join-Path $Project ".venv\Scripts\pythonw.exe"  # pas de fenêtre console
+if (-not (Test-Path $python)) { $python = Join-Path $Project ".venv\Scripts\python.exe" }
 if (-not (Test-Path $python)) { throw "Python du projet introuvable : $python (uv venv attendu)" }
 
 New-Item -ItemType Directory -Force -Path $share | Out-Null
