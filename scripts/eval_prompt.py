@@ -1,4 +1,4 @@
-"""Évaluation du prompt système sur 23 phrases approximatives (vrai LLM, actions simulées).
+"""Évaluation du prompt système sur 25 phrases approximatives (vrai LLM, actions simulées).
 
 Usage : uv run python scripts/eval_prompt.py [--only 1 3 ...] [--json rapport.json]
 
@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from mikata.tools.apps import fold
-from mikata.tools.base import AppEntry, WindowInfo
+from mikata.tools.base import AppEntry, UiControlInfo, UiWindowInfo, WindowInfo
 from mikata.tools.input import parse_keys
 
 FORBIDDEN_TOOLS = ("run_powershell", "run_script")
@@ -118,6 +118,16 @@ CASES: tuple[Case, ...] = (
     Case("quel temps il fait à Lyon", ("get_weather",), "météo à Lyon",
          lambda a: "lyon" in fold(str(a.get("city")))),
     Case("verrouille l'ordi", ("lock",), "verrouiller la session"),
+    # Phase 12a : l'état ambiant Discord se lit sans rien ouvrir.
+    Case("qui est dans mon salon vocal discord", ("uia_state", "uia_window", "uia_read"),
+         "l'état ambiant Discord",
+         lambda a: not a or "discord" in fold(str(a.get("process") or ""))),
+    # Phase 12b : une tâche web enchaîne ouverture, lecture et clic.
+    Case("lance le dernier opening de black clover",
+         ("browser_open", "browser_click"),
+         "ouvrir YouTube et cliquer la vidéo",
+         lambda a: "youtube" in fold(str(a.get("url") or ""))
+         or "black" in fold(str(a.get("text") or ""))),
     # Phase 6 : « raconte-moi une longue histoire » avait ouvert le Bloc-notes pour l'y coller.
     Case("raconte-moi une longue histoire", SPOKEN, "histoire dite, 3 à 5 phrases",
          sentences=(3, 5), max_words=140),
@@ -265,6 +275,79 @@ class DryRunShell:
         return 0, "(simulation : rien n'a été lancé)"
 
 
+class DryRunUi:
+    """Pilotage UIA simulé (phase 12a) : l'état ambiant répond, rien n'est cliqué."""
+
+    def __init__(self, actions: list[str]) -> None:
+        self.actions = actions
+
+    def window(self, title: str | None, process: str | None) -> UiWindowInfo:
+        self.actions.append(f"fenêtre {process or title or 'active'}")
+        return UiWindowInfo(title or "Discord", process or "Discord")
+
+    def controls(self, window: UiWindowInfo, max_controls: int) -> list[UiControlInfo]:
+        return [UiControlInfo("Rechercher", "bouton")]
+
+    def read(self, window: UiWindowInfo, control: str | None, max_chars: int) -> str:
+        self.actions.append(f"lire {control or window.title}")
+        return "Texte simulé."
+
+    def click(self, window: UiWindowInfo, control: str, kind: str | None, nth: int) -> str:
+        self.actions.append(f"cliquer {control!r}")
+        return f"« {control} » cliqué."
+
+    def set_text(self, window: UiWindowInfo, control: str, text: str) -> str:
+        self.actions.append(f"écrire dans {control!r}")
+        return f"« {control} » rempli."
+
+    def state_summary(self) -> str:
+        self.actions.append("état ambiant")
+        return "Discord : salon vocal « Général ». En vocal : Samy."
+
+    def pause_state(self, paused: bool) -> None:
+        pass
+
+    def aclose(self) -> None:
+        pass
+
+
+class DryRunBrowser:
+    """Navigateur simulé (phase 12b) : pages scriptées, rien n'est ouvert ni cliqué."""
+
+    def __init__(self, actions: list[str]) -> None:
+        self.actions = actions
+
+    async def tabs(self) -> str:
+        self.actions.append("onglets du navigateur")
+        return "1 onglet : YouTube — https://youtube.com"
+
+    async def open_url(self, url: str) -> str:
+        self.actions.append(f"naviguer {url}")
+        return f"Page ouverte : {url}"
+
+    async def read(self, max_chars: int) -> str:
+        self.actions.append("lire la page")
+        return "Titre : black clover - YouTube\nURL : https://youtube.com\nTexte :\nRésultats."
+
+    async def find(self, text: str, nth: int) -> dict[str, Any]:
+        return {"ok": True, "label": text, "tag": "A", "href": "https://youtube.com/watch?v=x"}
+
+    async def click(self, text: str, nth: int) -> str:
+        self.actions.append(f"cliquer {text!r}")
+        return f"« {text} » cliqué."
+
+    async def type_text(self, field: str, text: str) -> str:
+        self.actions.append(f"écrire {text!r}")
+        return f"Texte écrit dans le champ « {field} »."
+
+    async def back(self) -> str:
+        self.actions.append("page précédente")
+        return "Page précédente."
+
+    async def aclose(self) -> None:
+        pass
+
+
 class RecordingSpeech:
     def __init__(self) -> None:
         self.said: list[str] = []
@@ -318,6 +401,8 @@ async def run_cases(
             guard=Guard(sandboxed, home=sandbox, trash=trashed.append),
             input=DryRunInput(actions),
             shell=DryRunShell(actions),
+            uia=DryRunUi(actions),
+            browser=DryRunBrowser(actions),
         )
 
         async def running() -> list[str]:

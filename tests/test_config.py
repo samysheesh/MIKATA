@@ -87,6 +87,10 @@ def test_defaults_match_section_10(config_file: Path) -> None:
     assert config.uia.enabled is True and config.uia.state_poll_s == 2
     assert config.uia.max_controls == 200 and config.uia.max_text_chars == 2000
     assert config.uia.accessibility_client is True
+    # ajouts phase 12b
+    assert config.browser.enabled is True and config.browser.cdp_port == 9222
+    assert config.browser.fallback_uia is True and config.browser.page_text_max_chars == 4000
+    assert config.browser.click_timeout_s == 5
 
 
 def test_repo_config_keys_are_exactly_the_model_fields() -> None:

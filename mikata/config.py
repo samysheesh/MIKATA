@@ -176,6 +176,18 @@ class WebConfig(_Section):
     default_city: str | None = None  # ville de la météo si aucune n'est dite
 
 
+class BrowserConfig(_Section):
+    """Ajout phase 12b : contrôle du navigateur (Brave/Chromium) par le protocole
+    DevTools. Le port ne s'active qu'au lancement : MIKATA lance Brave elle-même quand il
+    est fermé, et refuse poliment (sans jamais le fermer) s'il tourne déjà sans le port."""
+
+    enabled: bool = True  # false : les outils browser_* répondent « désactivé »
+    cdp_port: int = Field(default=9222, ge=1024, le=65535)
+    fallback_uia: bool = True  # Brave ouvert sans le port : suggérer les outils UIA
+    page_text_max_chars: int = Field(default=4000, ge=200, le=20000)  # texte lu, tronqué
+    click_timeout_s: float = Field(default=5, gt=0, le=30)  # délai d'une commande DevTools
+
+
 VoiceEngine = Literal["piper", "kokoro", "elevenlabs"]
 
 
@@ -347,6 +359,7 @@ class Config(_Section):
     tts: TtsConfig = Field(default_factory=TtsConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     web: WebConfig = Field(default_factory=WebConfig)
+    browser: BrowserConfig = Field(default_factory=BrowserConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
     guard: GuardConfig = Field(default_factory=GuardConfig)
     uia: UiaConfig = Field(default_factory=UiaConfig)

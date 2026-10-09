@@ -1,0 +1,331 @@
+"""Contrôleur du navigateur (phase 12b) : Brave piloté par le protocole DevTools.
+
+Stratégie d'attache (jamais déranger l'utilisateur) :
+1. le port DevTools répond -> on s'y attache ;
+2. Brave n'est pas ouvert -> on le lance avec `--remote-debugging-port` (profil normal,
+   identifiants et favoris conservés) ;
+3. Brave est déjà ouvert **sans** le port -> impossible de s'attacher (Chromium n'active
+   le port qu'au lancement) : erreur en français qui propose la marche à suivre, jamais de
+   fermeture automatique du navigateur.
+
+Le JavaScript envoyé au navigateur est fixe, écrit ici, jamais fourni par le LLM.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+from loguru import logger
+
+from mikata.browser.cdp import CdpClient, CdpClosed, CdpError, Target, list_targets
+from mikata.config import Config
+from mikata.tools.base import Desktop, ToolError
+
+# Placeholders des arguments dans le JavaScript fixe : des noms impossibles à retrouver
+# dans un texte utilisateur (un « ARG2 » dans un champ de recherche ne doit rien casser).
+ARG_TEXT = "__MIKATA_ARG_TEXT__"
+ARG_NTH = "__MIKATA_ARG_NTH__"
+ARG_FIELD = "__MIKATA_ARG_FIELD__"
+
+# Lecture structurée de la page : titre, URL, texte, liens et boutons visibles.
+_READ_JS = """(() => {
+  const text = document.body ? document.body.innerText.slice(0, 8000) : "";
+  const links = [...document.querySelectorAll("a[href]")]
+    .map(a => (a.innerText || "").trim())
+    .filter(t => t && t.length < 120)
+    .slice(0, 60);
+  const buttons = [...document.querySelectorAll("button, [role=button], input[type=submit]")]
+    .map(b => (b.innerText || b.value || b.getAttribute("aria-label") || "").trim())
+    .filter(t => t && t.length < 120)
+    .slice(0, 60);
+  return JSON.stringify({ title: document.title, url: location.href, text, links, buttons });
+})()"""
+
+# Le n-ième élément dont le texte visible contient le texte cherché : libellé et lien,
+# sans cliquer.
+_FIND_JS = """(() => {
+  const needle = __MIKATA_ARG_TEXT__.toLowerCase();
+  const candidates = [...document.querySelectorAll(
+    "a, button, [role=button], [role=link], input[type=submit], summary")];
+  const labelOf = el => ((el.innerText || el.value || el.getAttribute("aria-label") || "")
+    + " " + (el.title || "")).trim();
+  const matches = candidates.filter(el => labelOf(el).toLowerCase().includes(needle));
+  const el = matches[__MIKATA_ARG_NTH__ - 1];
+  if (!el) {
+    return JSON.stringify({ ok: false, found: matches.length,
+      candidates: matches.slice(0, 8).map(labelOf).filter(t => t) });
+  }
+  return JSON.stringify({ ok: true, label: labelOf(el).slice(0, 80), tag: el.tagName,
+    href: el.href || "" });
+})()"""
+
+# Clique le n-ième élément dont le texte visible contient le texte cherché (sans la souris).
+_CLICK_JS = """(() => {
+  const needle = __MIKATA_ARG_TEXT__.toLowerCase();
+  const labelOf = el => ((el.innerText || el.value || el.getAttribute("aria-label") || "")
+    + " " + (el.title || "")).trim();
+  const el = [...document.querySelectorAll(
+    "a, button, [role=button], [role=link], input[type=submit], summary")]
+    .filter(el => labelOf(el).toLowerCase().includes(needle))[__MIKATA_ARG_NTH__ - 1];
+  if (!el) return JSON.stringify({ ok: false });
+  el.scrollIntoView({ block: "center" });
+  el.click();
+  return JSON.stringify({ ok: true });
+})()"""
+
+# Écrit le texte dans le champ dont le libellé contient le nom donné (React compris).
+_TYPE_JS = """(() => {
+  const needle = __MIKATA_ARG_FIELD__.toLowerCase();
+  const fields = [...document.querySelectorAll(
+    "input[type=text], input[type=search], input:not([type]), textarea, [role=textbox], "
+    + "[contenteditable=true]")];
+  const labelOf = el => (el.getAttribute("placeholder") || el.getAttribute("aria-label")
+    || el.getAttribute("name") || el.id || "").trim();
+  const field = fields.find(el => labelOf(el).toLowerCase().includes(needle)) || fields[0];
+  if (!field) return JSON.stringify({ ok: false });
+  const text = __MIKATA_ARG_TEXT__;
+  const proto = field instanceof HTMLTextAreaElement
+    ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(proto, "value");
+  if (setter && setter.set && field.tagName !== "DIV") setter.set.call(field, text);
+  else field.textContent = text;
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+  field.dispatchEvent(new Event("change", { bubbles: true }));
+  return JSON.stringify({ ok: true, tag: field.tagName });
+})()"""
+
+_BACK_JS = "history.back(); true"
+
+
+def _js(snippet: str, **args: str | int) -> str:
+    placeholders = {
+        "text": ARG_TEXT,
+        "nth": ARG_NTH,
+        "field": ARG_FIELD,
+    }
+    for name, value in args.items():
+        snippet = snippet.replace(placeholders[name], json.dumps(value), 1)
+    return snippet
+
+
+class BrowserController:
+    """Implémente `tools.base.BrowserControl`. Connexion paresseuse : le port DevTools
+    n'est cherché qu'à la première utilisation."""
+
+    def __init__(self, config: Config, desktop: Desktop) -> None:
+        self._config = config
+        self._desktop = desktop
+        self._client: CdpClient | None = None
+
+    async def aclose(self) -> None:
+        if self._client is not None:
+            await self._client.close()
+            self._client = None
+
+    # -- attache ----------------------------------------------------------------------
+
+    def _brave_exe(self) -> str | None:
+        roots = [
+            Path(os.environ.get("LOCALAPPDATA", "")),
+            Path(os.environ.get("PROGRAMFILES", "")),
+            Path(os.environ.get("PROGRAMFILES(X86)", "")),
+        ]
+        for root in roots:
+            exe = root / "BraveSoftware" / "Brave-Browser" / "Application" / "brave.exe"
+            if exe.is_file():
+                return str(exe)
+        return None
+
+    def _browser_running(self) -> bool:
+        """Un navigateur Chromium est-il déjà ouvert ? Le processus de Brave s'appelle
+        « chrome » (moteur Chromium) : dans le doute on refuse poliment plutôt que de
+        lancer une instance qui s'effacerait devant l'instance existante."""
+        for window in self._desktop.windows():
+            if window.process.casefold() in ("brave", "chrome"):
+                return True
+        return False
+
+    async def _launch_brave(self) -> None:
+        exe = self._brave_exe()
+        if exe is None:
+            raise ToolError("Brave introuvable : installe-le ou lance-le une fois")
+        port = self._config.browser.cdp_port
+        subprocess.Popen(
+            [exe, f"--remote-debugging-port={port}", "--remote-allow-origins=*"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=0x08000000 if sys.platform == "win32" else 0,  # sans console
+        )
+        logger.info("Brave lancé avec le port de contrôle {} (profil normal).", port)
+
+    async def _list_targets(self) -> list[Target]:
+        try:
+            return await list_targets(self._config.browser.cdp_port)
+        except CdpError:
+            return []
+
+    def _unattached_hint(self) -> str:
+        hint = "ferme complètement Brave et redemande (MIKATA le rouvrira avec le contrôle)"
+        if self._config.browser.fallback_uia:
+            hint += ", ou lis la fenêtre avec uia_window / uia_read"
+        return hint
+
+    async def _wait_targets(self) -> list[Target]:
+        """Le port du navigateur qui démarre : jusqu'à ~10 s."""
+        for _ in range(20):
+            targets = await self._list_targets()
+            if targets:
+                return targets
+            await asyncio.sleep(0.5)
+        return []
+
+    async def _ensure(self) -> CdpClient:
+        if self._client is not None:
+            return self._client
+        cfg = self._config.browser
+        last_error = ""
+        for _attempt in range(2):
+            targets = await self._list_targets()
+            if not targets:
+                if self._browser_running():
+                    raise ToolError(
+                        f"Brave est ouvert sans son port de contrôle ({cfg.cdp_port}) : "
+                        + self._unattached_hint()
+                    )
+                await self._launch_brave()
+                targets = await self._wait_targets()
+            if not targets:
+                raise ToolError(
+                    f"le port de contrôle ({cfg.cdp_port}) ne répond pas : "
+                    + self._unattached_hint()
+                )
+            # Premier onglet « page » du navigateur : limite connue, plusieurs fenêtres
+            # ouvertes ne sont pas distinguées (v1 : l'onglet visé est celui de Brave).
+            pages = [target for target in targets if target.kind == "page"] or targets
+            client = CdpClient(pages[0].ws_url, timeout_s=cfg.click_timeout_s)
+            try:
+                await client.connect()
+            except Exception as exc:
+                # Onglet qui se ferme au lancement, navigateur en train de mourir : on
+                # jette cette cible et on reprend tout depuis le début.
+                last_error = str(exc)
+                await client.close()
+                continue
+            self._client = client
+            return client
+        raise ToolError(f"impossible de piloter le navigateur ({last_error})")
+
+    # -- primitives (interface BrowserControl) ----------------------------------------
+
+    async def _lost(self, exc: Exception) -> ToolError:
+        """La connexion au navigateur est morte : on jette le client (le prochain appel
+        se rattachera ou relancera Brave) et on l'explique en français."""
+        if isinstance(exc, CdpClosed):
+            client = self._client
+            self._client = None
+            if client is not None:
+                await client.close()
+            return ToolError("le navigateur a été fermé : redemande, MIKATA le rouvrira")
+        return ToolError(str(exc))
+
+    async def _page_json(self, client: CdpClient, expression: str) -> dict[str, Any]:
+        """Évalue du JavaScript fixe qui renvoie du JSON, en erreur française propre."""
+        try:
+            data = await client.evaluate(expression)
+        except CdpError as exc:
+            raise await self._lost(exc) from exc
+        if not isinstance(data, str):
+            raise ToolError("la page ne se laisse pas lire")
+        return json.loads(data)
+
+    async def tabs(self) -> str:
+        cfg = self._config.browser
+        try:
+            targets = await list_targets(cfg.cdp_port)
+        except CdpError as exc:
+            raise await self._lost(exc) from exc
+        pages = [t for t in targets if t.kind == "page"]
+        if not pages:
+            return "Aucun onglet ouvert."
+        lines = [f"{len(pages)} onglet(s) :"]
+        lines.extend(f"- {t.title[:80] or '(sans titre)'} — {t.url}" for t in pages)
+        return "\n".join(lines)
+
+    async def open_url(self, url: str) -> str:
+        client = await self._ensure()
+        try:
+            await client.navigate(url)
+        except CdpError as exc:
+            raise await self._lost(exc) from exc
+        return f"Page ouverte : {url}"
+
+    async def read(self, max_chars: int) -> str:
+        client = await self._ensure()
+        page = await self._page_json(client, _READ_JS)
+        lines = [f"Titre : {page.get('title', '')}", f"URL : {page.get('url', '')}"]
+        text = str(page.get("text", "")).strip()
+        if text:
+            if len(text) > max_chars:
+                text = text[:max_chars] + " […tronqué]"
+            lines.append(f"Texte :\n{text}")
+        links = page.get("links") or []
+        if links:
+            lines.append("Liens : " + " | ".join(links[:40]))
+        buttons = page.get("buttons") or []
+        if buttons:
+            lines.append("Boutons : " + " | ".join(buttons[:40]))
+        return "\n".join(lines)
+
+    async def find(self, text: str, nth: int) -> dict[str, Any]:
+        """Libellé et lien du n-ième élément « text », sans cliquer (vérifications avant)."""
+        client = await self._ensure()
+        result = await self._page_json(client, _js(_FIND_JS, text=text, nth=nth))
+        if not result.get("ok"):
+            found = result.get("found", 0)
+            close = result.get("candidates") or []
+            detail = f" (proches : {', '.join(close[:5])})" if close else ""
+            raise ToolError(f"élément « {text} » introuvable ({found} ressemblant(s){detail})")
+        return result
+
+    async def click(self, text: str, nth: int) -> str:
+        client = await self._ensure()
+        try:
+            before = await client.evaluate("location.href")
+        except CdpError:
+            before = None
+        result = await self._page_json(client, _js(_CLICK_JS, text=text, nth=nth))
+        if not result.get("ok"):
+            raise ToolError(f"élément « {text} » introuvable au moment du clic")
+        try:
+            after = await client.evaluate("location.href")
+        except CdpError:
+            after = None
+        if before != after:
+            # Le clic a navigué : on attend la stabilité de la nouvelle page.
+            await client.wait_ready(5.0)
+        return f"« {text} » cliqué."
+
+    async def type_text(self, field: str, text: str) -> str:
+        client = await self._ensure()
+        result = await self._page_json(client, _js(_TYPE_JS, field=field, text=text))
+        if not result.get("ok"):
+            raise ToolError(f"champ « {field} » introuvable dans la page")
+        return f"Texte écrit dans le champ « {field} »."
+
+    async def back(self) -> str:
+        client = await self._ensure()
+        try:
+            await client.evaluate(_BACK_JS)
+        except CdpError as exc:
+            raise await self._lost(exc) from exc
+        return "Page précédente."
+
+
+# Réutilisé par les tests : le JavaScript de lecture est fixe.
+__all__ = ["BrowserController", "Target"]

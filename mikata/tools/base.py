@@ -216,6 +216,20 @@ class UiAutomation(Protocol):
     def aclose(self) -> None: ...  # arrête le poller d'état (arrêt propre)
 
 
+class BrowserControl(Protocol):
+    """Contrôle du navigateur Chromium (mikata/browser/controller.py, phase 12b), simulé
+    dans les tests. Méthodes asynchrones (WebSocket DevTools)."""
+
+    async def tabs(self) -> str: ...
+    async def open_url(self, url: str) -> str: ...
+    async def read(self, max_chars: int) -> str: ...
+    async def find(self, text: str, nth: int) -> dict[str, Any]: ...  # libellé + lien, sans cliquer
+    async def click(self, text: str, nth: int) -> str: ...
+    async def type_text(self, field: str, text: str) -> str: ...
+    async def back(self) -> str: ...
+    async def aclose(self) -> None: ...
+
+
 class AudioControl(Protocol):
     """Volume et sortie audio de Windows (tools/media.py, pycaw), simulé dans les tests."""
 
@@ -252,6 +266,8 @@ class ToolContext:
     shell: ProcessRunner | None = None
     # Ajout phase 12a : pilotage fin des applications (arbre d'accessibilité Windows).
     uia: UiAutomation | None = None
+    # Ajout phase 12b : contrôle du navigateur (protocole DevTools).
+    browser: BrowserControl | None = None
     _executor: ThreadPoolExecutor | None = field(default=None, repr=False)
 
     async def run_blocking(self, fn: Callable[..., R], *args: Any) -> R:
@@ -296,6 +312,11 @@ class ToolContext:
             raise ToolError("le pilotage fin des applications n'est pas disponible ici")
         return self.uia
 
+    def require_browser(self) -> BrowserControl:
+        if self.browser is None:
+            raise ToolError("le contrôle du navigateur n'est pas disponible ici")
+        return self.browser
+
     def spawn(self, coro: Awaitable[Any], name: str) -> None:
         """Tâche de fond gardée en vie (minuteurs, rappels)."""
         task = asyncio.ensure_future(coro)
@@ -314,6 +335,11 @@ class ToolContext:
                 self.uia.aclose()
             except Exception as exc:
                 logger.debug("Fermeture du pilotage UIA : {}", exc)
+        if self.browser is not None:
+            try:
+                await self.browser.aclose()
+            except Exception as exc:
+                logger.debug("Fermeture du contrôle du navigateur : {}", exc)
         if self.http is not None:
             try:
                 await self.http.aclose()

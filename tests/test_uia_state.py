@@ -46,6 +46,33 @@ def test_poller_skips_reads_while_paused() -> None:
         state.stop()
 
 
+def test_pause_is_a_counter_for_parallel_tools() -> None:
+    """Deux outils qui agissent en parallèle : le poller ne reprend qu'après le dernier."""
+    hits: list[int] = []
+
+    def snapshot() -> dict[str, str]:
+        hits.append(1)
+        return {"discord": "x"}
+
+    state = AmbientState(0.02, snapshot)
+    state.pause(True)
+    state.pause(True)  # deux outils en cours
+    state.start()
+    try:
+        time.sleep(0.15)
+        assert hits == []
+        state.pause(False)  # un outil a fini, l'autre tourne encore
+        time.sleep(0.15)
+        assert hits == []
+        state.pause(False)  # plus personne : le poller reprend
+        deadline = time.monotonic() + 2
+        while not hits and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert hits
+    finally:
+        state.stop()
+
+
 def test_snapshot_errors_are_swallowed() -> None:
     def snapshot() -> dict[str, str]:
         raise RuntimeError("Discord illisible")

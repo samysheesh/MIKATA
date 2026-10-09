@@ -13,11 +13,12 @@ from __future__ import annotations
 import contextlib
 import sys
 import threading
+import time
 from typing import Any, ClassVar
 
 from loguru import logger
 
-from mikata.uia.state import _com_init, _com_uninit
+from mikata.uia.state import _com_init
 
 
 class UiaAccessibilityClient:
@@ -39,41 +40,46 @@ class UiaAccessibilityClient:
 
     def _run(self) -> None:
         _com_init()
-        try:
-            client, handler = self._subscribe()
-            if client is None:
-                return
-            logger.info("Client d'accessibilité UIA actif : les applications se laissent lire.")
-            self._stop.wait()
-            with contextlib.suppress(Exception):
-                client.RemoveFocusChangedEventHandler(handler)
-        finally:
-            _com_uninit()
+        client, handler = self._subscribe()
+        if client is None:
+            return
+        logger.info("Client d'accessibilité UIA actif : les applications se laissent lire.")
+        self._stop.wait()
+        with contextlib.suppress(Exception):
+            client.RemoveFocusChangedEventHandler(handler)
 
     @staticmethod
     def _subscribe() -> tuple[Any, Any] | None:
-        """Client IUIAutomation + abonnement aux changements de focus, ou (None, None)."""
-        try:
-            import comtypes
-            from comtypes.gen import UIAutomationClient as uia
+        """Client IUIAutomation + abonnement aux changements de focus, ou (None, None).
 
-            client = comtypes.CoCreateInstance(
-                uia.CUIAutomation._reg_clsid_,
-                interface=uia.IUIAutomation,
-                clsctx=comtypes.CLSCTX_INPROC_SERVER,
-            )
+        Trois essais : un processus mort sans désabonnement (arrêt forcé) peut faire
+        échouer le premier abonnement quelques secondes.
+        """
+        for attempt in range(3):
+            try:
+                import comtypes
+                from comtypes.gen import UIAutomationClient as uia
 
-            class _FocusHandler(comtypes.COMObject):
-                _com_interfaces_: ClassVar[list[object]] = [
-                    uia.IUIAutomationFocusChangedEventHandler
-                ]
+                client = comtypes.CoCreateInstance(
+                    uia.CUIAutomation._reg_clsid_,
+                    interface=uia.IUIAutomation,
+                    clsctx=comtypes.CLSCTX_INPROC_SERVER,
+                )
 
-                def HandleFocusChangedEvent(self, sender: object) -> None:
-                    pass  # on écoute, c'est tout
+                class _FocusHandler(comtypes.COMObject):
+                    _com_interfaces_: ClassVar[list[object]] = [
+                        uia.IUIAutomationFocusChangedEventHandler
+                    ]
 
-            handler = _FocusHandler()
-            client.AddFocusChangedEventHandler(None, handler)
-            return client, handler
-        except Exception as exc:
-            logger.warning("Client d'accessibilité UIA indisponible : {}", exc)
-            return None, None
+                    def HandleFocusChangedEvent(self, sender: object) -> None:
+                        pass  # on écoute, c'est tout
+
+                handler = _FocusHandler()
+                client.AddFocusChangedEventHandler(None, handler)
+                return client, handler
+            except Exception as exc:
+                if attempt == 2:
+                    logger.warning("Client d'accessibilité UIA indisponible : {}", exc)
+                    return None, None
+                time.sleep(1.0)
+        return None, None

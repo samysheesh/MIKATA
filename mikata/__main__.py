@@ -162,6 +162,10 @@ def build_tool_context(config: Config) -> ToolContext:
                     "Pilotage des applications : actif (état ambiant toutes les {} s).",
                     config.uia.state_poll_s,
                 )
+        if config.browser.enabled:  # phase 12b : navigateur piloté (CDP, connexion paresseuse)
+            from mikata.browser.controller import BrowserController
+
+            ctx.browser = BrowserController(config, ctx.desktop)
     else:
         logger.warning("Hors Windows : outils du bureau, du volume et des notifications inactifs.")
     return ctx

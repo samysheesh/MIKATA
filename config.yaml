@@ -66,6 +66,12 @@ web:
   search_provider: tavily          # tavily | brave ; clé SEARCH_API_KEY dans .env
   max_results: 5
   default_city: null               # ville de la météo si aucune n'est dite (ex. "Paris")
+browser:                           # ajout phase 12b : navigateur piloté (protocole DevTools)
+  enabled: true                    # outils browser_* (Brave lancé par MIKATA si fermé)
+  cdp_port: 9222                   # port DevTools de Brave
+  fallback_uia: true               # Brave ouvert sans le port : suggérer les outils UIA
+  page_text_max_chars: 4000        # texte lu par browser_read, tronqué
+  click_timeout_s: 5               # délai d'une commande DevTools
 tts:
   backend: piper                   # piper | kokoro | elevenlabs (skin sans profil, ui.profiles)
   voice: models/fr_FR-siwis-medium.onnx   # voix Piper (scripts/download_models.py)

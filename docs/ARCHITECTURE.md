@@ -184,6 +184,7 @@ Bonne nouvelle côté matériel : avec un casque fermé, le son du jeu ne revien
 - **Écrasement = sauvegarde.** Avant que `write_file` ou `move_file` n'écrase un fichier existant, une copie part dans `data/backups/` (purge après 14 jours).
 - **Extinction / redémarrage avec 5 s pour annuler** : MIKATA annonce l'action, « stop » dans les 5 s l'annule. Pas une confirmation, juste un filet contre une mauvaise transcription.
 - **Contrôles d'interface** (phase 12a, `check_ui_action`) : un clic UIA sur un contrôle destructif (suppression définitive, formatage, réinitialisation du PC) est refusé ; les contrôles sensibles (supprimer, désinstaller, payer) demandent un « oui » oral ; le texte écrit dans un champ passe le filtre de `type_text`. Le nom du contrôle est le seul signal : c'est un filet, pas une garantie — chaque clic reste journalisé dans `data/actions.log`.
+- **Navigation** (phase 12b, `check_navigation` / `check_download`) : seuls http:// et https:// s'ouvrent (`file:`, `javascript:`, `data:`... refusés) ; un clic qui ressemble à un téléchargement demande un « oui » oral ; une page lue marque le tour (`confirm_after_web`).
 - **Droits utilisateur normaux**, jamais administrateur.
 - Option `confirm_after_web: false` dans la config. Si tu l'actives, une commande shell lancée juste après la lecture d'une page web demande ton accord : c'est la protection contre une page piégée qui dicterait des instructions au LLM. Désactivée par défaut, selon ton choix.
 
@@ -199,8 +200,9 @@ Bonne nouvelle côté matériel : avec un casque fermé, le son du jeu ne revien
 - **ui** : `show_text` (fenêtre avec texte long), `clipboard_read`, `clipboard_write`.
 - **memory** : `remember`, `forget`.
 - **uia** (phase 12a) : `uia_window` (contrôles d'une fenêtre : noms, types), `uia_read` (texte d'un contrôle ou de la fenêtre), `uia_click` ★ / `uia_set_text` ★ (par nom de contrôle, vérifiés par `check_ui_action` et `check_typed_text`), `uia_state` (état ambiant en cache : présence vocale Discord...). Implémentation : `mikata/uia/controller.py`, bibliothèque `uiautomation` (comtypes, Apache-2.0), fenêtres trouvées par `tools/desktop.py`, appels sur le thread COM dédié des outils. L'état ambiant est relu par un thread à part toutes les `uia.state_poll_s` secondes, mis en pause pendant qu'un outil agit, gardé en RAM seulement (jamais loggé). `mikata/uia/client.py` s'abonne aux événements d'accessibilité au démarrage : `UiaClientsAreListening()` devient vrai et les applications Chromium/Electron exposent leur arbre complet sans drapeau de lancement.
+- **browser** (phase 12b) : `browser_tabs`, `browser_open` ★, `browser_read` (titre, texte, liens, boutons de la page), `browser_click` ★ / `browser_type` ★ (par texte visible / libellé, vérifiés par `check_ui_action`, `check_download` et `check_typed_text`), `browser_back` ★. Implémentation : `mikata/browser/cdp.py` (client DevTools sur WebSocket, bibliothèque `websockets`, testé sous Linux contre un faux serveur) et `mikata/browser/controller.py` (attache paresseuse : port ouvert → attaché ; Brave fermé → lancé avec `--remote-debugging-port` ; Brave ouvert sans le port → refus poli, jamais de fermeture automatique). Le JavaScript envoyé au navigateur est fixe, jamais fourni par le LLM.
 
-Plus tard (v2) : capture d'écran + description (nécessite un modèle avec vision), contrôle du navigateur par CDP (phase 12b), savoir-faire appris et rejoués (skills, phase 12c), intégrations Spotify / calendrier.
+Plus tard (v2) : capture d'écran + description (nécessite un modèle avec vision), savoir-faire appris et rejoués (skills, phase 12c), intégrations Spotify / calendrier.
 
 ## 8. Voix (TTS) et retour utilisateur
 
@@ -262,8 +264,9 @@ mikata/
    ├─ llm/    client.py  prompts.py
    ├─ agent/  loop.py  memory.py  guard.py
    ├─ tools/  registry.py  system.py  apps.py  web.py  media.py
-   │        input.py  files.py  shell.py  ui.py  memory_tools.py  uia.py
+   │        input.py  files.py  shell.py  ui.py  memory_tools.py  uia.py  browser.py
    ├─ uia/    controller.py  state.py  client.py  # phase 12a : arbre d'accessibilité + état ambiant + client à l'écoute
+   ├─ browser/ cdp.py  controller.py              # phase 12b : navigateur piloté (DevTools)
    ├─ tts/    base.py  piper_tts.py  kokoro_tts.py  normalize.py  cache.py
    │        router.py  elevenlabs.py  credits.py   # phase 11 : profils de voix, ElevenLabs
    └─ ui/     tray.py  notify.py  hotkeys.py
@@ -376,6 +379,12 @@ guard:
   backup_days: 14
   shutdown_cancel_s: 5
   confirm_after_web: false
+browser:                            # phase 12b : navigateur piloté (DevTools)
+  enabled: true
+  cdp_port: 9222
+  fallback_uia: true
+  page_text_max_chars: 4000
+  click_timeout_s: 5
 uia:                                # phase 12a : pilotage fin des applications (arbre UIA)
   enabled: true
   state_poll_s: 2                   # état ambiant en RAM (Discord...) ; 0 = jamais

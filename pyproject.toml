@@ -60,6 +60,9 @@ dependencies = [
     # Phase 12a : pilotage fin des applications par l'arbre d'accessibilité Windows (UIA).
     # Pur Python, s'appuie sur comtypes (déjà présent) ; imports paresseux, mocké dans les tests.
     "uiautomation>=2.0.25 ; sys_platform == 'win32'",
+    # Phase 12b : contrôle du navigateur (Brave/Chromium) via le protocole DevTools. Le vrai
+    # client est testé sur la CI Linux contre un faux serveur WebSocket.
+    "websockets>=14",
 ]
 
 [dependency-groups]

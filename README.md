@@ -2278,3 +2278,92 @@ uv run python -m mikata --check-config
 
 Attendu : tout en `passed`, config valide ; bip < 150 ms et CPU au repos inchangés (le suivi
 d'état tourne sur son propre thread, en pause pendant les actions).
+
+## Phase 12b — vérification sur le PC Windows
+
+Navigateur piloté (deuxième étage de la phase 12 : agir sur le web en lisant la page).
+
+Comment ça marche :
+
+- **Six nouveaux outils** (famille `browser`) : `browser_tabs` (onglets ouverts),
+  `browser_open` ★ (ouvre une URL et attend la page), `browser_read` (titre, texte, liens
+  et boutons visibles de la page — en arrière-plan), `browser_click` ★ (clique un élément
+  par son texte visible), `browser_type` ★ (écrit dans un champ par son libellé, React
+  compris), `browser_back` ★.
+- **Protocole DevTools (CDP)** : `mikata/browser/cdp.py` parle à Brave par WebSocket
+  (bibliothèque `websockets`, pas de Playwright ni de moteur téléchargé). Le JavaScript
+  envoyé au navigateur est fixe et écrit par nous, jamais fourni par le LLM.
+- **Attache** (`mikata/browser/controller.py`) : le port DevTools répond → on s'y attache ;
+  Brave fermé → MIKATA le lance elle-même avec `--remote-debugging-port` (profil normal,
+  identifiants conservés) ; Brave déjà ouvert **sans** le port → refus poli avec la marche
+  à suivre (jamais de fermeture automatique de ton navigateur).
+- **Garde-fou** (`check_navigation`, `check_download`) : seuls http/https s'ouvrent
+  (`file:`, `javascript:`, `data:`... refusés) ; un clic qui ressemble à un téléchargement
+  demande « Tu confirmes ? » ; le texte d'un champ passe le filtre de `type_text` ; une
+  page lue marque le tour (`confirm_after_web` s'applique).
+- **Config** : section `browser` (`enabled`, `cdp_port`, `fallback_uia`,
+  `page_text_max_chars`, `click_timeout_s`).
+
+### 1. Récupérer la branche, installer
+
+```powershell
+git fetch origin
+git checkout phase-12b-browser
+git pull
+uv sync
+```
+
+Si tu as modifié `config.yaml` en local, garde tes réglages pendant la mise à jour (une
+section `browser:` est ajoutée) :
+
+```powershell
+git stash
+git pull
+git stash pop
+Select-String -Path config.yaml -Pattern "cdp_port"
+```
+
+### 2. Lint et tests
+
+```powershell
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
+uv run pytest tests\test_cdp_client.py tests\test_browser_tools.py tests\test_guard_browser.py -v
+```
+
+Attendu : tout en `passed`. Le vrai client CDP est testé contre un faux serveur WebSocket
+(transport, erreurs, événements, fermeture) ; les outils sur pilote simulé ; le garde-fou
+(schémas refusés, téléchargement confirmé à voix haute, sans micro = refus).
+
+### 3. Le critère : « lance le dernier opening de black clover »
+
+Ferme Brave complètement (clic droit icône barre des tâches > Quitter, ou Ctrl+Maj+Q),
+puis :
+
+```powershell
+uv run python -m mikata
+```
+
+Dis « MIKATA, lance le dernier opening de black clover ». Attendu : MIKATA lance Brave
+(avec le port de contrôle), va sur YouTube, tape la recherche, lit les résultats, clique le
+bon, et la vidéo se lance — en quelques étapes, chaque outil dans `data\actions.log`.
+
+Même chose avec « MIKATA, quelle est la météo à Paris sur google ? » (navigation, lecture
+de page) et « MIKATA, reviens à la page précédente » (`browser_back`).
+
+### 4. Brave déjà ouvert
+
+Rouvre Brave à la main (sans le port), puis « MIKATA, lis la page du navigateur ».
+Attendu : refus poli — « Brave est ouvert sans son port de contrôle : ferme complètement
+Brave et redemande ». Rien n'est jamais fermé tout seul.
+
+### 5. Non-régression
+
+```powershell
+uv run pytest tests\test_guard_criteria.py tests\test_voice_stop.py -v
+uv run python -m mikata --check-config
+```
+
+Attendu : tout en `passed`, config valide, latence et CPU inchangés (la connexion au
+navigateur n'est ouverte qu'à la première utilisation).

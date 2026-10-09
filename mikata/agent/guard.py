@@ -172,6 +172,13 @@ UI_CONFIRM = _rules(
     (r"\b(acheter|payer|commander|abonner|abonnement)\b", "dépenser de l'argent"),
 )  # fmt: skip
 
+# Navigation du navigateur (phase 12b) : seuls http et https, jamais les schémas locaux
+# ou exécutables. Une page peut contenir n'importe quoi : on ne laisse passer que le web.
+_NAVIGATION_SCHEMES = ("http://", "https://")
+DOWNLOAD_EXTENSIONS = (
+    ".exe", ".msi", ".zip", ".7z", ".rar", ".dmg", ".apk", ".appx", ".iso", ".torrent",
+)  # fmt: skip
+
 
 def _words(text: str) -> list[str]:
     """Mots sans casse ni accents ; « d'accord » donne « d » et « accord »."""
@@ -344,6 +351,27 @@ class Guard:
         risky = check_patterns(control_name, UI_CONFIRM)
         if risky is not None and self.cfg.confirm_risky:
             return Decision(Verdict.CONFIRM, risky.reason, risky.match)
+        return Decision(Verdict.ALLOW)
+
+    @staticmethod
+    def check_navigation(url: str) -> Decision:
+        """URL ouverte par le navigateur (phase 12b) : http et https seulement."""
+        text = url.strip()
+        scheme = text.split(":", 1)[0] + ":" if ":" in text else ""
+        if text.casefold().startswith(_NAVIGATION_SCHEMES):
+            return Decision(Verdict.ALLOW)
+        return Decision(
+            Verdict.DENY,
+            "navigation refusée : seuls http:// et https:// sont ouverts, "
+            f"pas « {scheme or 'rien'} »",
+        )
+
+    @staticmethod
+    def check_download(url: str) -> Decision:
+        """Lien cliqué dans le navigateur qui ressemble à un téléchargement : confirmé."""
+        path = url.split("?", 1)[0].split("#", 1)[0].casefold()
+        if path.endswith(DOWNLOAD_EXTENSIONS):
+            return Decision(Verdict.CONFIRM, "télécharger un fichier")
         return Decision(Verdict.ALLOW)
 
     # -- corbeille --------------------------------------------------------------------

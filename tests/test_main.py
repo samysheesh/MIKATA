@@ -242,6 +242,13 @@ def test_build_app_with_llm_and_voice(
     )
     monkeypatch.setattr("mikata.vad.silero.SileroVAD", lambda *a: object())
     config = entry.load_config(_with_llm(config_file))
+    # Threads COM coupés dans les tests (client d'accessibilité, poller d'état) : un
+    # vrai abonnement UIA dans le processus pytest crashe à l'arrêt (0x80010108).
+    config = config.model_copy(
+        update={
+            "uia": config.uia.model_copy(update={"accessibility_client": False, "state_poll_s": 0})
+        }
+    )
     app = entry.build_app(config, tray=False, audio=True)
     assert app._agent is not None and app._speaker is not None
     assert app._agent.llm.cfg.model == "deepseek-flash"  # type: ignore[attr-defined]
@@ -284,15 +291,26 @@ def test_app_vocabulary_reads_the_start_menu_index() -> None:
 
 
 def test_tool_context_on_windows(config_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from mikata.browser.controller import BrowserController
     from mikata.tools.desktop import WindowsDesktop
     from mikata.tools.media import PycawAudio
     from mikata.ui.notify import ToastNotifier
+    from mikata.uia.controller import UiController
 
     (config_file.parent / ".env").write_text("SEARCH_API_KEY=tvly-abc\n", encoding="utf-8")
     monkeypatch.setattr(sys, "platform", "win32")
-    ctx = entry.build_tool_context(entry.load_config(config_file))
+    config = entry.load_config(config_file)
+    # Threads COM coupés dans les tests : un vrai abonnement UIA dans le processus pytest
+    # crashe à l'arrêt (0x80010108). Le wiring des services est vérifié quand même.
+    config = config.model_copy(
+        update={
+            "uia": config.uia.model_copy(update={"accessibility_client": False, "state_poll_s": 0})
+        }
+    )
+    ctx = entry.build_tool_context(config)
     assert isinstance(ctx.desktop, WindowsDesktop) and isinstance(ctx.audio, PycawAudio)
     assert isinstance(ctx.notifier, ToastNotifier) and ctx.search_api_key == "tvly-abc"
+    assert isinstance(ctx.uia, UiController) and isinstance(ctx.browser, BrowserController)
     asyncio.run(ctx.aclose())
 
 

@@ -24,7 +24,7 @@ from mikata.llm.base import ToolCallReq
 from mikata.tools.base import ActionCancelled, GuardDenied, Tool, ToolContext, ToolError
 
 # Phase 4 : system, apps, web, media, ui, memory ; phase 5 : input, files, shell (§7, §11) ;
-# phase 12a : uia (pilotage fin des applications par l'arbre d'accessibilité).
+# phase 12a : uia (pilotage fin des applications) ; phase 12b : browser (navigateur CDP).
 FAMILIES = (
     "system",
     "apps",
@@ -36,6 +36,7 @@ FAMILIES = (
     "files",
     "shell",
     "uia",
+    "browser",
 )
 
 _REGISTRY: dict[str, type[Any]] = {}

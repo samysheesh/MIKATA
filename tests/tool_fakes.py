@@ -242,6 +242,53 @@ class FakeUi:
         pass
 
 
+class FakeBrowser:
+    """Contrôleur de navigateur de test (phase 12b) : pages scriptées, appels enregistrés."""
+
+    def __init__(self, tabs: str = "", page: str = "", href: str = "") -> None:
+        self.tabs_text = tabs or "- Onglet — https://example.com"
+        self.page = page or "Titre : Exemple\nURL : https://example.com\nTexte :\nBonjour."
+        self.href = href  # lien renvoyé par find (téléchargement simulé si .exe/.zip...)
+        self.log: list[tuple[str, Any]] = []
+        self.fail: set[str] = set()
+
+    async def _record(self, name: str, value: Any = None) -> None:
+        if name in self.fail:
+            raise ToolError(f"échec simulé de {name}")
+        self.log.append((name, value))
+
+    async def tabs(self) -> str:
+        await self._record("tabs")
+        return self.tabs_text
+
+    async def open_url(self, url: str) -> str:
+        await self._record("open", url)
+        return f"Page ouverte : {url}"
+
+    async def read(self, max_chars: int) -> str:
+        await self._record("read", max_chars)
+        return self.page
+
+    async def find(self, text: str, nth: int) -> dict[str, Any]:
+        await self._record("find", (text, nth))
+        return {"ok": True, "label": text, "tag": "A", "href": self.href}
+
+    async def click(self, text: str, nth: int) -> str:
+        await self._record("click", (text, nth))
+        return f"« {text} » cliqué."
+
+    async def type_text(self, field: str, text: str) -> str:
+        await self._record("type", (field, text))
+        return f"Texte écrit dans le champ « {field} »."
+
+    async def back(self) -> str:
+        await self._record("back")
+        return "Page précédente."
+
+    async def aclose(self) -> None:
+        pass
+
+
 def make_config(tmp_path: Path, **sections: dict[str, Any]) -> Config:
     """Config de test ; le garde-fou n'autorise que `tmp_path/home` (le « dossier perso »)."""
     data = Config().model_dump(mode="json", exclude={"secrets"})
@@ -266,6 +313,7 @@ def make_ctx(
     shell: Any = None,
     input: Any = None,
     uia: Any = None,
+    browser: Any = None,
 ) -> ToolContext:
     async def no_wait(seconds: float) -> None:
         await asyncio.sleep(0)
@@ -291,4 +339,5 @@ def make_ctx(
         shell=shell,
         input=input,
         uia=uia,
+        browser=browser,
     )
