@@ -2286,10 +2286,11 @@ Navigateur piloté (deuxième étage de la phase 12 : agir sur le web en lisant 
 Comment ça marche :
 
 - **Six nouveaux outils** (famille `browser`) : `browser_tabs` (onglets ouverts),
-  `browser_open` ★ (ouvre une URL et attend la page), `browser_read` (titre, texte, liens
-  et boutons visibles de la page — en arrière-plan), `browser_click` ★ (clique un élément
-  par son texte visible), `browser_type` ★ (écrit dans un champ par son libellé, React
-  compris), `browser_back` ★.
+  `browser_open` (ouvre une URL et attend la page — ne conclut pas la commande, on
+  enchaîne), `browser_read` (titre, texte, liens et boutons visibles de la page — en
+  arrière-plan), `browser_click` ★ (clique un élément par son texte visible),
+  `browser_type` ★ (écrit dans un champ par son libellé, React compris),
+  `browser_back` ★.
 - **Protocole DevTools (CDP)** : `mikata/browser/cdp.py` parle à Brave par WebSocket
   (bibliothèque `websockets`, pas de Playwright ni de moteur téléchargé). Le JavaScript
   envoyé au navigateur est fixe et écrit par nous, jamais fourni par le LLM.
@@ -2367,3 +2368,100 @@ uv run python -m mikata --check-config
 
 Attendu : tout en `passed`, config valide, latence et CPU inchangés (la connexion au
 navigateur n'est ouverte qu'à la première utilisation).
+
+## Phase 12c — vérification sur le PC Windows
+
+Savoir-faire (troisième étage de la phase 12 : MIKATA apprend de chaque tâche réussie).
+
+Comment ça marche :
+
+- **Mémoire procédurale** (`mikata/skills/library.py`) : chaque commande multi-étapes qui
+  réussit est distillée en procédure (nom, description, exemple, étapes avec les morceaux
+  variables marqués `{param}`), rangée dans `data/skills/skills.json` (écriture atomique,
+  chargement tolérant, comme la mémoire).
+- **Rejeu sans LLM** : la commande suivante qui ressemble (score flou + un mot
+  significatif commun) rejoue les étapes directement — 0 appel LLM, « C'est fait ». Les
+  étapes repassent par le registre : garde-fou, délais, journal, tout s'applique.
+- **Procédures paramétrées** : si la procédure a des trous (`{query}`), elle est donnée au
+  LLM comme plan à remplir — un appel au lieu de toute l'exploration.
+- **Auto-guérison** : une étape qui échoue au rejeu bascule sur le LLM (qui reprend de
+  l'échec), l'échec est compté, et la procédure est désactivée après `skills.max_failures`
+  échecs. Un rejeu réussi la réactive.
+- **Apprentissage** : automatique en arrière-plan (`skills.auto_learn`, à partir de
+  `skills.auto_learn_min_rounds` étapes réussies — zéro latence perçue), ou forcé à la
+  voix : « MIKATA, souviens-toi comment faire ça » (`remember_skill`). Outils :
+  `list_skills`, `remember_skill` ★, `forget_skill` ★.
+- **Config** : section `skills` (`enabled`, `max_skills`, `confidence`, `auto_learn`,
+  `auto_learn_min_rounds`, `max_failures`, `max_steps`).
+
+### 1. Récupérer la branche, installer
+
+```powershell
+git fetch origin
+git checkout phase-12c-skills
+git pull
+uv sync
+```
+
+Si tu as modifié `config.yaml` en local, garde tes réglages pendant la mise à jour (une
+section `skills:` est ajoutée) :
+
+```powershell
+git stash
+git pull
+git stash pop
+Select-String -Path config.yaml -Pattern "auto_learn"
+```
+
+### 2. Lint et tests
+
+```powershell
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
+uv run pytest tests\test_skills_library.py tests\test_skills_agent.py tests\test_skills_tools.py -v
+```
+
+Attendu : tout en `passed`. Ce que vérifient ces tests :
+
+- la bibliothèque : fichier JSON atomique, entrées invalides refusées (outil inconnu,
+  nom invalide), dédoublonnage, éviction des moins utilisées, désactivation après échecs,
+  réactivation après un rejeu réussi ;
+- la boucle : rejeu sans appel LLM, repli sur le LLM quand une étape échoue (avec les
+  étapes déjà faites dans le contexte), plan paramétré injecté, apprentissage en fond,
+  capture forcée par `remember_skill`.
+
+### 3. Apprendre et rejouer (avec le micro)
+
+```powershell
+uv run python -m mikata
+```
+
+1. Ferme Brave complètement, puis dis « MIKATA, lance le dernier opening de black
+   clover ». Il explore (ouvre, cherche, lit, clique) : c'est la commande d'apprentissage.
+2. Regarde `data\skills\skills.json` : la procédure devrait y être, avec `{query}`.
+3. Dis « MIKATA, lance le dernier opening de one piece » : le plan appris est rempli —
+   moins d'étapes, plus rapide. Dans le log : `Savoir-faire « … » : proposé comme plan.`
+4. Une procédure sans variable : dis deux fois la même action en deux étapes (ex. « mets
+   le volume à vingt puis coupe le son »), puis « MIKATA, souviens-toi comment faire ça ».
+   Redis la même phrase : le log montre `Savoir-faire « … » : rejoué (2 étape(s), 0 appel
+   LLM).` et c'est instantané.
+5. « MIKATA, quels savoir-faire connais-tu ? » → `list_skills` ; « MIKATA, oublie comment
+   mettre le pc en silencieux » → `forget_skill`.
+
+### 4. Auto-guérison en vrai
+
+1. Apprends une procédure qui ouvre une appli, puis désinstalle cette appli (ou renomme
+   la cible). Redemande la même chose : la première étape échoue, le LLM reprend et
+   explique ; `data\skills\skills.json` montre `failures: 1`. Après `max_failures` (3)
+   échecs, la procédure passe `enabled: false` et n'est plus proposée.
+
+### 5. Non-régression
+
+```powershell
+uv run pytest tests\test_guard_criteria.py tests\test_voice_stop.py -v
+uv run python -m mikata --check-config
+```
+
+Attendu : tout en `passed`, config valide, latence et CPU inchangés (l'apprentissage
+tourne en arrière-plan, jamais pendant une commande).

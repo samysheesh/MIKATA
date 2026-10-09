@@ -114,6 +114,7 @@ WHISPER_DIR = "models/whisper"  # cache des modèles faster-whisper (scripts/dow
 TTS_CACHE_DIR = "data/tts_cache"
 USAGE_FILE = "data/llm_usage.json"  # cumul des tokens et du coût
 MEMORY_FILE = "data/memory.json"  # faits mémorisés (remember / forget)
+SKILLS_FILE = "data/skills/skills.json"  # savoir-faire appris (phase 12c)
 
 
 def build_speaker(config: Config, player: Any) -> Speaker:
@@ -143,6 +144,12 @@ def build_tool_context(config: Config) -> ToolContext:
         guard=Guard(config, folders=_known_folders()),  # phase 5 : garde-fou
         shell=SubprocessRunner(),
     )
+    if config.skills.enabled:  # phase 12c : savoir-faire appris (mémoire procédurale)
+        from mikata.skills.library import SkillLibrary
+
+        ctx.skills = SkillLibrary(
+            config.resolve(SKILLS_FILE), config.skills.max_skills, config.skills.max_failures
+        )
     key = config.secrets.search_api_key
     ctx.search_api_key = key.get_secret_value() if key is not None else None
     if sys.platform == "win32":
@@ -217,6 +224,7 @@ def build_agent(config: Config, phrases: Any = None, *, tools: bool = True) -> A
         phrases=phrases,
         tools=registry,
         long_memory=ctx.memory,
+        skills=ctx.skills,
         usage=usage,
         open_apps=running_apps if desktop is not None else None,
         installed_apps=(

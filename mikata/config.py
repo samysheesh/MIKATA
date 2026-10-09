@@ -188,6 +188,20 @@ class BrowserConfig(_Section):
     click_timeout_s: float = Field(default=5, gt=0, le=30)  # délai d'une commande DevTools
 
 
+class SkillsConfig(_Section):
+    """Ajout phase 12c : savoir-faire appris (mémoire procédurale, data/skills/skills.json).
+    Une commande multi-étapes réussie est distillée en procédure ; la suivante qui
+    ressemble la rejoue sans exploration (ou avec le plan si elle a des paramètres)."""
+
+    enabled: bool = True  # false : pas de bibliothèque (outils skills indisponibles)
+    max_skills: int = Field(default=30, ge=1, le=200)
+    confidence: float = Field(default=70, ge=0, le=100)  # score flou commande -> procédure
+    auto_learn: bool = True  # mémorise en arrière-plan les commandes multi-étapes réussies
+    auto_learn_min_rounds: int = Field(default=2, ge=1, le=10)  # au moins N étapes d'outils
+    max_failures: int = Field(default=3, ge=1, le=20)  # échecs au rejeu avant désactivation
+    max_steps: int = Field(default=10, ge=1, le=50)  # étapes rejouées au plus
+
+
 VoiceEngine = Literal["piper", "kokoro", "elevenlabs"]
 
 
@@ -360,6 +374,7 @@ class Config(_Section):
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     web: WebConfig = Field(default_factory=WebConfig)
     browser: BrowserConfig = Field(default_factory=BrowserConfig)
+    skills: SkillsConfig = Field(default_factory=SkillsConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
     guard: GuardConfig = Field(default_factory=GuardConfig)
     uia: UiaConfig = Field(default_factory=UiaConfig)

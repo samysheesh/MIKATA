@@ -1,4 +1,4 @@
-"""Évaluation du prompt système sur 25 phrases approximatives (vrai LLM, actions simulées).
+"""Évaluation du prompt système sur 26 phrases approximatives (vrai LLM, actions simulées).
 
 Usage : uv run python scripts/eval_prompt.py [--only 1 3 ...] [--json rapport.json]
 
@@ -128,6 +128,10 @@ CASES: tuple[Case, ...] = (
          "ouvrir YouTube et cliquer la vidéo",
          lambda a: "youtube" in fold(str(a.get("url") or ""))
          or "black" in fold(str(a.get("text") or ""))),
+    # Phase 12c : une procédure apprise se rejoue sans appel LLM.
+    Case("passe le pc en silencieux", ("set_volume", "mute"),
+         "rejouer la procédure apprise",
+         lambda a: a.get("level") == 20),
     # Phase 6 : « raconte-moi une longue histoire » avait ouvert le Bloc-notes pour l'y coller.
     Case("raconte-moi une longue histoire", SPOKEN, "histoire dite, 3 à 5 phrases",
          sentences=(3, 5), max_words=140),
@@ -369,6 +373,7 @@ async def run_cases(
     from mikata.agent.loop import Agent
     from mikata.agent.memory import LongTermMemory, ShortTermMemory
     from mikata.llm.usage import cost_usd
+    from mikata.skills.library import SkillLibrary
     from mikata.tools.apps import installed_app_names, open_apps
     from mikata.tools.base import ToolContext
     from mikata.tools.registry import ToolRegistry
@@ -379,7 +384,8 @@ async def run_cases(
     with tempfile.TemporaryDirectory(prefix="mikata-eval-") as folder:
         sandbox = Path(folder)
         guard_cfg = config.guard.model_copy(update={"allowed_dirs": [sandbox]})
-        sandboxed = config.model_copy(update={"guard": guard_cfg})
+        skills_cfg = config.skills.model_copy(update={"auto_learn": False})  # banc figé
+        sandboxed = config.model_copy(update={"guard": guard_cfg, "skills": skills_cfg})
         trashed: list[str] = []
 
         async def no_wait(seconds: float) -> None:
@@ -403,18 +409,52 @@ async def run_cases(
             shell=DryRunShell(actions),
             uia=DryRunUi(actions),
             browser=DryRunBrowser(actions),
+            skills=(
+                SkillLibrary(
+                    sandbox / "skills.json",
+                    sandboxed.skills.max_skills,
+                    sandboxed.skills.max_failures,
+                )
+                if sandboxed.skills.enabled
+                else None
+            ),
         )
 
         async def running() -> list[str]:
             return open_apps(SCENARIO_WINDOWS)
 
+        registry = ToolRegistry(ctx)
+        if ctx.skills is not None:
+            # Deux procédures déjà apprises (comme après quelques jours d'usage).
+            ctx.skills.learn(
+                "pc_silencieux",
+                "mettre le PC en silencieux",
+                "passe le pc en silencieux",
+                [
+                    {"tool": "set_volume", "args": {"level": 20}},
+                    {"tool": "mute", "args": {"mute": True}},
+                ],
+            )
+            ctx.skills.learn(
+                "youtube_recent_video",
+                "chercher et lancer une vidéo récente sur YouTube",
+                "lance le dernier opening de black clover",
+                [
+                    {
+                        "tool": "browser_open",
+                        "args": {"url": "https://youtube.com/results?search_query={query}"},
+                    }
+                ],
+                params=["query"],
+            )
         agent = Agent(
             llm,
             config,
             ShortTermMemory(),  # en mémoire : ne touche pas à data/history.json
             window_title=lambda: SCENARIO_WINDOWS[0].title,
-            tools=ToolRegistry(ctx),
+            tools=registry,
             long_memory=ctx.memory,
+            skills=ctx.skills,
             open_apps=running,
             installed_apps=lambda: installed_app_names(desktop.cached_apps()),
         )

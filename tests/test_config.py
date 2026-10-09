@@ -91,6 +91,11 @@ def test_defaults_match_section_10(config_file: Path) -> None:
     assert config.browser.enabled is True and config.browser.cdp_port == 9222
     assert config.browser.fallback_uia is True and config.browser.page_text_max_chars == 4000
     assert config.browser.click_timeout_s == 5
+    # ajouts phase 12c
+    assert config.skills.enabled is True and config.skills.max_skills == 30
+    assert config.skills.confidence == 70 and config.skills.auto_learn is True
+    assert config.skills.auto_learn_min_rounds == 2 and config.skills.max_failures == 3
+    assert config.skills.max_steps == 10
 
 
 def test_repo_config_keys_are_exactly_the_model_fields() -> None:

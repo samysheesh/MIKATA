@@ -268,6 +268,10 @@ class ToolContext:
     uia: UiAutomation | None = None
     # Ajout phase 12b : contrôle du navigateur (protocole DevTools).
     browser: BrowserControl | None = None
+    # Ajout phase 12c : savoir-faire (mikata.skills.library.SkillLibrary) et capture forcée
+    # de la dernière commande réussie (câblée par la boucle agent, comme `history`).
+    skills: Any = None
+    skills_capture: Callable[[str], Awaitable[str]] | None = None
     _executor: ThreadPoolExecutor | None = field(default=None, repr=False)
 
     async def run_blocking(self, fn: Callable[..., R], *args: Any) -> R:
@@ -316,6 +320,11 @@ class ToolContext:
         if self.browser is None:
             raise ToolError("le contrôle du navigateur n'est pas disponible ici")
         return self.browser
+
+    def require_skills(self) -> Any:
+        if self.skills is None:
+            raise ToolError("les savoir-faire ne sont pas disponibles ici")
+        return self.skills
 
     def spawn(self, coro: Awaitable[Any], name: str) -> None:
         """Tâche de fond gardée en vie (minuteurs, rappels)."""

@@ -72,6 +72,14 @@ browser:                           # ajout phase 12b : navigateur piloté (proto
   fallback_uia: true               # Brave ouvert sans le port : suggérer les outils UIA
   page_text_max_chars: 4000        # texte lu par browser_read, tronqué
   click_timeout_s: 5               # délai d'une commande DevTools
+skills:                            # ajout phase 12c : savoir-faire appris (data/skills/skills.json)
+  enabled: true                    # procédures mémorisées et rejouées
+  max_skills: 30                   # au plus N procédures (les moins utilisées sortent)
+  confidence: 70                   # score de ressemblance commande -> procédure (0 à 100)
+  auto_learn: true                 # mémorise en fond les commandes multi-étapes réussies
+  auto_learn_min_rounds: 2         # ... à partir de N étapes d'outils
+  max_failures: 3                  # échecs au rejeu avant désactivation
+  max_steps: 10                    # étapes rejouées au plus
 tts:
   backend: piper                   # piper | kokoro | elevenlabs (skin sans profil, ui.profiles)
   voice: models/fr_FR-siwis-medium.onnx   # voix Piper (scripts/download_models.py)

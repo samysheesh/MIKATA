@@ -314,6 +314,8 @@ def make_ctx(
     input: Any = None,
     uia: Any = None,
     browser: Any = None,
+    skills: Any = None,
+    skills_capture: Callable[[str], Any] | None = None,
 ) -> ToolContext:
     async def no_wait(seconds: float) -> None:
         await asyncio.sleep(0)
@@ -340,4 +342,6 @@ def make_ctx(
         input=input,
         uia=uia,
         browser=browser,
+        skills=skills,
+        skills_capture=skills_capture,
     )

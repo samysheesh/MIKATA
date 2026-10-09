@@ -171,6 +171,7 @@ Bonne nouvelle côté matériel : avec un casque fermé, le son du jeu ne revien
 
 - **Court terme** : historique en RAM, remis à zéro après 10 min sans interaction ou sur « nouvelle conversation ». Plafond \~6 000 tokens, les échanges les plus anciens sautent en premier.
 - **Long terme** : outils `remember` / `forget` qui écrivent dans `data/memory.json` (≤ 30 faits), injectés dans le prompt système. Pas de base vectorielle en v1.
+- **Procédurale** (phase 12c) : les commandes multi-étapes réussies sont distillées en savoir-faire (`data/skills/skills.json`) — rejoués sans appel LLM quand ils collent, donnés comme plan quand ils ont des paramètres, désactivés après des échecs répétés (§7, famille `skills`).
 - **Cache de prompt** : prompt système + outils identiques et en tête à chaque appel ; les faits mémorisés juste après ; le contexte dynamique en dernier. Moins cher et plus rapide.
 
 ## 7. Outils de pilotage et garde-fou
@@ -200,9 +201,10 @@ Bonne nouvelle côté matériel : avec un casque fermé, le son du jeu ne revien
 - **ui** : `show_text` (fenêtre avec texte long), `clipboard_read`, `clipboard_write`.
 - **memory** : `remember`, `forget`.
 - **uia** (phase 12a) : `uia_window` (contrôles d'une fenêtre : noms, types), `uia_read` (texte d'un contrôle ou de la fenêtre), `uia_click` ★ / `uia_set_text` ★ (par nom de contrôle, vérifiés par `check_ui_action` et `check_typed_text`), `uia_state` (état ambiant en cache : présence vocale Discord...). Implémentation : `mikata/uia/controller.py`, bibliothèque `uiautomation` (comtypes, Apache-2.0), fenêtres trouvées par `tools/desktop.py`, appels sur le thread COM dédié des outils. L'état ambiant est relu par un thread à part toutes les `uia.state_poll_s` secondes, mis en pause pendant qu'un outil agit, gardé en RAM seulement (jamais loggé). `mikata/uia/client.py` s'abonne aux événements d'accessibilité au démarrage : `UiaClientsAreListening()` devient vrai et les applications Chromium/Electron exposent leur arbre complet sans drapeau de lancement.
-- **browser** (phase 12b) : `browser_tabs`, `browser_open` ★, `browser_read` (titre, texte, liens, boutons de la page), `browser_click` ★ / `browser_type` ★ (par texte visible / libellé, vérifiés par `check_ui_action`, `check_download` et `check_typed_text`), `browser_back` ★. Implémentation : `mikata/browser/cdp.py` (client DevTools sur WebSocket, bibliothèque `websockets`, testé sous Linux contre un faux serveur) et `mikata/browser/controller.py` (attache paresseuse : port ouvert → attaché ; Brave fermé → lancé avec `--remote-debugging-port` ; Brave ouvert sans le port → refus poli, jamais de fermeture automatique). Le JavaScript envoyé au navigateur est fixe, jamais fourni par le LLM.
+- **browser** (phase 12b) : `browser_tabs`, `browser_open` (il ne conclut pas la commande : une tâche web continue par `browser_read` puis `browser_click`), `browser_read` (titre, texte, liens, boutons de la page), `browser_click` ★ / `browser_type` ★ (par texte visible / libellé, vérifiés par `check_ui_action`, `check_download` et `check_typed_text`), `browser_back` ★. Implémentation : `mikata/browser/cdp.py` (client DevTools sur WebSocket, bibliothèque `websockets`, testé sous Linux contre un faux serveur) et `mikata/browser/controller.py` (attache paresseuse : port ouvert → attaché ; Brave fermé → lancé avec `--remote-debugging-port` ; Brave ouvert sans le port → refus poli, jamais de fermeture automatique). Le JavaScript envoyé au navigateur est fixe, jamais fourni par le LLM.
+- **skills** (phase 12c) : `list_skills`, `remember_skill` ★, `forget_skill` ★. Mémoire procédurale (`mikata/skills/library.py`, `data/skills/skills.json`) : une commande multi-étapes réussie est distillée (`mikata/skills/distill.py`, un appel LLM en arrière-plan) en procédure ; la commande suivante qui ressemble la rejoue sans appel LLM (étapes rejouées via le registre : garde-fou compris), ou la reçoit comme plan si elle a des paramètres `{x}` à remplir. Échec au rejeu → repli sur le LLM avec les étapes déjà faites, compteur d'échecs, désactivation après `skills.max_failures` ; rejeu réussi → réactivation.
 
-Plus tard (v2) : capture d'écran + description (nécessite un modèle avec vision), savoir-faire appris et rejoués (skills, phase 12c), intégrations Spotify / calendrier.
+Plus tard : intégrations ciblées si un besoin précis apparaît (calendrier, Spotify...), mais la généralité vient des primitives ci-dessus, pas d'un catalogue d'applications.
 
 ## 8. Voix (TTS) et retour utilisateur
 
@@ -265,8 +267,10 @@ mikata/
    ├─ agent/  loop.py  memory.py  guard.py
    ├─ tools/  registry.py  system.py  apps.py  web.py  media.py
    │        input.py  files.py  shell.py  ui.py  memory_tools.py  uia.py  browser.py
+   │        skills.py
    ├─ uia/    controller.py  state.py  client.py  # phase 12a : arbre d'accessibilité + état ambiant + client à l'écoute
    ├─ browser/ cdp.py  controller.py              # phase 12b : navigateur piloté (DevTools)
+   ├─ skills/ library.py  distill.py              # phase 12c : savoir-faire (mémoire procédurale)
    ├─ tts/    base.py  piper_tts.py  kokoro_tts.py  normalize.py  cache.py
    │        router.py  elevenlabs.py  credits.py   # phase 11 : profils de voix, ElevenLabs
    └─ ui/     tray.py  notify.py  hotkeys.py
@@ -385,6 +389,14 @@ browser:                            # phase 12b : navigateur piloté (DevTools)
   fallback_uia: true
   page_text_max_chars: 4000
   click_timeout_s: 5
+skills:                             # phase 12c : savoir-faire appris (data/skills/skills.json)
+  enabled: true
+  max_skills: 30
+  confidence: 70                    # score flou commande -> procédure (0 à 100)
+  auto_learn: true
+  auto_learn_min_rounds: 2
+  max_failures: 3
+  max_steps: 10
 uia:                                # phase 12a : pilotage fin des applications (arbre UIA)
   enabled: true
   state_poll_s: 2                   # état ambiant en RAM (Discord...) ; 0 = jamais

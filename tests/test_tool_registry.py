@@ -84,6 +84,11 @@ PHASE_12B_TOOLS = {  # navigateur piloté (protocole DevTools)
     "browser_type",
     "browser_back",
 }
+PHASE_12C_TOOLS = {  # savoir-faire appris (mémoire procédurale)
+    "list_skills",
+    "remember_skill",
+    "forget_skill",
+}
 TERMINAL = {
     "set_timer",
     "set_reminder",
@@ -112,6 +117,8 @@ TERMINAL = {
     "browser_click",
     "browser_type",
     "browser_back",
+    "remember_skill",
+    "forget_skill",
 }
 
 
@@ -121,19 +128,33 @@ def _registry(tmp_path: Path, **kwargs: object) -> ToolRegistry:
 
 def test_catalogue_and_terminal_tools(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
-    every = PHASE_4_TOOLS | PHASE_5_TOOLS | PHASE_6_TOOLS | PHASE_12A_TOOLS | PHASE_12B_TOOLS
+    every = (
+        PHASE_4_TOOLS
+        | PHASE_5_TOOLS
+        | PHASE_6_TOOLS
+        | PHASE_12A_TOOLS
+        | PHASE_12B_TOOLS
+        | PHASE_12C_TOOLS
+    )
     assert set(registry.tools) - {"echo_test"} == every
     assert {n for n in registry.tools if registry.is_terminal(n)} - {"echo_test"} == TERMINAL
     assert FAMILIES == (
         "system", "apps", "web", "media", "ui", "memory_tools", "input", "files", "shell", "uia",
-        "browser",
+        "browser", "skills",
     )  # fmt: skip
     for tool in registry.tools.values():
         assert isinstance(tool, Tool)  # respecte l'interface de §9
 
 
 def test_schemas_are_stable_sorted_and_lean(tmp_path: Path) -> None:
-    every = PHASE_4_TOOLS | PHASE_5_TOOLS | PHASE_6_TOOLS | PHASE_12A_TOOLS | PHASE_12B_TOOLS
+    every = (
+        PHASE_4_TOOLS
+        | PHASE_5_TOOLS
+        | PHASE_6_TOOLS
+        | PHASE_12A_TOOLS
+        | PHASE_12B_TOOLS
+        | PHASE_12C_TOOLS
+    )
     registry = ToolRegistry(make_ctx(tmp_path), include=every)
     schemas = registry.schemas()
     names = [s["function"]["name"] for s in schemas]

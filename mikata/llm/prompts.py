@@ -156,6 +156,7 @@ def build_messages(
     context: str,
     memory_facts: Sequence[str] = (),
     installed_apps: Sequence[str] = (),
+    skills: Sequence[str] = (),
 ) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
     if installed_apps:
@@ -170,6 +171,17 @@ def build_messages(
         facts = "\n".join(f"- {fact}" for fact in memory_facts)
         messages.append(
             {"role": "system", "content": f"Ce que tu sais de l'utilisateur :\n{facts}"}
+        )
+    if skills:
+        block = "\n".join(f"- {skill}" for skill in skills)
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "Savoir-faire connus (procédures déjà réussies ; adapte-les à la "
+                    f"demande plutôt que de réexplorer) :\n{block}"
+                ),
+            }
         )
     messages.extend(history)
     messages.append(

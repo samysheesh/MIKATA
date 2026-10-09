@@ -47,6 +47,8 @@ GOOD: dict[str, tuple[str, dict[str, Any]]] = {
         "browser_open",
         {"url": "https://www.youtube.com/results?search_query=black+clover+dernier+opening"},
     ),
+    # Phase 12c : procédure apprise, rejouée sans appel LLM (l'entrée ne sert jamais).
+    "passe le pc en silencieux": ("set_volume", {"level": 20}),
     # Phase 6 : réponses dites, sans outil
     "raconte-moi une longue histoire": (
         "Il était une fois un petit robot qui rêvait de voir la mer. Un matin, il quitta son "
@@ -115,9 +117,9 @@ def _run(llm: PhraseLLM, tmp_path: Path) -> list[Any]:
     return asyncio.run(ev.run_cases(llm, config, list(enumerate(ev.CASES, 1))))
 
 
-def test_twenty_five_phrases_including_the_notepad_ones() -> None:
+def test_twenty_six_phrases_including_the_notepad_ones() -> None:
     phrases = [case.phrase for case in ev.CASES]
-    assert len(phrases) == 25 and len(set(phrases)) == 25
+    assert len(phrases) == 26 and len(set(phrases)) == 26
     assert phrases[:3] == ["stop process name notepad", "arrête notepad", "ferme le bloc-notes"]
     assert set(phrases) == set(GOOD)
 
@@ -133,7 +135,7 @@ def test_a_good_llm_passes_everything_without_touching_the_pc(
     assert by_phrase["mets le son à trente"].llm_calls == 1
     assert by_phrase["quel temps il fait à Lyon"].llm_calls == 2
     text = ev.report(outcomes)
-    assert "Réussies : 25/25" in text and "en un seul appel LLM : 22" in text
+    assert "Réussies : 26/26" in text and "en un seul appel LLM : 22" in text
     assert by_phrase["raconte-moi une longue histoire"].calls == []
 
 
