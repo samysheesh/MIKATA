@@ -171,6 +171,7 @@ Bonne nouvelle côté matériel : avec un casque fermé, le son du jeu ne revien
 
 - **Court terme** : historique en RAM, remis à zéro après 10 min sans interaction ou sur « nouvelle conversation ». Plafond \~6 000 tokens, les échanges les plus anciens sautent en premier.
 - **Long terme** : outils `remember` / `forget` qui écrivent dans `data/memory.json` (≤ 30 faits), injectés dans le prompt système. Pas de base vectorielle en v1.
+- **Procédurale** (phase 12c) : les commandes multi-étapes réussies sont distillées en savoir-faire (`data/skills/skills.json`) — rejoués sans appel LLM quand ils collent, donnés comme plan quand ils ont des paramètres, désactivés après des échecs répétés (§7, famille `skills`).
 - **Cache de prompt** : prompt système + outils identiques et en tête à chaque appel ; les faits mémorisés juste après ; le contexte dynamique en dernier. Moins cher et plus rapide.
 
 ## 7. Outils de pilotage et garde-fou
@@ -183,6 +184,8 @@ Bonne nouvelle côté matériel : avec un casque fermé, le son du jeu ne revien
 - **PowerShell filtré.** Avant exécution, `run_powershell` refuse les commandes de suppression ou d'effacement : `Remove-Item` et ses alias (`rm`, `ri`, `del`, `erase`, `rd`, `rmdir`), `Clear-RecycleBin`, `Format-Volume`, `diskpart`, `cipher /w`, `sdelete`, `vssadmin delete`, appels `.Delete()` .NET. Le refus est renvoyé au LLM avec la consigne d'utiliser `delete_file`. C'est une liste noire, donc un filet de sécurité et pas une garantie absolue.
 - **Écrasement = sauvegarde.** Avant que `write_file` ou `move_file` n'écrase un fichier existant, une copie part dans `data/backups/` (purge après 14 jours).
 - **Extinction / redémarrage avec 5 s pour annuler** : MIKATA annonce l'action, « stop » dans les 5 s l'annule. Pas une confirmation, juste un filet contre une mauvaise transcription.
+- **Contrôles d'interface** (phase 12a, `check_ui_action`) : un clic UIA sur un contrôle destructif (suppression définitive, formatage, réinitialisation du PC) est refusé ; les contrôles sensibles (supprimer, désinstaller, payer) demandent un « oui » oral ; le texte écrit dans un champ passe le filtre de `type_text`. Le nom du contrôle est le seul signal : c'est un filet, pas une garantie — chaque clic reste journalisé dans `data/actions.log`.
+- **Navigation** (phase 12b, `check_navigation` / `check_download`) : seuls http:// et https:// s'ouvrent (`file:`, `javascript:`, `data:`... refusés) ; un clic qui ressemble à un téléchargement demande un « oui » oral ; une page lue marque le tour (`confirm_after_web`).
 - **Droits utilisateur normaux**, jamais administrateur.
 - Option `confirm_after_web: false` dans la config. Si tu l'actives, une commande shell lancée juste après la lecture d'une page web demande ton accord : c'est la protection contre une page piégée qui dicterait des instructions au LLM. Désactivée par défaut, selon ton choix.
 
@@ -194,11 +197,15 @@ Bonne nouvelle côté matériel : avec un casque fermé, le son du jeu ne revien
 - **media** : `media_control` ★ (lecture, pause, suivant, précédent), `set_volume` ★ / `mute` ★ (`pycaw`), `set_output_device` ★.
 - **input** : `type_text`, `press_keys` (`pyautogui`).
 - **files** : `find_files`, `read_file` (tronqué), `write_file`, `move_file`, `delete_file` (corbeille).
+- **index des fichiers** (phase 12d) : `find_path`, `list_folder`, `open_in_explorer` ★. Étage « connaissances locales » : un index SQLite + FTS5 trigram de tous les noms de fichiers des volumes NTFS (`data/files_index.db`, WAL), bâti en lisant la MFT (`FSCTL_ENUM_USN_DATA`, la méthode d'Everything) et tenu à jour par le journal USN (`FSCTL_READ_USN_JOURNAL`) — jamais de rescan. Windows refuse l'accès aux volumes à un utilisateur standard : un helper élevé (`mikata/files/helper.py`, tâche planifiée installée par `scripts/install_usn_helper.ps1`, un UAC) lit MFT + journal et dépose `data/index/build.jsonl` + `events.log` ; MIKATA consomme ce flux (appends atomiques, troncature sûre) — ou lit les volumes directement s'il tourne en administrateur. Le LLM ne voit jamais l'index : il interroge et reçoit quelques lignes filtrées ; ces outils ne montrent que des noms, jamais du contenu.
 - **shell** : `run_powershell` (timeout 30 s, sortie tronquée), `run_script` pour tes scripts dans `scripts/user/`.
 - **ui** : `show_text` (fenêtre avec texte long), `clipboard_read`, `clipboard_write`.
 - **memory** : `remember`, `forget`.
+- **uia** (phase 12a) : `uia_window` (contrôles d'une fenêtre : noms, types), `uia_read` (texte d'un contrôle ou de la fenêtre), `uia_click` ★ / `uia_set_text` ★ (par nom de contrôle, vérifiés par `check_ui_action` et `check_typed_text`), `uia_state` (état ambiant en cache : présence vocale Discord...). Implémentation : `mikata/uia/controller.py`, bibliothèque `uiautomation` (comtypes, Apache-2.0), fenêtres trouvées par `tools/desktop.py`, appels sur le thread COM dédié des outils. L'état ambiant est relu par un thread à part toutes les `uia.state_poll_s` secondes, mis en pause pendant qu'un outil agit, gardé en RAM seulement (jamais loggé). `mikata/uia/client.py` s'abonne aux événements d'accessibilité au démarrage : `UiaClientsAreListening()` devient vrai et les applications Chromium/Electron exposent leur arbre complet sans drapeau de lancement.
+- **browser** (phase 12b) : `browser_tabs`, `browser_open` (il ne conclut pas la commande : une tâche web continue par `browser_read` puis `browser_click`), `browser_read` (titre, texte, liens, boutons de la page), `browser_click` ★ / `browser_type` ★ (par texte visible / libellé, vérifiés par `check_ui_action`, `check_download` et `check_typed_text`), `browser_back` ★. Implémentation : `mikata/browser/cdp.py` (client DevTools sur WebSocket, bibliothèque `websockets`, testé sous Linux contre un faux serveur) et `mikata/browser/controller.py` (attache paresseuse : port ouvert → attaché ; Brave fermé → lancé avec `--remote-debugging-port` ; Brave ouvert sans le port → refus poli, jamais de fermeture automatique). Le JavaScript envoyé au navigateur est fixe, jamais fourni par le LLM.
+- **skills** (phase 12c) : `list_skills`, `remember_skill` ★, `forget_skill` ★. Mémoire procédurale (`mikata/skills/library.py`, `data/skills/skills.json`) : une commande multi-étapes réussie est distillée (`mikata/skills/distill.py`, un appel LLM en arrière-plan) en procédure ; la commande suivante qui ressemble la rejoue sans appel LLM (étapes rejouées via le registre : garde-fou compris), ou la reçoit comme plan si elle a des paramètres `{x}` à remplir. Échec au rejeu → repli sur le LLM avec les étapes déjà faites, compteur d'échecs, désactivation après `skills.max_failures` ; rejeu réussi → réactivation.
 
-Plus tard (v2) : capture d'écran + description (nécessite un modèle avec vision), pilotage fin d'interfaces via `pywinauto`, intégrations Spotify / calendrier.
+Plus tard : intégrations ciblées si un besoin précis apparaît (calendrier, Spotify...), mais la généralité vient des primitives ci-dessus, pas d'un catalogue d'applications.
 
 ## 8. Voix (TTS) et retour utilisateur
 
@@ -239,9 +246,10 @@ mikata/
 ├─ .env                      # LLM_API_KEY, SEARCH_API_KEY (jamais commité)
 ├─ assets/sounds/            # earcons .wav
 ├─ models/                   # mikata.onnx, voix Piper, verifier
-├─ data/                     # logs, memory.json, actions.log, wake_logs/
+├─ data/                     # logs, memory.json, actions.log, wake_logs/, files_index.db, index/ (helper USN)
 ├─ scripts/
 │  ├─ install_autostart.ps1  # tâche planifiée à l'ouverture de session
+│  ├─ install_usn_helper.ps1 # phase 12d : tâche élevée du helper USN (un UAC)
 │  ├─ record_wakeword_samples.py  eval_wakeword.py  eval_stt.py
 │  ├─ list_audio_devices.py
 │  └─ user/                  # tes scripts autorisés (run_script)
@@ -260,10 +268,15 @@ mikata/
    ├─ llm/    client.py  prompts.py
    ├─ agent/  loop.py  memory.py  guard.py
    ├─ tools/  registry.py  system.py  apps.py  web.py  media.py
-   │        input.py  files.py  shell.py  ui.py  memory_tools.py
-   ├─ tts/    base.py  piper_tts.py  kokoro_tts.py  normalize.py  cache.py
-   │        router.py  elevenlabs.py  credits.py   # phase 11 : profils de voix, ElevenLabs
-   └─ ui/     tray.py  notify.py  hotkeys.py
+   │        input.py  files.py  shell.py  ui.py  memory_tools.py  uia.py  browser.py
+   │        skills.py
+    ├─ uia/    controller.py  state.py  client.py  # phase 12a : arbre d'accessibilité + état ambiant + client à l'écoute
+    ├─ browser/ cdp.py  controller.py              # phase 12b : navigateur piloté (DevTools)
+    ├─ skills/ library.py  distill.py              # phase 12c : savoir-faire (mémoire procédurale)
+    ├─ files/  usn.py  index.py  events.py  helper.py  # phase 12d : index des fichiers (MFT + journal USN)
+    ├─ tts/    base.py  piper_tts.py  kokoro_tts.py  normalize.py  cache.py
+    │        router.py  elevenlabs.py  credits.py   # phase 11 : profils de voix, ElevenLabs
+    └─ ui/     tray.py  notify.py  hotkeys.py
 ```
 
 **Interfaces** (dans les fichiers `base.py`, avec `typing.Protocol`) :
@@ -373,11 +386,37 @@ guard:
   backup_days: 14
   shutdown_cancel_s: 5
   confirm_after_web: false
+browser:                            # phase 12b : navigateur piloté (DevTools)
+  enabled: true
+  cdp_port: 9222
+  fallback_uia: true
+  page_text_max_chars: 4000
+  click_timeout_s: 5
+skills:                             # phase 12c : savoir-faire appris (data/skills/skills.json)
+  enabled: true
+  max_skills: 30
+  confidence: 70                    # score flou commande -> procédure (0 à 100)
+  auto_learn: true
+  auto_learn_min_rounds: 2
+  max_failures: 3
+  max_steps: 10
+files_index:                        # phase 12d : index local des fichiers (MFT + journal USN)
+  enabled: true
+  db: data/files_index.db           # SQLite WAL, jamais envoyé au LLM
+  poll_s: 5                         # sondage du journal USN (secondes)
+  max_results: 20                   # résultats renvoyés au LLM (au plus)
+uia:                                # phase 12a : pilotage fin des applications (arbre UIA)
+  enabled: true
+  state_poll_s: 2                   # état ambiant en RAM (Discord...) ; 0 = jamais
+  max_controls: 200                 # contrôles listés par uia_window (au plus)
+  max_text_chars: 2000              # texte lu par uia_read, tronqué
 ```
 
 Les secrets (`LLM_API_KEY`, `SEARCH_API_KEY`, `ELEVENLABS_API_KEY`) vont dans `.env`, jamais dans le dépôt. Les profils de personnage (`ui.profiles`, skin -> voix) sont dans `config.yaml` : un identifiant de voix n'est pas un secret.
 
 **Démarrage automatique** : une **tâche planifiée Windows** « à l'ouverture de session », avec ton compte, via `pythonw.exe` (pas de console), option « redémarrer en cas d'échec ». Script `scripts/install_autostart.ps1`. **Pas un service Windows** : un service tourne dans la session 0, isolée du bureau, sans accès simple à tes fenêtres ni à ton audio.
+
+**Helper USN (phase 12d)** : une deuxième tâche planifiée « MIKATA Indexer USN » (élevée, `scripts/install_usn_helper.ps1`, un seul UAC) lit la MFT et le journal de modifications ; MIKATA, en utilisateur standard, n'a jamais besoin des droits administrateur.
 
 **Priorité du processus** (`governor.py`, au démarrage) : le jeu doit toujours passer devant.
 

@@ -150,12 +150,31 @@ class WindowInfo:
     process: str  # nom de l'exécutable, sans « .exe »
 
 
+@dataclass(frozen=True)
+class UiWindowInfo:
+    """Fenêtre trouvée pour les outils UIA (phase 12a) : identifiée par titre et processus."""
+
+    title: str
+    process: str
+    handle: int = 0  # natif Windows, 0 dans les simulations
+
+
+@dataclass(frozen=True)
+class UiControlInfo:
+    """Contrôle lisible d'une application : nom, type en français, texte affiché (tronqué)."""
+
+    name: str
+    kind: str  # « bouton », « champ », « texte », « élément »...
+    text: str = ""
+
+
 class Desktop(Protocol):
     """Bureau Windows (tools/desktop.py), simulé dans les tests."""
 
     def list_apps(self, refresh: bool = False) -> list[AppEntry]: ...
     def launch(self, app: AppEntry) -> None: ...
     def open_target(self, target: str) -> None: ...  # URL ou fichier, programme par défaut
+    def open_folder(self, path: str, select: bool = False) -> None: ...  # Explorateur dessus
     def windows(self) -> list[WindowInfo]: ...
     def foreground_window(self) -> WindowInfo | None: ...  # fenêtre active (phase 5)
     def cached_apps(self) -> list[AppEntry]: ...  # index déjà construit, sans attente
@@ -182,6 +201,45 @@ class ProcessRunner(Protocol):
     async def run(
         self, argv: list[str], timeout_s: float, cwd: Path | None = None
     ) -> tuple[int, str]: ...
+
+
+class UiAutomation(Protocol):
+    """Pilotage fin des applications (mikata/uia/controller.py, phase 12a), simulé dans les
+    tests. Les méthodes sont bloquantes : appelées via `ToolContext.run_blocking`."""
+
+    def window(self, title: str | None, process: str | None) -> UiWindowInfo: ...
+    def controls(self, window: UiWindowInfo, max_controls: int) -> list[UiControlInfo]: ...
+    def read(self, window: UiWindowInfo, control: str | None, max_chars: int) -> str: ...
+    def click(self, window: UiWindowInfo, control: str, kind: str | None, nth: int) -> str: ...
+    def set_text(self, window: UiWindowInfo, control: str, text: str) -> str: ...
+    def state_summary(self) -> str: ...  # état ambiant en cache (Discord...), "" si rien
+    def pause_state(self, paused: bool) -> None: ...  # le poller d'état saute ses lectures
+    def aclose(self) -> None: ...  # arrête le poller d'état (arrêt propre)
+
+
+class BrowserControl(Protocol):
+    """Contrôle du navigateur Chromium (mikata/browser/controller.py, phase 12b), simulé
+    dans les tests. Méthodes asynchrones (WebSocket DevTools)."""
+
+    async def tabs(self) -> str: ...
+    async def open_url(self, url: str) -> str: ...
+    async def read(self, max_chars: int) -> str: ...
+    async def find(self, text: str, nth: int) -> dict[str, Any]: ...  # libellé + lien, sans cliquer
+    async def click(self, text: str, nth: int) -> str: ...
+    async def type_text(self, field: str, text: str) -> str: ...
+    async def back(self) -> str: ...
+    async def aclose(self) -> None: ...
+
+
+class FileIndexService(Protocol):
+    """Index local des fichiers (mikata/files/index.py, phase 12d), simulé dans les
+    tests. Requêtes rapides en lecture ; le LLM ne voit jamais l'index lui-même."""
+
+    def ready(self) -> bool: ...
+    def stats(self) -> dict[str, Any]: ...
+    def search(self, query: str, max_results: int) -> list[dict[str, Any]]: ...
+    def list_folder(self, folder: str, limit: int) -> list[dict[str, Any]]: ...
+    def aclose(self) -> None: ...
 
 
 class AudioControl(Protocol):
@@ -218,6 +276,16 @@ class ToolContext:
     guard: Guard | None = None
     input: InputControl | None = None
     shell: ProcessRunner | None = None
+    # Ajout phase 12a : pilotage fin des applications (arbre d'accessibilité Windows).
+    uia: UiAutomation | None = None
+    # Ajout phase 12b : contrôle du navigateur (protocole DevTools).
+    browser: BrowserControl | None = None
+    # Ajout phase 12c : savoir-faire (mikata.skills.library.SkillLibrary) et capture forcée
+    # de la dernière commande réussie (câblée par la boucle agent, comme `history`).
+    skills: Any = None
+    skills_capture: Callable[[str], Awaitable[str]] | None = None
+    # Ajout phase 12d : index local des fichiers (mikata.files.index.FileIndex).
+    index: FileIndexService | None = None
     _executor: ThreadPoolExecutor | None = field(default=None, repr=False)
 
     async def run_blocking(self, fn: Callable[..., R], *args: Any) -> R:
@@ -257,6 +325,26 @@ class ToolContext:
             raise ToolError("le contrôle du volume Windows n'est pas disponible ici")
         return self.audio
 
+    def require_uia(self) -> UiAutomation:
+        if self.uia is None:
+            raise ToolError("le pilotage fin des applications n'est pas disponible ici")
+        return self.uia
+
+    def require_browser(self) -> BrowserControl:
+        if self.browser is None:
+            raise ToolError("le contrôle du navigateur n'est pas disponible ici")
+        return self.browser
+
+    def require_skills(self) -> Any:
+        if self.skills is None:
+            raise ToolError("les savoir-faire ne sont pas disponibles ici")
+        return self.skills
+
+    def require_index(self) -> FileIndexService:
+        if self.index is None:
+            raise ToolError("l'index des fichiers n'est pas disponible ici")
+        return self.index
+
     def spawn(self, coro: Awaitable[Any], name: str) -> None:
         """Tâche de fond gardée en vie (minuteurs, rappels)."""
         task = asyncio.ensure_future(coro)
@@ -265,10 +353,26 @@ class ToolContext:
         task.add_done_callback(self.tasks.discard)
 
     async def aclose(self) -> None:
-        """Arrêt : minuteurs annulés, client HTTP fermé, thread des outils arrêté."""
+        """Arrêt : minuteurs annulés, client HTTP fermé, poller UIA arrêté, thread des
+        outils fermé."""
         for task in list(self.tasks):
             task.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)
+        if self.uia is not None:
+            try:
+                self.uia.aclose()
+            except Exception as exc:
+                logger.debug("Fermeture du pilotage UIA : {}", exc)
+        if self.browser is not None:
+            try:
+                await self.browser.aclose()
+            except Exception as exc:
+                logger.debug("Fermeture du contrôle du navigateur : {}", exc)
+        if self.index is not None:
+            try:
+                self.index.aclose()
+            except Exception as exc:
+                logger.debug("Fermeture de l'index des fichiers : {}", exc)
         if self.http is not None:
             try:
                 await self.http.aclose()

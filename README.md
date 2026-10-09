@@ -2155,3 +2155,422 @@ Select-String -Path data\logs\mikata.log -Pattern "Voix de base|de nouveau dispo
 
 Le passage sur Kokoro au renouvellement du crédit et la reprise après un 429 sont vérifiés par
 les tests (horloge simulée).
+
+## Phase 12a — vérification sur le PC Windows
+
+Pilotage fin des applications (premier étage de la phase 12 : lire l'écran sans le voir).
+
+Comment ça marche :
+
+- **Cinq nouveaux outils** (famille `uia`, un module dans `mikata/tools/`) : `uia_window`
+  (liste les contrôles d'une fenêtre : noms et types, par titre ou processus, sans argument :
+  la fenêtre active), `uia_read` (texte d'un contrôle ou de toute la fenêtre), `uia_click` ★
+  et `uia_set_text` ★ (cliquer ou remplir un contrôle **par son nom**, au lieu de taper à
+  l'aveugle), `uia_state` (état ambiant gardé en mémoire).
+- **Arbre d'accessibilité Windows (UIA)** : `mikata/uia/controller.py`, bibliothèque
+  `uiautomation` (pur Python, comtypes — pas de pywinauto). La fenêtre est trouvée par le
+  bureau existant (`tools/desktop.py`), les noms sont comparés sans casse ni accents
+  (« discorde » trouve « Discord », « envoie » trouve « Envoyer »). Tout tourne sur le
+  thread COM dédié des outils, borné (`uia.max_controls`) et tronqué (`uia.max_text_chars`).
+- **État ambiant** (`mikata/uia/state.py`) : un thread à part relit toutes les
+  `uia.state_poll_s` secondes la présence vocale Discord (salon connecté + membres) et la
+  garde en RAM. Jamais écrit sur disque, jamais loggé, mis en pause pendant qu'un outil
+  agit. `uia_state` la lit sans rien ouvrir.
+- **Client d'accessibilité** (`mikata/uia/client.py`) : au démarrage, MIKATA s'abonne aux
+  événements d'accessibilité Windows (`UiaClientsAreListening`). Les applications
+  Chromium/Electron (Discord, VS Code, Spotify...) exposent alors leur arbre complet
+  **sans aucun drapeau**. `uia.accessibility_client: false` coupe l'abonnement ; le script
+  `scripts\discord_accessibility.ps1` (drapeau `--force-renderer-accessibility` sur les
+  raccourcis et le démarrage automatique) reste le secours si l'abonnement est coupé ou
+  indisponible :
+
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File scripts\discord_accessibility.ps1          # installe
+  powershell -ExecutionPolicy Bypass -File scripts\discord_accessibility.ps1 -Status  # état
+  powershell -ExecutionPolicy Bypass -File scripts\discord_accessibility.ps1 -Restore # retire
+  ```
+
+  Quitte Discord complètement puis relance-le depuis le raccourci (l'icône de la barre des
+  tâches peut demander un redémarrage de l'Explorateur).
+- **Garde-fou** (`check_ui_action`) : un clic sur un contrôle destructif (« Supprimer
+  définitivement », « Vider la corbeille », « Réinitialiser ce PC », « Formater ») est
+  refusé ; les contrôles sensibles (« Supprimer », « Désinstaller », « Acheter ») demandent
+  « Tu confirmes ? » à voix haute ; le texte d'un champ passe le même filtre que `type_text`.
+  Chaque clic est journalisé dans `data/actions.log`.
+- **Config** : nouvelle section `uia` (`enabled`, `state_poll_s`, `max_controls`,
+  `max_text_chars`). `uia.enabled: false` coupe tout ; `state_poll_s: 0` coupe le suivi.
+
+### 1. Récupérer la branche, installer
+
+```powershell
+git fetch origin
+git checkout phase-12a-uia
+git pull
+uv sync
+```
+
+Si tu as modifié `config.yaml` en local, garde tes réglages pendant la mise à jour (une
+section `uia:` est ajoutée) :
+
+```powershell
+git stash
+git pull
+git stash pop
+Select-String -Path config.yaml -Pattern "state_poll_s|max_controls"
+```
+
+### 2. Lint et tests
+
+```powershell
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
+uv run pytest tests\test_uia_tools.py tests\test_guard_ui.py tests\test_uia_state.py -v
+```
+
+Attendu : tout en `passed`. Ce que vérifient ces tests :
+
+- chaque outil sur pilote simulé, erreurs en français, « aucun contrôle lisible » ;
+- les contrôles destructifs ne sont **jamais** cliqués (`REFUSÉ` dans `actions.log`), les
+  contrôles sensibles posent la question exacte et n'agissent que sur « oui », sans micro
+  c'est refusé ;
+- une commande de suppression ne s'écrit jamais dans un champ ;
+- le cache d'état se remplit sur son propre thread, saute ses lectures pendant une action,
+  s'arrête proprement et ne fuit rien dans les logs.
+
+### 3. Lire une application (sans micro)
+
+```powershell
+notepad
+uv run python -m mikata --ask "quels boutons y a-t-il dans le bloc-notes"
+```
+
+Attendu : MIKATA liste les contrôles (Fichier, Édition, la zone de texte...) et les dit.
+Sans le Bloc-notes d'ouvert, il répond qu'aucune fenêtre ne correspond.
+
+### 4. Cliquer par nom (avec le micro)
+
+```powershell
+notepad
+uv run python -m mikata
+```
+
+1. « MIKATA, tape bonjour dans le bloc-notes avec le champ de texte » → `uia_set_text`
+   écrit dans la zone de texte, sans `type_text` aveugle.
+2. « MIKATA, clique sur le menu fichier » → `uia_click` clique le menu « Fichier ».
+3. « MIKATA, qui est dans mon salon vocal discord » (Discord lancé avec le drapeau, voir
+   plus haut, et connecté en vocal) → `uia_state` répond avec le salon et les membres,
+   sans toucher à Discord.
+
+### 5. Le garde-fou en vrai
+
+1. « MIKATA, clique sur supprimer définitivement » → refus, rien ne se passe, et
+   `Select-String -Path data\actions.log -Pattern "REFUSÉ"` montre la ligne.
+2. « MIKATA, clique sur désinstaller » → « Tu confirmes ? » ; réponds « non » : rien.
+3. `uv run python -m mikata --ask "clique sur désinstaller"` (sans micro) → refus.
+
+### 6. Non-régression
+
+```powershell
+uv run pytest tests\test_guard_criteria.py tests\test_voice_stop.py -v
+uv run python -m mikata --check-config
+```
+
+Attendu : tout en `passed`, config valide ; bip < 150 ms et CPU au repos inchangés (le suivi
+d'état tourne sur son propre thread, en pause pendant les actions).
+
+## Phase 12b — vérification sur le PC Windows
+
+Navigateur piloté (deuxième étage de la phase 12 : agir sur le web en lisant la page).
+
+Comment ça marche :
+
+- **Six nouveaux outils** (famille `browser`) : `browser_tabs` (onglets ouverts),
+  `browser_open` (ouvre une URL et attend la page — ne conclut pas la commande, on
+  enchaîne), `browser_read` (titre, texte, liens et boutons visibles de la page — en
+  arrière-plan), `browser_click` ★ (clique un élément par son texte visible),
+  `browser_type` ★ (écrit dans un champ par son libellé, React compris),
+  `browser_back` ★.
+- **Protocole DevTools (CDP)** : `mikata/browser/cdp.py` parle à Brave par WebSocket
+  (bibliothèque `websockets`, pas de Playwright ni de moteur téléchargé). Le JavaScript
+  envoyé au navigateur est fixe et écrit par nous, jamais fourni par le LLM.
+- **Attache** (`mikata/browser/controller.py`) : le port DevTools répond → on s'y attache ;
+  Brave fermé → MIKATA le lance elle-même avec `--remote-debugging-port` (profil normal,
+  identifiants conservés) ; Brave déjà ouvert **sans** le port → refus poli avec la marche
+  à suivre (jamais de fermeture automatique de ton navigateur).
+- **Garde-fou** (`check_navigation`, `check_download`) : seuls http/https s'ouvrent
+  (`file:`, `javascript:`, `data:`... refusés) ; un clic qui ressemble à un téléchargement
+  demande « Tu confirmes ? » ; le texte d'un champ passe le filtre de `type_text` ; une
+  page lue marque le tour (`confirm_after_web` s'applique).
+- **Config** : section `browser` (`enabled`, `cdp_port`, `fallback_uia`,
+  `page_text_max_chars`, `click_timeout_s`).
+
+### 1. Récupérer la branche, installer
+
+```powershell
+git fetch origin
+git checkout phase-12b-browser
+git pull
+uv sync
+```
+
+Si tu as modifié `config.yaml` en local, garde tes réglages pendant la mise à jour (une
+section `browser:` est ajoutée) :
+
+```powershell
+git stash
+git pull
+git stash pop
+Select-String -Path config.yaml -Pattern "cdp_port"
+```
+
+### 2. Lint et tests
+
+```powershell
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
+uv run pytest tests\test_cdp_client.py tests\test_browser_tools.py tests\test_guard_browser.py -v
+```
+
+Attendu : tout en `passed`. Le vrai client CDP est testé contre un faux serveur WebSocket
+(transport, erreurs, événements, fermeture) ; les outils sur pilote simulé ; le garde-fou
+(schémas refusés, téléchargement confirmé à voix haute, sans micro = refus).
+
+### 3. Le critère : « lance le dernier opening de black clover »
+
+Ferme Brave complètement (clic droit icône barre des tâches > Quitter, ou Ctrl+Maj+Q),
+puis :
+
+```powershell
+uv run python -m mikata
+```
+
+Dis « MIKATA, lance le dernier opening de black clover ». Attendu : MIKATA lance Brave
+(avec le port de contrôle), va sur YouTube, tape la recherche, lit les résultats, clique le
+bon, et la vidéo se lance — en quelques étapes, chaque outil dans `data\actions.log`.
+
+Même chose avec « MIKATA, quelle est la météo à Paris sur google ? » (navigation, lecture
+de page) et « MIKATA, reviens à la page précédente » (`browser_back`).
+
+### 4. Brave déjà ouvert
+
+Rouvre Brave à la main (sans le port), puis « MIKATA, lis la page du navigateur ».
+Attendu : refus poli — « Brave est ouvert sans son port de contrôle : ferme complètement
+Brave et redemande ». Rien n'est jamais fermé tout seul.
+
+### 5. Non-régression
+
+```powershell
+uv run pytest tests\test_guard_criteria.py tests\test_voice_stop.py -v
+uv run python -m mikata --check-config
+```
+
+Attendu : tout en `passed`, config valide, latence et CPU inchangés (la connexion au
+navigateur n'est ouverte qu'à la première utilisation).
+
+## Phase 12c — vérification sur le PC Windows
+
+Savoir-faire (troisième étage de la phase 12 : MIKATA apprend de chaque tâche réussie).
+
+Comment ça marche :
+
+- **Mémoire procédurale** (`mikata/skills/library.py`) : chaque commande multi-étapes qui
+  réussit est distillée en procédure (nom, description, exemple, étapes avec les morceaux
+  variables marqués `{param}`), rangée dans `data/skills/skills.json` (écriture atomique,
+  chargement tolérant, comme la mémoire).
+- **Rejeu sans LLM** : la commande suivante qui ressemble (score flou + un mot
+  significatif commun) rejoue les étapes directement — 0 appel LLM, « C'est fait ». Les
+  étapes repassent par le registre : garde-fou, délais, journal, tout s'applique.
+- **Procédures paramétrées** : si la procédure a des trous (`{query}`), elle est donnée au
+  LLM comme plan à remplir — un appel au lieu de toute l'exploration.
+- **Auto-guérison** : une étape qui échoue au rejeu bascule sur le LLM (qui reprend de
+  l'échec), l'échec est compté, et la procédure est désactivée après `skills.max_failures`
+  échecs. Un rejeu réussi la réactive.
+- **Apprentissage** : automatique en arrière-plan (`skills.auto_learn`, à partir de
+  `skills.auto_learn_min_rounds` étapes réussies — zéro latence perçue), ou forcé à la
+  voix : « MIKATA, souviens-toi comment faire ça » (`remember_skill`). Outils :
+  `list_skills`, `remember_skill` ★, `forget_skill` ★.
+- **Config** : section `skills` (`enabled`, `max_skills`, `confidence`, `auto_learn`,
+  `auto_learn_min_rounds`, `max_failures`, `max_steps`).
+
+### 1. Récupérer la branche, installer
+
+```powershell
+git fetch origin
+git checkout phase-12c-skills
+git pull
+uv sync
+```
+
+Si tu as modifié `config.yaml` en local, garde tes réglages pendant la mise à jour (une
+section `skills:` est ajoutée) :
+
+```powershell
+git stash
+git pull
+git stash pop
+Select-String -Path config.yaml -Pattern "auto_learn"
+```
+
+### 2. Lint et tests
+
+```powershell
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
+uv run pytest tests\test_skills_library.py tests\test_skills_agent.py tests\test_skills_tools.py -v
+```
+
+Attendu : tout en `passed`. Ce que vérifient ces tests :
+
+- la bibliothèque : fichier JSON atomique, entrées invalides refusées (outil inconnu,
+  nom invalide), dédoublonnage, éviction des moins utilisées, désactivation après échecs,
+  réactivation après un rejeu réussi ;
+- la boucle : rejeu sans appel LLM, repli sur le LLM quand une étape échoue (avec les
+  étapes déjà faites dans le contexte), plan paramétré injecté, apprentissage en fond,
+  capture forcée par `remember_skill`.
+
+### 3. Apprendre et rejouer (avec le micro)
+
+```powershell
+uv run python -m mikata
+```
+
+1. Ferme Brave complètement, puis dis « MIKATA, lance le dernier opening de black
+   clover ». Il explore (ouvre, cherche, lit, clique) : c'est la commande d'apprentissage.
+2. Regarde `data\skills\skills.json` : la procédure devrait y être, avec `{query}`.
+3. Dis « MIKATA, lance le dernier opening de one piece » : le plan appris est rempli —
+   moins d'étapes, plus rapide. Dans le log : `Savoir-faire « … » : proposé comme plan.`
+4. Une procédure sans variable : dis deux fois la même action en deux étapes (ex. « mets
+   le volume à vingt puis coupe le son »), puis « MIKATA, souviens-toi comment faire ça ».
+   Redis la même phrase : le log montre `Savoir-faire « … » : rejoué (2 étape(s), 0 appel
+   LLM).` et c'est instantané.
+5. « MIKATA, quels savoir-faire connais-tu ? » → `list_skills` ; « MIKATA, oublie comment
+   mettre le pc en silencieux » → `forget_skill`.
+
+### 4. Auto-guérison en vrai
+
+1. Apprends une procédure qui ouvre une appli, puis désinstalle cette appli (ou renomme
+   la cible). Redemande la même chose : la première étape échoue, le LLM reprend et
+   explique ; `data\skills\skills.json` montre `failures: 1`. Après `max_failures` (3)
+   échecs, la procédure passe `enabled: false` et n'est plus proposée.
+
+### 5. Non-régression
+
+```powershell
+uv run pytest tests\test_guard_criteria.py tests\test_voice_stop.py -v
+uv run python -m mikata --check-config
+```
+
+Attendu : tout en `passed`, config valide, latence et CPU inchangés (l'apprentissage
+tourne en arrière-plan, jamais pendant une commande).
+
+## Phase 12d — vérification sur le PC Windows
+
+L'index local des fichiers (quatrième étage de la phase 12 : MIKATA connaît ton PC).
+
+Comment ça marche :
+
+- **Index complet, jamais rescané** (`mikata/files/`) : la MFT de chaque volume NTFS est
+  lue d'un coup (`FSCTL_ENUM_USN_DATA` — la méthode d'Everything, des millions de fichiers
+  en quelques secondes), puis le journal de modifications USN rejoue les deltas
+  (créations, renommages, suppressions) en continu. Un dossier renommé décale tous ses
+  enfants ; un événement perdu ou un journal vidé déclenche une reconstruction automatique.
+- **Le LLM ne voit jamais l'index** : il appelle `find_path` et reçoit au plus
+  `files_index.max_results` lignes (SQLite + FTS5 trigram, insensible aux accents, en
+  quelques millisecondes).
+- **Deux sources, détectées seules** : Windows refuse la lecture des volumes à un
+  utilisateur standard, donc un petit **helper élevé** (`mikata/files/helper.py`, tâche
+  planifiée, un seul UAC à l'installation) lit MFT + journal et dépose `build.jsonl` +
+  `events.log` dans `data/index/` ; MIKATA (user) consomme ce flux (appends atomiques,
+  jamais une ligne coupée). Si MIKATA tourne en administrateur, il lit les volumes
+  directement, sans helper.
+- **Outils** : `find_path` (cherche un fichier/dossier sur tout le PC), `list_folder`
+  (contenu depuis l'index, dossiers d'abord), `open_in_explorer` ★ (ouvre le dossier ou
+  sélectionne le fichier — « où est cyberpunk 2077 »). Pas de filtre `allowed_dirs` ici :
+  seuls des **noms** sont montrés, jamais du contenu. Les outils de contenu (lecture,
+  écriture, corbeille) gardent leur garde-fou.
+- **Config** : section `files_index` (`enabled`, `db`, `poll_s`, `max_results`).
+
+### 1. Récupérer la branche, installer
+
+```powershell
+git fetch origin
+git checkout phase-12d-index
+git pull
+uv sync
+```
+
+Si tu as modifié `config.yaml` en local, garde tes réglages pendant la mise à jour (une
+section `files_index:` est ajoutée) :
+
+```powershell
+git stash
+git pull
+git stash pop
+Select-String -Path config.yaml -Pattern "files_index"
+```
+
+### 2. Installer le helper élevé (une seule fois, un UAC)
+
+```powershell
+powershell -Command "Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File D:\projects\mikata\scripts\install_usn_helper.ps1'"
+```
+
+La tâche planifiée « MIKATA Indexer USN » démarre à l'ouverture de session et tourne en
+tâche de fond. Vérifie quelques secondes plus tard :
+
+```powershell
+Get-Content data\index\helper.log -Tail 5
+```
+
+Attendu : `Dump initial : N entrées en X s.` (N de l'ordre du nombre de fichiers de tes
+disques). Sans helper (ou en désaccord UAC), l'index dit clairement qu'il attend le dump
+et `find_path` renvoie « l'index des fichiers se construit… ».
+
+### 3. Lint et tests
+
+```powershell
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
+uv run pytest tests\test_file_index.py tests\test_file_index_tools.py -v
+```
+
+Attendu : tout en `passed`. Ce que vérifient ces tests :
+- reconstruction des chemins depuis la carte FRN (orphelins et sous-arbres système
+  ignorés), renommage d'un dossier qui décale ses enfants, suppression d'un dossier qui
+  purge le sous-arbre, recherche trigramme sans accents et classée (nom exact d'abord) ;
+- le contrat du helper : lignes JSONL aller-retour, dernière ligne tronquée ignorée,
+  consommation qui ne coupe jamais un append en cours ;
+- les outils : résultats de l'index, filtre par dossier, message clair pendant la
+  construction, `open_in_explorer` (dossier ouvert / fichier sélectionné) sans dépendre
+  de l'index.
+
+### 4. Vérification à la voix
+
+```powershell
+uv run python -m mikata
+```
+
+1. Au démarrage : `Index des fichiers : N entrées en X s (dump du helper élevé).`
+2. « MIKATA, où est cyberpunk 2077 » → réponse immédiate avec le chemin complet, puis
+   « ouvre-le dans l'explorateur » → la bonne fenêtre s'ouvre, le fichier est sélectionné.
+3. Crée un fichier sur le Bureau pendant que MIKATA tourne, puis « MIKATA, trouve
+   mon-fichier-de-test » : il apparaît en quelques secondes (`files_index.poll_s`), sans
+   aucun rescan.
+4. Renomme un dossier qui contient des fichiers, puis cherche un de ses fichiers : le
+   chemin affiché est le nouveau.
+
+### 5. Non-régression
+
+```powershell
+uv run pytest tests\test_guard_criteria.py tests\test_voice_stop.py -v
+uv run python -m mikata --check-config
+uv run python scripts\eval_prompt.py
+```
+
+Attendu : tout en `passed`, config valide, banc de phrases 28/28 (dont « où est cyberpunk
+2077 »), latence et CPU inchangés (l'index tourne sur son thread dédié, la base est en
+WAL).

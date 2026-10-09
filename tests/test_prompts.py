@@ -100,6 +100,23 @@ def test_messages_order_keeps_cacheable_prefix() -> None:
     assert build_messages([], "x", "c")[0]["content"] == SYSTEM_PROMPT  # préfixe identique
 
 
+def test_skills_block_sits_between_facts_and_history() -> None:
+    history = [{"role": "user", "content": "a"}]
+    messages = build_messages(
+        history,
+        "lance la vidéo",
+        "contexte",
+        memory_facts=["Mon chien s'appelle Rex."],
+        skills=["youtube_recent_video — chercher et lancer une vidéo"],
+    )
+    roles = [message["role"] for message in messages]
+    assert roles == ["system", "system", "system", "user", "user"]
+    assert "Rex" in messages[1]["content"]  # faits avant
+    assert "youtube_recent_video" in messages[2]["content"]  # savoir-faire ensuite
+    assert messages[3:4] == history  # puis l'historique, puis la commande
+    assert build_messages([], "x", "c", skills=[])[0]["content"] == SYSTEM_PROMPT
+
+
 def test_window_title_outside_windows() -> None:
     import sys
 

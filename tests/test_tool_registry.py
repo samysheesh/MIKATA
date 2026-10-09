@@ -69,6 +69,31 @@ PHASE_5_TOOLS = {
     "run_script",
 }
 PHASE_6_TOOLS = {"set_history_duration"}  # durée de l'historique, à la voix
+PHASE_12A_TOOLS = {  # pilotage fin des applications (arbre d'accessibilité Windows)
+    "uia_window",
+    "uia_read",
+    "uia_click",
+    "uia_set_text",
+    "uia_state",
+}
+PHASE_12B_TOOLS = {  # navigateur piloté (protocole DevTools)
+    "browser_tabs",
+    "browser_open",
+    "browser_read",
+    "browser_click",
+    "browser_type",
+    "browser_back",
+}
+PHASE_12C_TOOLS = {  # savoir-faire appris (mémoire procédurale)
+    "list_skills",
+    "remember_skill",
+    "forget_skill",
+}
+PHASE_12D_TOOLS = {  # index local des fichiers (MFT + journal USN)
+    "find_path",
+    "list_folder",
+    "open_in_explorer",
+}
 TERMINAL = {
     "set_timer",
     "set_reminder",
@@ -92,6 +117,14 @@ TERMINAL = {
     "press_keys",
     "mouse",
     "close_window",
+    "uia_click",
+    "uia_set_text",
+    "browser_click",
+    "browser_type",
+    "browser_back",
+    "remember_skill",
+    "forget_skill",
+    "open_in_explorer",
 }
 
 
@@ -101,17 +134,35 @@ def _registry(tmp_path: Path, **kwargs: object) -> ToolRegistry:
 
 def test_catalogue_and_terminal_tools(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
-    assert set(registry.tools) - {"echo_test"} == PHASE_4_TOOLS | PHASE_5_TOOLS | PHASE_6_TOOLS
+    every = (
+        PHASE_4_TOOLS
+        | PHASE_5_TOOLS
+        | PHASE_6_TOOLS
+        | PHASE_12A_TOOLS
+        | PHASE_12B_TOOLS
+        | PHASE_12C_TOOLS
+        | PHASE_12D_TOOLS
+    )
+    assert set(registry.tools) - {"echo_test"} == every
     assert {n for n in registry.tools if registry.is_terminal(n)} - {"echo_test"} == TERMINAL
     assert FAMILIES == (
-        "system", "apps", "web", "media", "ui", "memory_tools", "input", "files", "shell"
+        "system", "apps", "web", "media", "ui", "memory_tools", "input", "files", "shell", "uia",
+        "browser", "skills",
     )  # fmt: skip
     for tool in registry.tools.values():
         assert isinstance(tool, Tool)  # respecte l'interface de §9
 
 
 def test_schemas_are_stable_sorted_and_lean(tmp_path: Path) -> None:
-    every = PHASE_4_TOOLS | PHASE_5_TOOLS | PHASE_6_TOOLS
+    every = (
+        PHASE_4_TOOLS
+        | PHASE_5_TOOLS
+        | PHASE_6_TOOLS
+        | PHASE_12A_TOOLS
+        | PHASE_12B_TOOLS
+        | PHASE_12C_TOOLS
+        | PHASE_12D_TOOLS
+    )
     registry = ToolRegistry(make_ctx(tmp_path), include=every)
     schemas = registry.schemas()
     names = [s["function"]["name"] for s in schemas]

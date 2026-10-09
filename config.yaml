@@ -66,6 +66,25 @@ web:
   search_provider: tavily          # tavily | brave ; clé SEARCH_API_KEY dans .env
   max_results: 5
   default_city: null               # ville de la météo si aucune n'est dite (ex. "Paris")
+browser:                           # ajout phase 12b : navigateur piloté (protocole DevTools)
+  enabled: true                    # outils browser_* (Brave lancé par MIKATA si fermé)
+  cdp_port: 9222                   # port DevTools de Brave
+  fallback_uia: true               # Brave ouvert sans le port : suggérer les outils UIA
+  page_text_max_chars: 4000        # texte lu par browser_read, tronqué
+  click_timeout_s: 5               # délai d'une commande DevTools
+skills:                            # ajout phase 12c : savoir-faire appris (data/skills/skills.json)
+  enabled: true                    # procédures mémorisées et rejouées
+  max_skills: 30                   # au plus N procédures (les moins utilisées sortent)
+  confidence: 70                   # score de ressemblance commande -> procédure (0 à 100)
+  auto_learn: true                 # mémorise en fond les commandes multi-étapes réussies
+  auto_learn_min_rounds: 2         # ... à partir de N étapes d'outils
+  max_failures: 3                  # échecs au rejeu avant désactivation
+  max_steps: 10                    # étapes rejouées au plus
+files_index:                       # ajout phase 12d : index local des fichiers (MFT + journal USN)
+  enabled: true                    # find_path / list_folder / open_in_explorer
+  db: data/files_index.db          # base SQLite (WAL), jamais envoyée au LLM
+  poll_s: 5                        # sondage du journal USN (secondes)
+  max_results: 20                  # résultats renvoyés au LLM (au plus)
 tts:
   backend: piper                   # piper | kokoro | elevenlabs (skin sans profil, ui.profiles)
   voice: models/fr_FR-siwis-medium.onnx   # voix Piper (scripts/download_models.py)
@@ -132,3 +151,9 @@ ui:                                # ajout phase 8 : mascotte et réglages (proc
     default: {voice: kokoro}       # Mika : voix locale et gratuite
     gars: {voice: elevenlabs, voice_id: NyxenPOqNyllHIzSoPbJ, voice_name: "Théo"}
     femme: {voice: elevenlabs, voice_id: YxrwjAKoUKULGd0g8K9Y, voice_name: "Lucie"}
+uia:                               # ajout phase 12a : pilotage fin des applications (arbre UIA)
+  enabled: true                    # lire les contrôles et cliquer par nom (outils uia_*)
+  state_poll_s: 2                  # état ambiant en RAM (Discord...) ; 0 = jamais
+  max_controls: 200                # contrôles listés par uia_window (au plus)
+  max_text_chars: 2000             # texte lu par uia_read, tronqué
+  accessibility_client: true       # client UIA à l'écoute : Discord, VS Code... se lisent sans drapeau

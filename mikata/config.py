@@ -176,6 +176,43 @@ class WebConfig(_Section):
     default_city: str | None = None  # ville de la météo si aucune n'est dite
 
 
+class BrowserConfig(_Section):
+    """Ajout phase 12b : contrôle du navigateur (Brave/Chromium) par le protocole
+    DevTools. Le port ne s'active qu'au lancement : MIKATA lance Brave elle-même quand il
+    est fermé, et refuse poliment (sans jamais le fermer) s'il tourne déjà sans le port."""
+
+    enabled: bool = True  # false : les outils browser_* répondent « désactivé »
+    cdp_port: int = Field(default=9222, ge=1024, le=65535)
+    fallback_uia: bool = True  # Brave ouvert sans le port : suggérer les outils UIA
+    page_text_max_chars: int = Field(default=4000, ge=200, le=20000)  # texte lu, tronqué
+    click_timeout_s: float = Field(default=5, gt=0, le=30)  # délai d'une commande DevTools
+
+
+class SkillsConfig(_Section):
+    """Ajout phase 12c : savoir-faire appris (mémoire procédurale, data/skills/skills.json).
+    Une commande multi-étapes réussie est distillée en procédure ; la suivante qui
+    ressemble la rejoue sans exploration (ou avec le plan si elle a des paramètres)."""
+
+    enabled: bool = True  # false : pas de bibliothèque (outils skills indisponibles)
+    max_skills: int = Field(default=30, ge=1, le=200)
+    confidence: float = Field(default=70, ge=0, le=100)  # score flou commande -> procédure
+    auto_learn: bool = True  # mémorise en arrière-plan les commandes multi-étapes réussies
+    auto_learn_min_rounds: int = Field(default=2, ge=1, le=10)  # au moins N étapes d'outils
+    max_failures: int = Field(default=3, ge=1, le=20)  # échecs au rejeu avant désactivation
+    max_steps: int = Field(default=10, ge=1, le=50)  # étapes rejouées au plus
+
+
+class FilesIndexConfig(_Section):
+    """Ajout phase 12d : index SQLite de tous les noms de fichiers (volumes NTFS), bâti
+    en lisant la MFT puis tenu à jour par le journal USN — jamais de rescan. Le LLM ne
+    voit jamais l'index : il interroge par outils (find_path, list_folder)."""
+
+    enabled: bool = True  # false : pas d'index (find_path répond « indisponible »)
+    db: Path = Path("data/files_index.db")  # base SQLite (WAL), à côté des logs
+    poll_s: float = Field(default=5, ge=1, le=3600)  # sondage du journal USN
+    max_results: int = Field(default=20, ge=1, le=100)  # résultats renvoyés au LLM
+
+
 VoiceEngine = Literal["piper", "kokoro", "elevenlabs"]
 
 
@@ -268,6 +305,20 @@ class GuardConfig(_Section):
     trash_max_mb: float = Field(default=4096, gt=0)
 
 
+class UiaConfig(_Section):
+    """Ajout phase 12a : pilotage fin des applications par l'arbre d'accessibilité Windows
+    (lire les contrôles, cliquer par nom). L'état ambiant (présence vocale Discord...) est
+    gardé en RAM seulement, jamais loggé."""
+
+    enabled: bool = True  # false : les outils UIA répondent « désactivé »
+    state_poll_s: float = Field(default=2, ge=0)  # état ambiant ; 0 = jamais rafraîchi
+    max_controls: int = Field(default=200, ge=10, le=2000)  # contrôles listés par uia_window
+    max_text_chars: int = Field(default=2000, ge=100, le=20000)  # texte lu, tronqué
+    # Client d'accessibilité à l'écoute (UiaClientsAreListening) : les applications
+    # Chromium/Electron (Discord...) exposent leur arbre complet sans drapeau de lancement.
+    accessibility_client: bool = True
+
+
 class LoggingConfig(_Section):
     level: Literal["TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR"] = "INFO"
     file: Path = Path("data/logs/mikata.log")
@@ -333,8 +384,12 @@ class Config(_Section):
     tts: TtsConfig = Field(default_factory=TtsConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     web: WebConfig = Field(default_factory=WebConfig)
+    browser: BrowserConfig = Field(default_factory=BrowserConfig)
+    skills: SkillsConfig = Field(default_factory=SkillsConfig)
+    files_index: FilesIndexConfig = Field(default_factory=FilesIndexConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
     guard: GuardConfig = Field(default_factory=GuardConfig)
+    uia: UiaConfig = Field(default_factory=UiaConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     ui: UiConfig = Field(default_factory=UiConfig)
     secrets: Secrets = Field(default_factory=Secrets, exclude=True)

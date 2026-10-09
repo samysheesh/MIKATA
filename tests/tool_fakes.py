@@ -12,7 +12,14 @@ from typing import Any
 from mikata.agent.guard import Guard
 from mikata.agent.memory import LongTermMemory
 from mikata.config import Config
-from mikata.tools.base import AppEntry, ToolContext, ToolError, WindowInfo
+from mikata.tools.base import (
+    AppEntry,
+    ToolContext,
+    ToolError,
+    UiControlInfo,
+    UiWindowInfo,
+    WindowInfo,
+)
 
 NOW = datetime(2026, 10, 7, 15, 42, 7)
 
@@ -66,6 +73,9 @@ class FakeDesktop:
 
     def open_target(self, target: str) -> None:
         self._record("open", target)
+
+    def open_folder(self, path: str, select: bool = False) -> None:
+        self._record("reveal", (path, select))
 
     def windows(self) -> list[WindowInfo]:
         return list(self.win)
@@ -179,6 +189,151 @@ class FakeNotifier:
         self.sent.append((title, body))
 
 
+class FakeUi:
+    """Pilote UIA de test (phase 12a) : fenêtres et contrôles scriptés, appels enregistrés."""
+
+    def __init__(
+        self,
+        windows: list[UiWindowInfo] | None = None,
+        controls: list[UiControlInfo] | None = None,
+        text: str = "",
+        state: str = "",
+    ) -> None:
+        self.windows = windows or [UiWindowInfo("Discord", "Discord")]
+        self.scripted_controls = (
+            controls if controls is not None else [UiControlInfo("Rechercher", "bouton")]
+        )
+        self.text = text
+        self.state = state
+        self.paused: list[bool] = []
+        self.log: list[tuple[str, Any]] = []
+        self.fail: set[str] = set()
+
+    def _record(self, name: str, value: Any = None) -> None:
+        if name in self.fail:
+            raise ToolError(f"échec simulé de {name}")
+        self.log.append((name, value))
+
+    def window(self, title: str | None, process: str | None) -> UiWindowInfo:
+        self._record("window", (title, process))
+        return self.windows[0]
+
+    def controls(self, window: UiWindowInfo, max_controls: int) -> list[UiControlInfo]:
+        self._record("controls", (window.title, max_controls))
+        return list(self.scripted_controls)
+
+    def read(self, window: UiWindowInfo, control: str | None, max_chars: int) -> str:
+        self._record("read", (window.title, control, max_chars))
+        return self.text
+
+    def click(self, window: UiWindowInfo, control: str, kind: str | None, nth: int) -> str:
+        self._record("click", (window.title, control, kind, nth))
+        return f"« {control} » cliqué."
+
+    def set_text(self, window: UiWindowInfo, control: str, text: str) -> str:
+        self._record("set_text", (window.title, control, text))
+        return f"« {control} » rempli."
+
+    def state_summary(self) -> str:
+        self._record("state")
+        return self.state
+
+    def pause_state(self, paused: bool) -> None:
+        self.paused.append(paused)
+
+    def aclose(self) -> None:
+        pass
+
+
+class FakeIndex:
+    """Index de fichiers de test (phase 12d) : résultats scriptés, jamais de vrai disque."""
+
+    def __init__(
+        self,
+        results: list[dict[str, Any]] | None = None,
+        folder: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self.ready_state = True
+        self.results = (
+            results
+            if results is not None
+            else [
+                {
+                    "path": "D:\\Steam\\steamapps\\common\\Cyberpunk 2077.exe",
+                    "name": "Cyberpunk 2077.exe",
+                    "is_dir": False,
+                    "mtime": 1700000000.0,
+                },
+            ]
+        )
+        self.folder = folder if folder is not None else []
+        self.queries: list[tuple[str, int]] = []
+
+    def ready(self) -> bool:
+        return self.ready_state
+
+    def stats(self) -> dict[str, Any]:
+        return {"ready": self.ready_state, "entries": len(self.results)}
+
+    def search(self, query: str, max_results: int) -> list[dict[str, Any]]:
+        self.queries.append((query, max_results))
+        return [dict(r) for r in self.results[:max_results]]
+
+    def list_folder(self, folder: str, limit: int) -> list[dict[str, Any]]:
+        self.queries.append((folder, limit))
+        return [dict(r) for r in self.folder[:limit]]
+
+    def aclose(self) -> None:
+        pass
+
+
+class FakeBrowser:
+    """Contrôleur de navigateur de test (phase 12b) : pages scriptées, appels enregistrés."""
+
+    def __init__(self, tabs: str = "", page: str = "", href: str = "") -> None:
+        self.tabs_text = tabs or "- Onglet — https://example.com"
+        self.page = page or "Titre : Exemple\nURL : https://example.com\nTexte :\nBonjour."
+        self.href = href  # lien renvoyé par find (téléchargement simulé si .exe/.zip...)
+        self.log: list[tuple[str, Any]] = []
+        self.fail: set[str] = set()
+
+    async def _record(self, name: str, value: Any = None) -> None:
+        if name in self.fail:
+            raise ToolError(f"échec simulé de {name}")
+        self.log.append((name, value))
+
+    async def tabs(self) -> str:
+        await self._record("tabs")
+        return self.tabs_text
+
+    async def open_url(self, url: str) -> str:
+        await self._record("open", url)
+        return f"Page ouverte : {url}"
+
+    async def read(self, max_chars: int) -> str:
+        await self._record("read", max_chars)
+        return self.page
+
+    async def find(self, text: str, nth: int) -> dict[str, Any]:
+        await self._record("find", (text, nth))
+        return {"ok": True, "label": text, "tag": "A", "href": self.href}
+
+    async def click(self, text: str, nth: int) -> str:
+        await self._record("click", (text, nth))
+        return f"« {text} » cliqué."
+
+    async def type_text(self, field: str, text: str) -> str:
+        await self._record("type", (field, text))
+        return f"Texte écrit dans le champ « {field} »."
+
+    async def back(self) -> str:
+        await self._record("back")
+        return "Page précédente."
+
+    async def aclose(self) -> None:
+        pass
+
+
 def make_config(tmp_path: Path, **sections: dict[str, Any]) -> Config:
     """Config de test ; le garde-fou n'autorise que `tmp_path/home` (le « dossier perso »)."""
     data = Config().model_dump(mode="json", exclude={"secrets"})
@@ -202,6 +357,11 @@ def make_ctx(
     trash: FakeTrash | None = None,
     shell: Any = None,
     input: Any = None,
+    uia: Any = None,
+    browser: Any = None,
+    skills: Any = None,
+    skills_capture: Callable[[str], Any] | None = None,
+    index: Any = None,
 ) -> ToolContext:
     async def no_wait(seconds: float) -> None:
         await asyncio.sleep(0)
@@ -226,4 +386,9 @@ def make_ctx(
         guard=guard,
         shell=shell,
         input=input,
+        uia=uia,
+        browser=browser,
+        skills=skills,
+        skills_capture=skills_capture,
+        index=index,
     )
