@@ -36,11 +36,12 @@ New-Item -ItemType Directory -Force -Path $share | Out-Null
 icacls $share /grant "$($env:USERNAME):(OI)(CI)M" /T /Q
 
 # Journal USN actif sur chaque volume NTFS (idempotent, aucune donnée touchée).
+# m/a en octets : 32 Mo max, 8 Mo d'allocation (valeurs usuelles de Windows).
 Get-Volume -FileSystem NTFS -ErrorAction SilentlyContinue | ForEach-Object {
     $vol = "$($_.DriveLetter):"
     fsutil usn queryjournal $vol *> $null
     if ($LASTEXITCODE -ne 0) {
-        fsutil usn createjournal m=2000 a=100 $vol | Out-Null
+        fsutil usn createjournal m=33554432 a=8388608 $vol | Out-Null
         Write-Host "Journal USN activé sur $vol" -ForegroundColor Green
     }
 }

@@ -240,7 +240,7 @@ def enumerate_files(volume: str) -> Iterator[UsnEntry]:
             if not output:
                 break
             produced = 0
-            for record, name in _parse_records(output):
+            for record, name in _parse_records(output[8:]):  # 8 octets d'en-tête USN
                 produced += 1
                 if not name or ":" in name:  # flux alternatifs : pas des fichiers visibles
                     continue
@@ -273,6 +273,30 @@ def query_journal(volume: str) -> tuple[int, int]:
         win32file.CloseHandle(handle)
 
 
+def _journal_io(handle: int, ioctl: int, input_bytes: bytes, size: int) -> bytes:
+    """DeviceIoControl avec un tampon de sortie aligné sur 64 Ko (exigé par le journal
+    USN : un buffer Python classique n'est pas aligné, d'où l'erreur 87)."""
+    import ctypes
+
+    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    buffer = kernel32.VirtualAlloc(None, size, 0x3000, 0x04)  # MEM_COMMIT|RESERVE, RW
+    if not buffer:
+        raise OSError("VirtualAlloc a échoué")
+    try:
+        returned = ctypes.c_ulong()
+        ok = kernel32.DeviceIoControl(
+            ctypes.c_void_p(int(handle)), ioctl,
+            input_bytes, len(input_bytes),
+            ctypes.c_void_p(buffer), size,
+            ctypes.byref(returned), None,
+        )
+        if not ok:
+            raise ctypes.WinError()
+        return ctypes.string_at(buffer, returned.value)
+    finally:
+        kernel32.VirtualFree(buffer, 0, 0x8000)  # MEM_RELEASE
+
+
 def read_journal(
     volume: str, start_usn: int, journal_id: int, timeout_s: float = 0.0
 ) -> tuple[list[UsnEvent], int]:
@@ -293,21 +317,20 @@ def read_journal(
     request.usn_journal_id = journal_id
     events: list[UsnEvent] = []
     next_usn = start_usn
-    header_bytes = 8  # les 8 premiers octets du tampon sont un USN, pas un record
     try:
         while True:
             try:
-                output = win32file.DeviceIoControl(
+                output = _journal_io(
                     handle, FSCTL_READ_USN_JOURNAL, _bytes_of(request), _BUFFER_SIZE
                 )
-            except win32file.error as exc:
+            except OSError as exc:
                 if exc.winerror == ERROR_HANDLE_EOF:
                     break  # rien de nouveau
                 raise
-            if len(output) <= header_bytes:
+            if len(output) <= 8:
                 break
             produced = 0
-            for record, name in _parse_records(output[header_bytes:]):
+            for record, name in _parse_records(output[8:]):  # 8 octets d'en-tête USN
                 produced += 1
                 if not name or ":" in name:
                     continue
@@ -326,7 +349,6 @@ def read_journal(
             if produced == 0 or len(output) < _BUFFER_SIZE:
                 break
             request.start_usn = next_usn
-            header_bytes = 0  # l'en-tête n'existe qu'au premier appel
     finally:
         win32file.CloseHandle(handle)
     return events, next_usn
