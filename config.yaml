@@ -80,6 +80,7 @@ skills:                            # ajout phase 12c : savoir-faire appris (data
   auto_learn_min_rounds: 2         # ... à partir de N étapes d'outils
   max_failures: 3                  # échecs au rejeu avant désactivation
   max_steps: 10                    # étapes rejouées au plus
+  local_replay: true               # phase 12e : rejeu local instantané des procédures paramétrées
 files_index:                       # ajout phase 12d : index local des fichiers (MFT + journal USN)
   enabled: true                    # find_path / list_folder / open_in_explorer
   db: data/files_index.db          # base SQLite (WAL), jamais envoyée au LLM

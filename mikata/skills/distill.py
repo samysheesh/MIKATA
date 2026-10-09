@@ -34,11 +34,20 @@ d'autre, avec ces clés :
   {"tool": "browser_open", "args": {"url": "https://youtube.com/results?search_query={query}"}} ;
 - "params" : la liste des noms de ces morceaux variables (ex. ["query"]), [] si la
   procédure est toujours identique ;
+- "slots" : la commande d'origine généralisée : les morceaux variables remplacés par
+  {param} (ex. « où est {query} »), null si la commande ne se généralise pas. C'est ce
+  qui permet de rejouer la procédure instantanément, sans LLM, en remplissant les trous
+  avec les mots de l'utilisateur — fais-le dès que c'est possible, mot pour mot sinon ;
 - "verify" : null, ou une étape de vérification (outil + arguments) qui confirme que la
   tâche est finie (ex. lire la page et vérifier que la vidéo est lancée).
 
 Garde seulement les étapes utiles à rejouer (pas les lectures d'exploration inutiles).
-N'invente aucune étape qui n'a pas été appelée.
+N'invente aucune étape qui n'a pas été appelée. Quand une étape produit une valeur que
+l'étape suivante consomme (ex. find_path trouve un chemin que open_in_explorer ouvre),
+marque le résultat avec "outputs" dans l'étape qui le produit :
+{"tool": "find_path", "args": {"name": "{query}"}, "outputs": {"folder_path": "best"}}
+puis référence {folder_path} dans l'étape suivante. « best » désigne le meilleur résultat
+structuré de l'outil.
 """
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
@@ -50,6 +59,7 @@ class DistillResult(BaseModel):
     trigger: str = Field(min_length=2, max_length=300)
     steps: list[dict[str, Any]] = Field(min_length=1, max_length=20)
     params: list[str] = Field(default_factory=list, max_length=8)
+    slots: str | None = Field(default=None, max_length=300)
     verify: dict[str, Any] | None = None
 
 
@@ -85,6 +95,11 @@ def parse_distill(text: str) -> DistillResult | None:
             used.update(re.findall(r"\{([a-z_]+)\}", str(value)))
     if used != set(result.params):
         return None
+    # Le pattern de slots, s'il existe, ne peut référencer que des paramètres déclarés.
+    if result.slots:
+        slots_used = set(re.findall(r"\{([a-z_]+)\}", result.slots))
+        if not slots_used or not slots_used <= set(result.params):
+            result = result.model_copy(update={"slots": None})
     return result
 
 

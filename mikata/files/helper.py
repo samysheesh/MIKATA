@@ -77,9 +77,7 @@ def watch(share_dir: Path) -> None:
         started = time.monotonic()
         try:
             total = dump_all(share_dir)
-            logger.info(
-                "Dump initial : {} entrées en {:.1f} s.", total, time.monotonic() - started
-            )
+            logger.info("Dump initial : {} entrées en {:.1f} s.", total, time.monotonic() - started)
         except Exception as exc:
             logger.error("Dump initial impossible : {}", exc)
             raise

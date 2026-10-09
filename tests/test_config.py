@@ -96,6 +96,8 @@ def test_defaults_match_section_10(config_file: Path) -> None:
     assert config.skills.confidence == 70 and config.skills.auto_learn is True
     assert config.skills.auto_learn_min_rounds == 2 and config.skills.max_failures == 3
     assert config.skills.max_steps == 10
+    # ajout phase 12e
+    assert config.skills.local_replay is True
     # ajouts phase 12d
     assert config.files_index.enabled is True
     assert config.files_index.db == Path("data/files_index.db")
@@ -171,6 +173,7 @@ def test_not_a_mapping(tmp_path: Path) -> None:
         ("files_index", "poll_s", 0, "files_index.poll_s"),
         ("files_index", "max_results", 0, "files_index.max_results"),
         ("files_index", "max_results", 101, "files_index.max_results"),
+        ("skills", "local_replay", "peut-etre", "skills.local_replay"),
     ],
 )
 def test_invalid_values(tmp_path: Path, section: str, key: str, value: object, loc: str) -> None:

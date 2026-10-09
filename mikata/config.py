@@ -200,6 +200,10 @@ class SkillsConfig(_Section):
     auto_learn_min_rounds: int = Field(default=2, ge=1, le=10)  # au moins N étapes d'outils
     max_failures: int = Field(default=3, ge=1, le=20)  # échecs au rejeu avant désactivation
     max_steps: int = Field(default=10, ge=1, le=50)  # étapes rejouées au plus
+    # Ajout phase 12e : une procédure paramétrée dont le pattern colle à la phrase est
+    # rejouée en local (0 appel LLM), paramètres remplis par les mots prononcés + les
+    # résultats structurés des étapes. false : toujours par le plan LLM (phase 12c).
+    local_replay: bool = True
 
 
 class FilesIndexConfig(_Section):

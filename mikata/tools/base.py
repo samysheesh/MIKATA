@@ -352,6 +352,13 @@ class ToolContext:
         self.tasks.add(task)
         task.add_done_callback(self.tasks.discard)
 
+    def publish_data(self, data: dict[str, Any]) -> None:
+        """Payload structuré du résultat de l'outil en cours (phase 12e) : lu par le
+        registre et attaché à `ToolResult.data` pour le rejeu local des savoir-faire."""
+        from mikata.tools.registry import _TOOL_DATA
+
+        _TOOL_DATA.set(data)
+
     async def aclose(self) -> None:
         """Arrêt : minuteurs annulés, client HTTP fermé, poller UIA arrêté, thread des
         outils fermé."""

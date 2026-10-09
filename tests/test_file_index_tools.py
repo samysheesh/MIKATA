@@ -35,6 +35,21 @@ def test_find_path_returns_indexed_results(tmp_path: Path) -> None:
     assert index.queries[0][1] == 40  # max_results * 2 avant le filtre
 
 
+def test_find_path_publishes_structured_data(tmp_path: Path) -> None:
+    """Phase 12e : le payload structuré alimente le rejeu local des savoir-faire."""
+    result = _execute(make_ctx(tmp_path, index=FakeIndex()), "find_path", name="cyberpunk")
+    assert result.ok and result.data is not None
+    assert result.data["best"] == CYBERPUNK and result.data["count"] == 1
+    assert result.data["paths"] == [CYBERPUNK]
+
+
+def test_find_path_no_match_publishes_empty_data(tmp_path: Path) -> None:
+    result = _execute(
+        make_ctx(tmp_path, index=FakeIndex(results=[])), "find_path", name="cyberpunk"
+    )
+    assert result.ok and result.data == {"paths": [], "best": None, "count": 0}
+
+
 def test_find_path_filters_by_folder(tmp_path: Path) -> None:
     index = FakeIndex(
         results=[
@@ -92,6 +107,7 @@ def test_open_in_explorer_reveals_a_file(tmp_path: Path, monkeypatch: pytest.Mon
     )
     assert result.ok and "Explorateur ouvert" in result.content
     assert ("reveal", (CYBERPUNK, True)) in desktop.log  # /select sur un fichier
+    assert result.data == {"path": CYBERPUNK, "is_dir": False}  # phase 12e
 
 
 def test_open_in_explorer_opens_a_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

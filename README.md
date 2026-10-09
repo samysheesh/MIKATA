@@ -2574,3 +2574,70 @@ uv run python scripts\eval_prompt.py
 Attendu : tout en `passed`, config valide, banc de phrases 28/28 (dont « où est cyberpunk
 2077 »), latence et CPU inchangés (l'index tourne sur son thread dédié, la base est en
 WAL).
+
+## Phase 12e — vérification sur le PC Windows
+
+Rejeu local des savoir-faire paramétrés : la première commande apprend, les suivantes
+sont **instantanées**.
+
+Comment ça marche :
+
+- **Slots** : à l'apprentissage, la commande est généralisée (« où est cyberpunk 2077 »
+  → pattern `où est {query}`). À la commande suivante, si la phrase colle au pattern, les
+  mots prononcés remplissent les trous **localement** (regex sur la phrase sans accents) —
+  zéro appel LLM.
+- **Liaisons entre étapes** (`outputs`) : `find_path` publie un résultat structuré
+  (`ToolResult.data`, jamais envoyé au LLM) ; l'étape suivante reçoit `{folder_path}` lié
+  à « best ». « Où est league of legends » → `find_path("league of legends")` (~100 ms) →
+  `open_in_explorer` (~200 ms) → « C'est fait », **< 1 s**.
+- **Filets** : le nom d'outil et les arguments viennent des étapes stockées, jamais des
+  mots prononcés (les captures sont des données) ; chaque étape passe par le registre
+  (garde-fous, journal, délais identiques) ; un paramètre non lié ou une liaison
+  impossible → repli sur le plan LLM **sans pénaliser** la procédure ; un outil en échec
+  → repli LLM + compteur d'échecs (12c) ; phrase hors pattern → plan LLM (12c) ;
+  `skills.local_replay: false` coupe le rejeu local.
+
+### 1. Récupérer la branche, installer
+
+```powershell
+git fetch origin
+git checkout phase-12e-replay
+git pull
+uv sync
+```
+
+Si tu as modifié `config.yaml` en local, garde tes réglages (une ligne `local_replay`
+s'ajoute dans la section `skills:`) :
+
+```powershell
+git stash
+git pull
+git stash pop
+Select-String -Path config.yaml -Pattern "local_replay"
+```
+
+### 2. Lint et tests
+
+```powershell
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
+uv run pytest tests\test_skills_library.py tests\test_skills_agent.py -v
+```
+
+### 3. Vérification à la voix
+
+1. « MIKATA, où est cyberpunk 2077 » (1re fois : LLM, ~3-5 s ; le savoir-faire est
+   appris en arrière-plan).
+2. Regarde `data\skills\skills.json` : `"slots": "où est {query}"` et l'étape 1 avec
+   `"outputs": {"folder_path": "best"}`.
+3. « MIKATA, où est league of legends » → log `Savoir-faire « … » : rejoué en local
+   (…, 0 appel LLM)`, réponse < 1 s, la bonne fenêtre s'ouvre.
+4. « MIKATA, où est elden ring » (jamais demandé) → rejeu local aussi.
+
+### 4. Non-régression
+
+```powershell
+uv run pytest tests\test_guard_criteria.py tests\test_voice_stop.py -v
+uv run python -m mikata --check-config
+```

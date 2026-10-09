@@ -13,6 +13,7 @@ import asyncio
 import importlib
 import time
 from collections.abc import Iterable
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
@@ -109,6 +110,13 @@ class ToolResult:
     content: str
     terminal: bool
     duration_s: float
+    data: dict[str, Any] | None = None  # payload structuré (phase 12e), jamais envoyé au LLM
+
+
+# Payload structuré qu'un outil peut publier pendant son exécution (même tâche que
+# `execute`, donc un ContextVar suffit) : le rejeu local des savoir-faire s'en sert pour
+# lier les étapes entre elles (ex. le chemin trouvé par find_path -> open_in_explorer).
+_TOOL_DATA: ContextVar[dict[str, Any] | None] = ContextVar("tool_data", default=None)
 
 
 def _validation_message(name: str, exc: ValidationError) -> str:
@@ -166,6 +174,7 @@ class ToolRegistry:
         tool = self.tools.get(call.name)
         terminal = tool is not None and tool.terminal
         status = "échec"
+        data: dict[str, Any] | None = None
         if tool is None:
             ok, content = False, f"outil inconnu : {call.name}"
         else:
@@ -177,8 +186,10 @@ class ToolRegistry:
                 uia.pause_state(True)
             try:
                 args = tool.params.model_validate(call.arguments)
+                _TOOL_DATA.set(None)
                 async with asyncio.timeout(limit):
                     content, ok = await tool.run(args), True
+                data = _TOOL_DATA.get()
                 status = "ok"
             except ValidationError as exc:
                 ok, content = False, _validation_message(call.name, exc)
@@ -213,4 +224,4 @@ class ToolRegistry:
             duration * 1000,
             content[:160].replace("\n", " "),
         )
-        return ToolResult(call.id, call.name, ok, content, terminal, duration)
+        return ToolResult(call.id, call.name, ok, content, terminal, duration, data)

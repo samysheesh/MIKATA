@@ -285,14 +285,23 @@ def _journal_io(handle: int, ioctl: int, input_bytes: bytes, size: int) -> bytes
     kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
     kernel32.VirtualAlloc.restype = ctypes.c_void_p
     kernel32.VirtualAlloc.argtypes = [
-        ctypes.c_void_p, ctypes.c_size_t, ctypes.c_ulong, ctypes.c_ulong,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_ulong,
+        ctypes.c_ulong,
     ]
     kernel32.VirtualFree.restype = ctypes.c_int
     kernel32.VirtualFree.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_ulong]
     kernel32.DeviceIoControl.restype = ctypes.c_int
     kernel32.DeviceIoControl.argtypes = [
-        ctypes.c_void_p, ctypes.c_ulong, ctypes.c_void_p, ctypes.c_ulong,
-        ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong), ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_ulong,
+        ctypes.c_void_p,
+        ctypes.c_ulong,
+        ctypes.c_void_p,
+        ctypes.c_ulong,
+        ctypes.POINTER(ctypes.c_ulong),
+        ctypes.c_void_p,
     ]
     buffer = kernel32.VirtualAlloc(None, size, 0x3000, 0x04)  # MEM_COMMIT|RESERVE, RW
     if not buffer:
@@ -300,10 +309,14 @@ def _journal_io(handle: int, ioctl: int, input_bytes: bytes, size: int) -> bytes
     try:
         returned = ctypes.c_ulong()
         ok = kernel32.DeviceIoControl(
-            ctypes.c_void_p(int(handle)), ioctl,
-            input_bytes, len(input_bytes),
-            buffer, size,
-            ctypes.byref(returned), None,
+            ctypes.c_void_p(int(handle)),
+            ioctl,
+            input_bytes,
+            len(input_bytes),
+            buffer,
+            size,
+            ctypes.byref(returned),
+            None,
         )
         if not ok:
             raise ctypes.WinError()
@@ -386,8 +399,7 @@ def diagnose(volume: str) -> str:
         if len(output) > 72:
             record = UsnRecordV2.from_buffer_copy(output, 8)
             raw_name = output[
-                8 + record.file_name_offset : 8 + record.file_name_offset
-                + record.file_name_length
+                8 + record.file_name_offset : 8 + record.file_name_offset + record.file_name_length
             ]
             try:
                 name = raw_name.decode("utf-16-le", errors="replace")
