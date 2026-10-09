@@ -109,11 +109,17 @@ def main(argv: list[str] | None = None) -> int:
     data_dir = args.data
     data_dir.mkdir(parents=True, exist_ok=True)
     logger.add(data_dir / LOG, rotation="1 MB", retention=2, level="INFO")
-    if args.once:
-        total = dump_all(data_dir)
-        logger.info("Dump ponctuel : {} entrées.", total)
-        return 0
-    watch(data_dir)
+    try:
+        if args.once:
+            total = dump_all(data_dir)
+            logger.info("Dump ponctuel : {} entrées.", total)
+            return 0
+        watch(data_dir)
+    except Exception as exc:
+        logger.error(
+            "Helper arrêté : {} (sans élévation, Windows refuse l'accès aux volumes).", exc
+        )
+        return 2
     return 0
 
 
