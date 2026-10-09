@@ -248,6 +248,22 @@ class WindowsDesktop:
         except OSError as exc:
             raise ToolError(f"Windows n'a pas pu ouvrir « {target} » : {exc}") from exc
 
+    def open_folder(self, path: str, select: bool = False) -> None:
+        """L'Explorateur sur `path` : le dossier s'ouvre, ou le fichier est sélectionné."""
+        import subprocess
+
+        argv = ["explorer.exe"] + (["/select,", str(path)] if select else [str(path)])
+        try:
+            subprocess.run(
+                argv,
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=0x08000000,  # CREATE_NO_WINDOW
+            )
+        except OSError as exc:
+            raise ToolError(f"Windows n'a pas pu ouvrir « {path} » : {exc}") from exc
+
     # -- fenêtres -----------------------------------------------------------------------
 
     def windows(self) -> list[WindowInfo]:

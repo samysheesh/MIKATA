@@ -74,6 +74,9 @@ class FakeDesktop:
     def open_target(self, target: str) -> None:
         self._record("open", target)
 
+    def open_folder(self, path: str, select: bool = False) -> None:
+        self._record("reveal", (path, select))
+
     def windows(self) -> list[WindowInfo]:
         return list(self.win)
 
@@ -242,6 +245,48 @@ class FakeUi:
         pass
 
 
+class FakeIndex:
+    """Index de fichiers de test (phase 12d) : résultats scriptés, jamais de vrai disque."""
+
+    def __init__(
+        self,
+        results: list[dict[str, Any]] | None = None,
+        folder: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self.ready_state = True
+        self.results = (
+            results
+            if results is not None
+            else [
+                {
+                    "path": "D:\\Steam\\steamapps\\common\\Cyberpunk 2077.exe",
+                    "name": "Cyberpunk 2077.exe",
+                    "is_dir": False,
+                    "mtime": 1700000000.0,
+                },
+            ]
+        )
+        self.folder = folder if folder is not None else []
+        self.queries: list[tuple[str, int]] = []
+
+    def ready(self) -> bool:
+        return self.ready_state
+
+    def stats(self) -> dict[str, Any]:
+        return {"ready": self.ready_state, "entries": len(self.results)}
+
+    def search(self, query: str, max_results: int) -> list[dict[str, Any]]:
+        self.queries.append((query, max_results))
+        return [dict(r) for r in self.results[:max_results]]
+
+    def list_folder(self, folder: str, limit: int) -> list[dict[str, Any]]:
+        self.queries.append((folder, limit))
+        return [dict(r) for r in self.folder[:limit]]
+
+    def aclose(self) -> None:
+        pass
+
+
 class FakeBrowser:
     """Contrôleur de navigateur de test (phase 12b) : pages scriptées, appels enregistrés."""
 
@@ -316,6 +361,7 @@ def make_ctx(
     browser: Any = None,
     skills: Any = None,
     skills_capture: Callable[[str], Any] | None = None,
+    index: Any = None,
 ) -> ToolContext:
     async def no_wait(seconds: float) -> None:
         await asyncio.sleep(0)
@@ -344,4 +390,5 @@ def make_ctx(
         browser=browser,
         skills=skills,
         skills_capture=skills_capture,
+        index=index,
     )

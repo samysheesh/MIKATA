@@ -1,12 +1,15 @@
-"""Outils fichiers (§7) : find_files, read_file, write_file, move_file, delete_file.
+"""Outils fichiers (§7) : find_files, read_file, write_file, move_file, delete_file,
+et (phase 12d) find_path, list_folder, open_in_explorer — qui lisent l'index local.
 
-Tous les chemins passent par le garde-fou (`Guard.resolve_path`) : seulement dans
-`guard.allowed_dirs` (le dossier personnel par défaut). Un chemin relatif part du dossier
-personnel.
+Tous les chemins des outils de contenu passent par le garde-fou (`Guard.resolve_path`) :
+seulement dans `guard.allowed_dirs` (le dossier personnel par défaut).
 - `delete_file` : **corbeille uniquement** (`Guard.trash`, send2trash) ; jamais de repli
   vers une suppression définitive.
 - `write_file` / `move_file` : un fichier qui va être écrasé est d'abord copié dans
   `data/backups/` (`Guard.backup`).
+- Les outils d'index (phase 12d) ne lisent que des **noms** et ne font qu'ouvrir
+  l'Explorateur : pas de filtre `allowed_dirs` (chercher un jeu sur D:\\ doit marcher),
+  aucune donnée de fichier ne quitte le PC.
 """
 
 from __future__ import annotations
@@ -18,7 +21,7 @@ import time
 import unicodedata
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -248,3 +251,110 @@ class DeleteFile(BaseTool[PathParams]):
         path = guard.resolve_path(args.path)
         await self.ctx.run_blocking(guard.trash, path)
         return f"Mis à la corbeille : {path}."
+
+
+# -- outils d'index (phase 12d) ---------------------------------------------------------
+
+INDEX_NOT_READY = (
+    "l'index des fichiers se construit : réessaie dans une minute, ou utilise find_files "
+    "en attendant"
+)
+
+
+def _when(mtime: float | None) -> str:
+    if not mtime:
+        return ""
+    try:
+        return f", modifié le {datetime.fromtimestamp(mtime):%Y-%m-%d %H:%M}"
+    except (OSError, OverflowError, ValueError):
+        return ""
+
+
+def _format_entry(entry: dict[str, Any]) -> str:
+    kind = " (dossier)" if entry["is_dir"] else ""
+    return f"{entry['path']}{kind}{_when(entry.get('mtime'))}"
+
+
+def _absolute(path: str) -> str:
+    """Chemin absolu (les chemins de l'index le sont déjà) ; relatif = dossier perso."""
+    p = Path(path).expanduser()
+    return str(p if p.is_absolute() else Path.home() / p)
+
+
+class FindPathParams(BaseModel):
+    name: str = Field(min_length=3, description="Nom ou partie du nom (sans les accents)")
+    folder: str | None = Field(default=None, description="Dossier où chercher (optionnel)")
+
+
+@register_tool
+class FindPath(BaseTool[FindPathParams]):
+    name = "find_path"
+    description = (
+        "Cherche un fichier ou un dossier dans l'index local (instantané, tout le PC, "
+        "sans les accents). À préférer à find_files."
+    )
+    params = FindPathParams
+    terminal = False
+
+    async def run(self, args: FindPathParams) -> str:
+        index = self.ctx.require_index()
+        if not index.ready():
+            raise ToolError(INDEX_NOT_READY)
+        limit = self.ctx.config.files_index.max_results
+        results = index.search(args.name, limit * 2)
+        if args.folder:
+            folder = _absolute(args.folder)
+            prefix = folder.rstrip("\\/") + "\\"
+            results = [r for r in results if r["path"].startswith(prefix)]
+        if not results:
+            return f"Aucun fichier ne correspond à « {args.name} » dans l'index."
+        lines = [f"Trouvé dans l'index ({min(len(results), limit)} premiers) :"]
+        lines.extend(f"- {_format_entry(entry)}" for entry in results[:limit])
+        return "\n".join(lines)
+
+
+class ListFolderParams(BaseModel):
+    path: str = Field(min_length=1, description="Chemin du dossier (absolu, ou relatif)")
+
+
+@register_tool
+class ListFolder(BaseTool[ListFolderParams]):
+    name = "list_folder"
+    description = "Liste le contenu d'un dossier depuis l'index local (dossiers d'abord)."
+    params = ListFolderParams
+    terminal = False
+
+    async def run(self, args: ListFolderParams) -> str:
+        index = self.ctx.require_index()
+        if not index.ready():
+            raise ToolError(INDEX_NOT_READY)
+        folder = _absolute(args.path)
+        entries = index.list_folder(folder, 50)
+        if not entries:
+            return f"Dossier vide ou introuvable : {folder}"
+        lines = [f"{folder} ({len(entries)} entrées) :"]
+        lines.extend(
+            f"- {entry['name']}"
+            + (" (dossier)" if entry["is_dir"] else "")
+            + _when(entry.get("mtime"))
+            for entry in entries
+        )
+        return "\n".join(lines)
+
+
+class OpenInExplorerParams(BaseModel):
+    path: str = Field(min_length=1, description="Chemin du fichier ou du dossier à montrer")
+
+
+@register_tool
+class OpenInExplorer(BaseTool[OpenInExplorerParams]):
+    name = "open_in_explorer"
+    description = "Ouvre l'Explorateur de fichiers sur un dossier (ou sélectionne le fichier)."
+    params = OpenInExplorerParams
+    terminal = True
+
+    async def run(self, args: OpenInExplorerParams) -> str:
+        path = _absolute(args.path)
+        is_dir = await self.ctx.run_blocking(os.path.isdir, path)
+        await self.ctx.run_blocking(self.ctx.require_desktop().open_folder, path, not is_dir)
+        return f"Explorateur ouvert sur « {path} »."

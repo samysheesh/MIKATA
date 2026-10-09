@@ -132,6 +132,13 @@ CASES: tuple[Case, ...] = (
     Case("passe le pc en silencieux", ("set_volume", "mute"),
          "rejouer la procédure apprise",
          lambda a: a.get("level") == 20),
+    # Phase 12d : l'index local répond d'abord, puis l'Explorateur s'ouvre dessus.
+    Case("où est cyberpunk 2077", ("find_path",),
+         "chercher dans l'index local",
+         lambda a: "cyberpunk" in fold(str(a.get("name")))),
+    Case("montre-moi où est cyberpunk 2077 dans l'explorateur", ("open_in_explorer",),
+         "ouvrir l'Explorateur sur le chemin",
+         lambda a: "cyberpunk" in fold(str(a.get("path")))),
     # Phase 6 : « raconte-moi une longue histoire » avait ouvert le Bloc-notes pour l'y coller.
     Case("raconte-moi une longue histoire", SPOKEN, "histoire dite, 3 à 5 phrases",
          sentences=(3, 5), max_words=140),
@@ -211,6 +218,9 @@ class DryRunDesktop:
 
     def open_target(self, target: str) -> None:
         self.actions.append(f"ouvrir {target}")
+
+    def open_folder(self, path: str, select: bool = False) -> None:
+        self.actions.append(f"explorateur {path}" + (" (sélection)" if select else ""))
 
     def close_window(self, window: WindowInfo) -> None:
         self.actions.append(f"fermer « {window.title} »")
@@ -352,6 +362,37 @@ class DryRunBrowser:
         pass
 
 
+class DryRunIndex:
+    """Index de fichiers simulé (phase 12d) : un résultat fixe, jamais de vrai disque."""
+
+    def __init__(self, actions: list[str]) -> None:
+        self.actions = actions
+
+    def ready(self) -> bool:
+        return True
+
+    def stats(self) -> dict[str, Any]:
+        return {"ready": True, "entries": 3}
+
+    def search(self, query: str, max_results: int) -> list[dict[str, Any]]:
+        self.actions.append(f"chercher dans l'index {query!r}")
+        return [
+            {
+                "path": "D:\\Steam\\steamapps\\common\\Cyberpunk 2077.exe",
+                "name": "Cyberpunk 2077.exe",
+                "is_dir": False,
+                "mtime": 1_700_000_000.0,
+            }
+        ]
+
+    def list_folder(self, folder: str, limit: int) -> list[dict[str, Any]]:
+        self.actions.append(f"lister l'index {folder!r}")
+        return [{"name": "Cyberpunk 2077.exe", "is_dir": False, "mtime": 1_700_000_000.0}]
+
+    def aclose(self) -> None:
+        pass
+
+
 class RecordingSpeech:
     def __init__(self) -> None:
         self.said: list[str] = []
@@ -409,6 +450,7 @@ async def run_cases(
             shell=DryRunShell(actions),
             uia=DryRunUi(actions),
             browser=DryRunBrowser(actions),
+            index=DryRunIndex(actions),
             skills=(
                 SkillLibrary(
                     sandbox / "skills.json",

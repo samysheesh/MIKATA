@@ -173,6 +173,11 @@ def build_tool_context(config: Config) -> ToolContext:
             from mikata.browser.controller import BrowserController
 
             ctx.browser = BrowserController(config, ctx.desktop)
+        if config.files_index.enabled:  # phase 12d : index local des fichiers (MFT + USN)
+            from mikata.files.index import FileIndex
+
+            ctx.index = FileIndex(config)
+            ctx.index.start()
     else:
         logger.warning("Hors Windows : outils du bureau, du volume et des notifications inactifs.")
     return ctx

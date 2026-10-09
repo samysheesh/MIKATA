@@ -174,6 +174,7 @@ class Desktop(Protocol):
     def list_apps(self, refresh: bool = False) -> list[AppEntry]: ...
     def launch(self, app: AppEntry) -> None: ...
     def open_target(self, target: str) -> None: ...  # URL ou fichier, programme par défaut
+    def open_folder(self, path: str, select: bool = False) -> None: ...  # Explorateur dessus
     def windows(self) -> list[WindowInfo]: ...
     def foreground_window(self) -> WindowInfo | None: ...  # fenêtre active (phase 5)
     def cached_apps(self) -> list[AppEntry]: ...  # index déjà construit, sans attente
@@ -230,6 +231,17 @@ class BrowserControl(Protocol):
     async def aclose(self) -> None: ...
 
 
+class FileIndexService(Protocol):
+    """Index local des fichiers (mikata/files/index.py, phase 12d), simulé dans les
+    tests. Requêtes rapides en lecture ; le LLM ne voit jamais l'index lui-même."""
+
+    def ready(self) -> bool: ...
+    def stats(self) -> dict[str, Any]: ...
+    def search(self, query: str, max_results: int) -> list[dict[str, Any]]: ...
+    def list_folder(self, folder: str, limit: int) -> list[dict[str, Any]]: ...
+    def aclose(self) -> None: ...
+
+
 class AudioControl(Protocol):
     """Volume et sortie audio de Windows (tools/media.py, pycaw), simulé dans les tests."""
 
@@ -272,6 +284,8 @@ class ToolContext:
     # de la dernière commande réussie (câblée par la boucle agent, comme `history`).
     skills: Any = None
     skills_capture: Callable[[str], Awaitable[str]] | None = None
+    # Ajout phase 12d : index local des fichiers (mikata.files.index.FileIndex).
+    index: FileIndexService | None = None
     _executor: ThreadPoolExecutor | None = field(default=None, repr=False)
 
     async def run_blocking(self, fn: Callable[..., R], *args: Any) -> R:
@@ -326,6 +340,11 @@ class ToolContext:
             raise ToolError("les savoir-faire ne sont pas disponibles ici")
         return self.skills
 
+    def require_index(self) -> FileIndexService:
+        if self.index is None:
+            raise ToolError("l'index des fichiers n'est pas disponible ici")
+        return self.index
+
     def spawn(self, coro: Awaitable[Any], name: str) -> None:
         """Tâche de fond gardée en vie (minuteurs, rappels)."""
         task = asyncio.ensure_future(coro)
@@ -349,6 +368,11 @@ class ToolContext:
                 await self.browser.aclose()
             except Exception as exc:
                 logger.debug("Fermeture du contrôle du navigateur : {}", exc)
+        if self.index is not None:
+            try:
+                self.index.aclose()
+            except Exception as exc:
+                logger.debug("Fermeture de l'index des fichiers : {}", exc)
         if self.http is not None:
             try:
                 await self.http.aclose()

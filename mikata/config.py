@@ -202,6 +202,17 @@ class SkillsConfig(_Section):
     max_steps: int = Field(default=10, ge=1, le=50)  # étapes rejouées au plus
 
 
+class FilesIndexConfig(_Section):
+    """Ajout phase 12d : index SQLite de tous les noms de fichiers (volumes NTFS), bâti
+    en lisant la MFT puis tenu à jour par le journal USN — jamais de rescan. Le LLM ne
+    voit jamais l'index : il interroge par outils (find_path, list_folder)."""
+
+    enabled: bool = True  # false : pas d'index (find_path répond « indisponible »)
+    db: Path = Path("data/files_index.db")  # base SQLite (WAL), à côté des logs
+    poll_s: float = Field(default=5, ge=1, le=3600)  # sondage du journal USN
+    max_results: int = Field(default=20, ge=1, le=100)  # résultats renvoyés au LLM
+
+
 VoiceEngine = Literal["piper", "kokoro", "elevenlabs"]
 
 
@@ -375,6 +386,7 @@ class Config(_Section):
     web: WebConfig = Field(default_factory=WebConfig)
     browser: BrowserConfig = Field(default_factory=BrowserConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
+    files_index: FilesIndexConfig = Field(default_factory=FilesIndexConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
     guard: GuardConfig = Field(default_factory=GuardConfig)
     uia: UiaConfig = Field(default_factory=UiaConfig)

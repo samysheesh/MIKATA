@@ -2465,3 +2465,112 @@ uv run python -m mikata --check-config
 
 Attendu : tout en `passed`, config valide, latence et CPU inchangés (l'apprentissage
 tourne en arrière-plan, jamais pendant une commande).
+
+## Phase 12d — vérification sur le PC Windows
+
+L'index local des fichiers (quatrième étage de la phase 12 : MIKATA connaît ton PC).
+
+Comment ça marche :
+
+- **Index complet, jamais rescané** (`mikata/files/`) : la MFT de chaque volume NTFS est
+  lue d'un coup (`FSCTL_ENUM_USN_DATA` — la méthode d'Everything, des millions de fichiers
+  en quelques secondes), puis le journal de modifications USN rejoue les deltas
+  (créations, renommages, suppressions) en continu. Un dossier renommé décale tous ses
+  enfants ; un événement perdu ou un journal vidé déclenche une reconstruction automatique.
+- **Le LLM ne voit jamais l'index** : il appelle `find_path` et reçoit au plus
+  `files_index.max_results` lignes (SQLite + FTS5 trigram, insensible aux accents, en
+  quelques millisecondes).
+- **Deux sources, détectées seules** : Windows refuse la lecture des volumes à un
+  utilisateur standard, donc un petit **helper élevé** (`mikata/files/helper.py`, tâche
+  planifiée, un seul UAC à l'installation) lit MFT + journal et dépose `build.jsonl` +
+  `events.log` dans `data/index/` ; MIKATA (user) consomme ce flux (appends atomiques,
+  jamais une ligne coupée). Si MIKATA tourne en administrateur, il lit les volumes
+  directement, sans helper.
+- **Outils** : `find_path` (cherche un fichier/dossier sur tout le PC), `list_folder`
+  (contenu depuis l'index, dossiers d'abord), `open_in_explorer` ★ (ouvre le dossier ou
+  sélectionne le fichier — « où est cyberpunk 2077 »). Pas de filtre `allowed_dirs` ici :
+  seuls des **noms** sont montrés, jamais du contenu. Les outils de contenu (lecture,
+  écriture, corbeille) gardent leur garde-fou.
+- **Config** : section `files_index` (`enabled`, `db`, `poll_s`, `max_results`).
+
+### 1. Récupérer la branche, installer
+
+```powershell
+git fetch origin
+git checkout phase-12d-index
+git pull
+uv sync
+```
+
+Si tu as modifié `config.yaml` en local, garde tes réglages pendant la mise à jour (une
+section `files_index:` est ajoutée) :
+
+```powershell
+git stash
+git pull
+git stash pop
+Select-String -Path config.yaml -Pattern "files_index"
+```
+
+### 2. Installer le helper élevé (une seule fois, un UAC)
+
+```powershell
+powershell -Command "Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File D:\projects\mikata\scripts\install_usn_helper.ps1'"
+```
+
+La tâche planifiée « MIKATA Indexer USN » démarre à l'ouverture de session et tourne en
+tâche de fond. Vérifie quelques secondes plus tard :
+
+```powershell
+Get-Content data\index\helper.log -Tail 5
+```
+
+Attendu : `Dump initial : N entrées en X s.` (N de l'ordre du nombre de fichiers de tes
+disques). Sans helper (ou en désaccord UAC), l'index dit clairement qu'il attend le dump
+et `find_path` renvoie « l'index des fichiers se construit… ».
+
+### 3. Lint et tests
+
+```powershell
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
+uv run pytest tests\test_file_index.py tests\test_file_index_tools.py -v
+```
+
+Attendu : tout en `passed`. Ce que vérifient ces tests :
+- reconstruction des chemins depuis la carte FRN (orphelins et sous-arbres système
+  ignorés), renommage d'un dossier qui décale ses enfants, suppression d'un dossier qui
+  purge le sous-arbre, recherche trigramme sans accents et classée (nom exact d'abord) ;
+- le contrat du helper : lignes JSONL aller-retour, dernière ligne tronquée ignorée,
+  consommation qui ne coupe jamais un append en cours ;
+- les outils : résultats de l'index, filtre par dossier, message clair pendant la
+  construction, `open_in_explorer` (dossier ouvert / fichier sélectionné) sans dépendre
+  de l'index.
+
+### 4. Vérification à la voix
+
+```powershell
+uv run python -m mikata
+```
+
+1. Au démarrage : `Index des fichiers : N entrées en X s (dump du helper élevé).`
+2. « MIKATA, où est cyberpunk 2077 » → réponse immédiate avec le chemin complet, puis
+   « ouvre-le dans l'explorateur » → la bonne fenêtre s'ouvre, le fichier est sélectionné.
+3. Crée un fichier sur le Bureau pendant que MIKATA tourne, puis « MIKATA, trouve
+   mon-fichier-de-test » : il apparaît en quelques secondes (`files_index.poll_s`), sans
+   aucun rescan.
+4. Renomme un dossier qui contient des fichiers, puis cherche un de ses fichiers : le
+   chemin affiché est le nouveau.
+
+### 5. Non-régression
+
+```powershell
+uv run pytest tests\test_guard_criteria.py tests\test_voice_stop.py -v
+uv run python -m mikata --check-config
+uv run python scripts\eval_prompt.py
+```
+
+Attendu : tout en `passed`, config valide, banc de phrases 28/28 (dont « où est cyberpunk
+2077 »), latence et CPU inchangés (l'index tourne sur son thread dédié, la base est en
+WAL).

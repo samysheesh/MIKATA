@@ -246,7 +246,8 @@ def test_build_app_with_llm_and_voice(
     # vrai abonnement UIA dans le processus pytest crashe à l'arrêt (0x80010108).
     config = config.model_copy(
         update={
-            "uia": config.uia.model_copy(update={"accessibility_client": False, "state_poll_s": 0})
+            "uia": config.uia.model_copy(update={"accessibility_client": False, "state_poll_s": 0}),
+            "files_index": config.files_index.model_copy(update={"enabled": False}),
         }
     )
     app = entry.build_app(config, tray=False, audio=True)
@@ -302,9 +303,12 @@ def test_tool_context_on_windows(config_file: Path, monkeypatch: pytest.MonkeyPa
     config = entry.load_config(config_file)
     # Threads COM coupés dans les tests : un vrai abonnement UIA dans le processus pytest
     # crashe à l'arrêt (0x80010108). Le wiring des services est vérifié quand même.
+    # L'index des fichiers est un vrai index (thread + SQLite) : évité ici, il a ses
+    # propres tests ; le wiring est vérifié dans test_build_tool_context_wires_the_index.
     config = config.model_copy(
         update={
-            "uia": config.uia.model_copy(update={"accessibility_client": False, "state_poll_s": 0})
+            "uia": config.uia.model_copy(update={"accessibility_client": False, "state_poll_s": 0}),
+            "files_index": config.files_index.model_copy(update={"enabled": False}),
         }
     )
     ctx = entry.build_tool_context(config)
@@ -312,6 +316,32 @@ def test_tool_context_on_windows(config_file: Path, monkeypatch: pytest.MonkeyPa
     assert isinstance(ctx.notifier, ToastNotifier) and ctx.search_api_key == "tvly-abc"
     assert isinstance(ctx.uia, UiController) and isinstance(ctx.browser, BrowserController)
     asyncio.run(ctx.aclose())
+
+
+def test_build_tool_context_wires_the_index(
+    config_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Phase 12d : l'index des fichiers est construit et branché sur le contexte (le
+    service réel démarre son thread ; l'arrêt est propre)."""
+    from mikata.files.index import FileIndex
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    # Pas de vrai disque en test : l'index démarre vide, le wiring est vérifié quand même.
+    monkeypatch.setattr("mikata.files.index.usn.list_ntfs_volumes", lambda: [])
+    config = entry.load_config(config_file)
+    config = config.model_copy(
+        update={
+            "uia": config.uia.model_copy(update={"accessibility_client": False, "state_poll_s": 0}),
+            "files_index": config.files_index.model_copy(
+                update={"enabled": True, "db": Path("data/files_index_test.db")}
+            ),
+        }
+    )
+    ctx = entry.build_tool_context(config)
+    try:
+        assert isinstance(ctx.index, FileIndex)
+    finally:
+        asyncio.run(ctx.aclose())
 
 
 def test_ask_without_audio_prints_answer(

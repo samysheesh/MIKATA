@@ -197,6 +197,7 @@ Bonne nouvelle côté matériel : avec un casque fermé, le son du jeu ne revien
 - **media** : `media_control` ★ (lecture, pause, suivant, précédent), `set_volume` ★ / `mute` ★ (`pycaw`), `set_output_device` ★.
 - **input** : `type_text`, `press_keys` (`pyautogui`).
 - **files** : `find_files`, `read_file` (tronqué), `write_file`, `move_file`, `delete_file` (corbeille).
+- **index des fichiers** (phase 12d) : `find_path`, `list_folder`, `open_in_explorer` ★. Étage « connaissances locales » : un index SQLite + FTS5 trigram de tous les noms de fichiers des volumes NTFS (`data/files_index.db`, WAL), bâti en lisant la MFT (`FSCTL_ENUM_USN_DATA`, la méthode d'Everything) et tenu à jour par le journal USN (`FSCTL_READ_USN_JOURNAL`) — jamais de rescan. Windows refuse l'accès aux volumes à un utilisateur standard : un helper élevé (`mikata/files/helper.py`, tâche planifiée installée par `scripts/install_usn_helper.ps1`, un UAC) lit MFT + journal et dépose `data/index/build.jsonl` + `events.log` ; MIKATA consomme ce flux (appends atomiques, troncature sûre) — ou lit les volumes directement s'il tourne en administrateur. Le LLM ne voit jamais l'index : il interroge et reçoit quelques lignes filtrées ; ces outils ne montrent que des noms, jamais du contenu.
 - **shell** : `run_powershell` (timeout 30 s, sortie tronquée), `run_script` pour tes scripts dans `scripts/user/`.
 - **ui** : `show_text` (fenêtre avec texte long), `clipboard_read`, `clipboard_write`.
 - **memory** : `remember`, `forget`.
@@ -245,9 +246,10 @@ mikata/
 ├─ .env                      # LLM_API_KEY, SEARCH_API_KEY (jamais commité)
 ├─ assets/sounds/            # earcons .wav
 ├─ models/                   # mikata.onnx, voix Piper, verifier
-├─ data/                     # logs, memory.json, actions.log, wake_logs/
+├─ data/                     # logs, memory.json, actions.log, wake_logs/, files_index.db, index/ (helper USN)
 ├─ scripts/
 │  ├─ install_autostart.ps1  # tâche planifiée à l'ouverture de session
+│  ├─ install_usn_helper.ps1 # phase 12d : tâche élevée du helper USN (un UAC)
 │  ├─ record_wakeword_samples.py  eval_wakeword.py  eval_stt.py
 │  ├─ list_audio_devices.py
 │  └─ user/                  # tes scripts autorisés (run_script)
@@ -268,12 +270,13 @@ mikata/
    ├─ tools/  registry.py  system.py  apps.py  web.py  media.py
    │        input.py  files.py  shell.py  ui.py  memory_tools.py  uia.py  browser.py
    │        skills.py
-   ├─ uia/    controller.py  state.py  client.py  # phase 12a : arbre d'accessibilité + état ambiant + client à l'écoute
-   ├─ browser/ cdp.py  controller.py              # phase 12b : navigateur piloté (DevTools)
-   ├─ skills/ library.py  distill.py              # phase 12c : savoir-faire (mémoire procédurale)
-   ├─ tts/    base.py  piper_tts.py  kokoro_tts.py  normalize.py  cache.py
-   │        router.py  elevenlabs.py  credits.py   # phase 11 : profils de voix, ElevenLabs
-   └─ ui/     tray.py  notify.py  hotkeys.py
+    ├─ uia/    controller.py  state.py  client.py  # phase 12a : arbre d'accessibilité + état ambiant + client à l'écoute
+    ├─ browser/ cdp.py  controller.py              # phase 12b : navigateur piloté (DevTools)
+    ├─ skills/ library.py  distill.py              # phase 12c : savoir-faire (mémoire procédurale)
+    ├─ files/  usn.py  index.py  events.py  helper.py  # phase 12d : index des fichiers (MFT + journal USN)
+    ├─ tts/    base.py  piper_tts.py  kokoro_tts.py  normalize.py  cache.py
+    │        router.py  elevenlabs.py  credits.py   # phase 11 : profils de voix, ElevenLabs
+    └─ ui/     tray.py  notify.py  hotkeys.py
 ```
 
 **Interfaces** (dans les fichiers `base.py`, avec `typing.Protocol`) :
@@ -397,6 +400,11 @@ skills:                             # phase 12c : savoir-faire appris (data/skil
   auto_learn_min_rounds: 2
   max_failures: 3
   max_steps: 10
+files_index:                        # phase 12d : index local des fichiers (MFT + journal USN)
+  enabled: true
+  db: data/files_index.db           # SQLite WAL, jamais envoyé au LLM
+  poll_s: 5                         # sondage du journal USN (secondes)
+  max_results: 20                   # résultats renvoyés au LLM (au plus)
 uia:                                # phase 12a : pilotage fin des applications (arbre UIA)
   enabled: true
   state_poll_s: 2                   # état ambiant en RAM (Discord...) ; 0 = jamais
@@ -407,6 +415,8 @@ uia:                                # phase 12a : pilotage fin des applications 
 Les secrets (`LLM_API_KEY`, `SEARCH_API_KEY`, `ELEVENLABS_API_KEY`) vont dans `.env`, jamais dans le dépôt. Les profils de personnage (`ui.profiles`, skin -> voix) sont dans `config.yaml` : un identifiant de voix n'est pas un secret.
 
 **Démarrage automatique** : une **tâche planifiée Windows** « à l'ouverture de session », avec ton compte, via `pythonw.exe` (pas de console), option « redémarrer en cas d'échec ». Script `scripts/install_autostart.ps1`. **Pas un service Windows** : un service tourne dans la session 0, isolée du bureau, sans accès simple à tes fenêtres ni à ton audio.
+
+**Helper USN (phase 12d)** : une deuxième tâche planifiée « MIKATA Indexer USN » (élevée, `scripts/install_usn_helper.ps1`, un seul UAC) lit la MFT et le journal de modifications ; MIKATA, en utilisateur standard, n'a jamais besoin des droits administrateur.
 
 **Priorité du processus** (`governor.py`, au démarrage) : le jeu doit toujours passer devant.
 

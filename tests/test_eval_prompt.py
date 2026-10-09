@@ -1,4 +1,4 @@
-"""scripts/eval_prompt.py : 23 phrases approximatives, vraie boucle agent, actions simulées.
+"""scripts/eval_prompt.py : 28 phrases approximatives, vraie boucle agent, actions simulées.
 
 Ici le LLM est simulé (pas de réseau en CI) : on vérifie le banc d'essai lui-même, avec un
 « bon » LLM (tout réussit) et un « mauvais » (PowerShell, question, réponse bavarde). Le vrai
@@ -49,6 +49,12 @@ GOOD: dict[str, tuple[str, dict[str, Any]]] = {
     ),
     # Phase 12c : procédure apprise, rejouée sans appel LLM (l'entrée ne sert jamais).
     "passe le pc en silencieux": ("set_volume", {"level": 20}),
+    # Phase 12d : l'index local répond, puis l'Explorateur s'ouvre dessus.
+    "où est cyberpunk 2077": ("find_path", {"name": "cyberpunk 2077"}),
+    "montre-moi où est cyberpunk 2077 dans l'explorateur": (
+        "open_in_explorer",
+        {"path": "D:\\Steam\\steamapps\\common\\Cyberpunk 2077.exe"},
+    ),
     # Phase 6 : réponses dites, sans outil
     "raconte-moi une longue histoire": (
         "Il était une fois un petit robot qui rêvait de voir la mer. Un matin, il quitta son "
@@ -117,9 +123,9 @@ def _run(llm: PhraseLLM, tmp_path: Path) -> list[Any]:
     return asyncio.run(ev.run_cases(llm, config, list(enumerate(ev.CASES, 1))))
 
 
-def test_twenty_six_phrases_including_the_notepad_ones() -> None:
+def test_twenty_eight_phrases_including_the_notepad_ones() -> None:
     phrases = [case.phrase for case in ev.CASES]
-    assert len(phrases) == 26 and len(set(phrases)) == 26
+    assert len(phrases) == 28 and len(set(phrases)) == 28
     assert phrases[:3] == ["stop process name notepad", "arrête notepad", "ferme le bloc-notes"]
     assert set(phrases) == set(GOOD)
 
@@ -135,7 +141,7 @@ def test_a_good_llm_passes_everything_without_touching_the_pc(
     assert by_phrase["mets le son à trente"].llm_calls == 1
     assert by_phrase["quel temps il fait à Lyon"].llm_calls == 2
     text = ev.report(outcomes)
-    assert "Réussies : 26/26" in text and "en un seul appel LLM : 22" in text
+    assert "Réussies : 28/28" in text and "en un seul appel LLM : 23" in text
     assert by_phrase["raconte-moi une longue histoire"].calls == []
 
 

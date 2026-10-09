@@ -80,6 +80,11 @@ skills:                            # ajout phase 12c : savoir-faire appris (data
   auto_learn_min_rounds: 2         # ... à partir de N étapes d'outils
   max_failures: 3                  # échecs au rejeu avant désactivation
   max_steps: 10                    # étapes rejouées au plus
+files_index:                       # ajout phase 12d : index local des fichiers (MFT + journal USN)
+  enabled: true                    # find_path / list_folder / open_in_explorer
+  db: data/files_index.db          # base SQLite (WAL), jamais envoyée au LLM
+  poll_s: 5                        # sondage du journal USN (secondes)
+  max_results: 20                  # résultats renvoyés au LLM (au plus)
 tts:
   backend: piper                   # piper | kokoro | elevenlabs (skin sans profil, ui.profiles)
   voice: models/fr_FR-siwis-medium.onnx   # voix Piper (scripts/download_models.py)

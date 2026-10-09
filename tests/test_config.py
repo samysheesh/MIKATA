@@ -96,6 +96,10 @@ def test_defaults_match_section_10(config_file: Path) -> None:
     assert config.skills.confidence == 70 and config.skills.auto_learn is True
     assert config.skills.auto_learn_min_rounds == 2 and config.skills.max_failures == 3
     assert config.skills.max_steps == 10
+    # ajouts phase 12d
+    assert config.files_index.enabled is True
+    assert config.files_index.db == Path("data/files_index.db")
+    assert config.files_index.poll_s == 5 and config.files_index.max_results == 20
 
 
 def test_repo_config_keys_are_exactly_the_model_fields() -> None:
@@ -164,6 +168,9 @@ def test_not_a_mapping(tmp_path: Path) -> None:
         ("stt", "wake_words", [], "stt.wake_words"),
         ("tts", "cpu_threads", 0, "tts.cpu_threads"),
         ("tts", "speed", 3, "tts.speed"),
+        ("files_index", "poll_s", 0, "files_index.poll_s"),
+        ("files_index", "max_results", 0, "files_index.max_results"),
+        ("files_index", "max_results", 101, "files_index.max_results"),
     ],
 )
 def test_invalid_values(tmp_path: Path, section: str, key: str, value: object, loc: str) -> None:

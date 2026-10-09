@@ -89,6 +89,11 @@ PHASE_12C_TOOLS = {  # savoir-faire appris (mémoire procédurale)
     "remember_skill",
     "forget_skill",
 }
+PHASE_12D_TOOLS = {  # index local des fichiers (MFT + journal USN)
+    "find_path",
+    "list_folder",
+    "open_in_explorer",
+}
 TERMINAL = {
     "set_timer",
     "set_reminder",
@@ -119,6 +124,7 @@ TERMINAL = {
     "browser_back",
     "remember_skill",
     "forget_skill",
+    "open_in_explorer",
 }
 
 
@@ -135,6 +141,7 @@ def test_catalogue_and_terminal_tools(tmp_path: Path) -> None:
         | PHASE_12A_TOOLS
         | PHASE_12B_TOOLS
         | PHASE_12C_TOOLS
+        | PHASE_12D_TOOLS
     )
     assert set(registry.tools) - {"echo_test"} == every
     assert {n for n in registry.tools if registry.is_terminal(n)} - {"echo_test"} == TERMINAL
@@ -154,6 +161,7 @@ def test_schemas_are_stable_sorted_and_lean(tmp_path: Path) -> None:
         | PHASE_12A_TOOLS
         | PHASE_12B_TOOLS
         | PHASE_12C_TOOLS
+        | PHASE_12D_TOOLS
     )
     registry = ToolRegistry(make_ctx(tmp_path), include=every)
     schemas = registry.schemas()
