@@ -46,32 +46,46 @@ def _open_append(path: Path) -> TextIO:
     return path.open("a", encoding="utf-8")
 
 
-def dump_all(data_dir: Path) -> int:
-    """Dump complet des volumes NTFS ; renvoie le nombre de lignes écrites."""
+def dump_all(share_dir: Path) -> int:
+    """Dump complet des volumes NTFS dans `share_dir` ; renvoie le nombre de lignes."""
     lines: list[str] = []
     for volume in usn.list_ntfs_volumes():
+        paths = 0
         for path, entry in usn.build_paths(usn.enumerate_files(volume), volume):
+            paths += 1
             lines.append(events.dump_line(path, entry))
             if len(lines) >= 200_000:
                 logger.info("Dump en cours : {} lignes.", len(lines))
-    _atomic_lines(data_dir / DUMP, lines)
+        if paths == 0:
+            logger.info("Volume {} : aucun chemin produit ({})", volume, usn.diagnose(volume))
+        else:
+            logger.info("Volume {} : {} entrées.", volume, paths)
+    _atomic_lines(share_dir / DUMP, lines)
     return len(lines)
 
 
-def watch(data_dir: Path) -> None:
+def watch(share_dir: Path) -> None:
     """Dump puis rejeu du journal, pour toujours (arrêt par fin de processus)."""
     started = time.monotonic()
     try:
-        total = dump_all(data_dir)
+        total = dump_all(share_dir)
         logger.info("Dump initial : {} entrées en {:.1f} s.", total, time.monotonic() - started)
     except Exception as exc:
         logger.error("Dump initial impossible : {}", exc)
         raise
     volumes = usn.list_ntfs_volumes()
-    journal_ids = {volume: usn.query_journal(volume) for volume in volumes}
+    journal_ids: dict[str, tuple[int, int]] = {}
+    for volume in volumes:
+        try:
+            journal_ids[volume] = usn.query_journal(volume)
+        except Exception as exc:
+            # Journal USN absent/désactivé : fsutil usn createjournal le répare ; en
+            # attendant, le volume est suivi au prochain redump.
+            logger.warning(
+                "Journal USN de {} inactif ({}) — lance fsutil usn createjournal.", volume, exc
+            )
     pending: list[str] = []
     while True:
-        changed = False
         for volume, (journal_id, start_usn) in list(journal_ids.items()):
             try:
                 events_list, next_usn = usn.read_journal(
@@ -79,17 +93,19 @@ def watch(data_dir: Path) -> None:
                 )
             except Exception as exc:
                 logger.warning("Journal de {} illisible : {} — nouveau dump.", volume, exc)
-                dump_all(data_dir)
-                journal_ids[volume] = usn.query_journal(volume)
+                dump_all(share_dir)
+                try:
+                    journal_ids[volume] = usn.query_journal(volume)
+                except Exception:
+                    del journal_ids[volume]
                 continue
             journal_ids[volume] = (journal_id, next_usn)
             for event in events_list:
                 if usn.relevant(event.reason):
                     pending.append(events.event_line(event))
-                    changed = True
         if pending:
             try:
-                with _open_append(data_dir / EVENTS) as handle:
+                with _open_append(share_dir / EVENTS) as handle:
                     for line in pending:
                         handle.write(line + "\n")
                     handle.flush()
@@ -97,8 +113,6 @@ def watch(data_dir: Path) -> None:
                 logger.error("Écriture de {} impossible : {}", EVENTS, exc)
             else:
                 pending = []
-        if changed and not pending:
-            pass  # tout est écrit ; on retombe sur le sommeil
         time.sleep(_POLL_S)
 
 
@@ -110,17 +124,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--once", action="store_true", help="un dump puis sortie")
     args = parser.parse_args(argv)
     data_dir = args.data
+    share_dir = data_dir / "index"
     data_dir.mkdir(parents=True, exist_ok=True)
-    logger.add(data_dir / LOG, rotation="1 MB", retention=2, level="INFO")
+    share_dir.mkdir(parents=True, exist_ok=True)
+    logger.add(share_dir / LOG, rotation="1 MB", retention=2, level="INFO")
     try:
         if args.once:
-            total = dump_all(data_dir)
+            total = dump_all(share_dir)
             logger.info("Dump ponctuel : {} entrées.", total)
             return 0
-        watch(data_dir)
+        watch(share_dir)
     except Exception as exc:
         logger.error(
-            "Helper arrêté : {} (sans élévation, Windows refuse l'accès aux volumes).", exc
+            "Helper arrêté : {} (l'élévation et le journal USN actif sont requis, "
+            "voir scripts/install_usn_helper.ps1).",
+            exc,
         )
         return 2
     return 0

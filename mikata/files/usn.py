@@ -293,6 +293,7 @@ def read_journal(
     request.usn_journal_id = journal_id
     events: list[UsnEvent] = []
     next_usn = start_usn
+    header_bytes = 8  # les 8 premiers octets du tampon sont un USN, pas un record
     try:
         while True:
             try:
@@ -303,10 +304,10 @@ def read_journal(
                 if exc.winerror == ERROR_HANDLE_EOF:
                     break  # rien de nouveau
                 raise
-            if not output:
+            if len(output) <= header_bytes:
                 break
             produced = 0
-            for record, name in _parse_records(output):
+            for record, name in _parse_records(output[header_bytes:]):
                 produced += 1
                 if not name or ":" in name:
                     continue
@@ -325,9 +326,31 @@ def read_journal(
             if produced == 0 or len(output) < _BUFFER_SIZE:
                 break
             request.start_usn = next_usn
+            header_bytes = 0  # l'en-tête n'existe qu'au premier appel
     finally:
         win32file.CloseHandle(handle)
     return events, next_usn
+
+
+def diagnose(volume: str) -> str:
+    """Hexdump du premier tampon de FSCTL_ENUM_USN_DATA (diagnostic, volume élevé)."""
+    import win32file
+
+    handle = _open_volume(volume)
+    request = MftEnumDataV0()
+    request.start_file_reference_number = 0
+    request.low_usn = 0
+    request.high_usn = 0x7FFFFFFFFFFFFFFF
+    try:
+        output = win32file.DeviceIoControl(
+            handle, FSCTL_ENUM_USN_DATA, _bytes_of(request), _BUFFER_SIZE
+        )
+        head = output[:64]
+        return " ".join(f"{b:02x}" for b in head) + f" ({len(output)} octets)"
+    except win32file.error as exc:
+        return f"erreur {exc.winerror} : {exc}"
+    finally:
+        win32file.CloseHandle(handle)
 
 
 # -- parties pures (testables sur n'importe quelle plateforme) -------------------------

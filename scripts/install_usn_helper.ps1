@@ -26,13 +26,24 @@ if ($Remove) {
 
 $data = Join-Path $Project "data"
 $share = Join-Path $data "index"
-$python = Join-Path $Project ".venv\Scripts\pythonw.exe"  # pas de fenêtre console
-if (-not (Test-Path $python)) { $python = Join-Path $Project ".venv\Scripts\python.exe" }
-if (-not (Test-Path $python)) { throw "Python du projet introuvable : $python (uv venv attendu)" }
+$pythonw = Join-Path $Project ".venv\Scripts\pythonw.exe"  # pas de fenêtre console
+if (-not (Test-Path $pythonw)) { $pythonw = Join-Path $Project ".venv\Scripts\python.exe" }
+if (-not (Test-Path $pythonw)) { throw "Python du projet introuvable : $pythonw (uv venv attendu)" }
+$python = Join-Path $Project ".venv\Scripts\python.exe"   # visible pour le dump immédiat
 
 New-Item -ItemType Directory -Force -Path $share | Out-Null
 # L'utilisateur courant doit lire/écrire ce que le helper (admin) y dépose.
 icacls $share /grant "$($env:USERNAME):(OI)(CI)M" /T /Q
+
+# Journal USN actif sur chaque volume NTFS (idempotent, aucune donnée touchée).
+Get-Volume -FileSystem NTFS -ErrorAction SilentlyContinue | ForEach-Object {
+    $vol = "$($_.DriveLetter):"
+    fsutil usn queryjournal $vol *> $null
+    if ($LASTEXITCODE -ne 0) {
+        fsutil usn createjournal m=2000 a=100 $vol | Out-Null
+        Write-Host "Journal USN activé sur $vol" -ForegroundColor Green
+    }
+}
 
 $xmlPath = Join-Path $env:TEMP "mikata-usn-helper.xml"
 $xml = @"
@@ -60,7 +71,7 @@ $xml = @"
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>$python</Command>
+      <Command>$pythonw</Command>
       <Arguments>-m mikata.files.helper --data "$data"</Arguments>
       <WorkingDirectory>$Project</WorkingDirectory>
     </Exec>
@@ -70,6 +81,10 @@ $xml = @"
 $xml | Out-File -FilePath $xmlPath -Encoding unicode
 schtasks /Create /TN $task /XML $xmlPath /F
 Remove-Item $xmlPath -Force
+
+# Dump immédiat dans cette console élevée : les erreurs restent visibles ici.
+Write-Host "Dump initial des volumes (cette fenêtre se fermera seule)..." -ForegroundColor Yellow
+& $python -m mikata.files.helper --data $data --once
+Write-Host "Code du dump : $LASTEXITCODE (0 = réussi)" -ForegroundColor Yellow
 schtasks /Run /TN $task | Out-Null
-Write-Host "Helper installé et lancé : $share" -ForegroundColor Green
-Write-Host "Vérifie data/index/helper.log et data/index/build.jsonl dans quelques secondes."
+Write-Host "Helper installé : $share" -ForegroundColor Green
