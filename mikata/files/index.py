@@ -33,32 +33,37 @@ _TRIGRAM_MIN = 3  # FTS5 trigram : pas de correspondance sous 3 caractères
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS files(
-  frn INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY,
+  volume TEXT NOT NULL,
+  frn INTEGER NOT NULL,
   path TEXT NOT NULL UNIQUE,
   parent TEXT NOT NULL,
   name TEXT NOT NULL,
   name_fold TEXT NOT NULL,
   mtime REAL,
-  is_dir INTEGER NOT NULL DEFAULT 0
+  is_dir INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(volume, frn)
 );
 CREATE INDEX IF NOT EXISTS idx_files_parent ON files(parent);
 CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
-  name_fold, content='files', content_rowid='frn', tokenize='trigram'
+  name_fold, content='files', content_rowid='id', tokenize='trigram'
 );
 CREATE TRIGGER IF NOT EXISTS files_ai AFTER INSERT ON files BEGIN
-  INSERT INTO files_fts(rowid, name_fold) VALUES (new.rowid, new.name_fold);
+  INSERT INTO files_fts(rowid, name_fold) VALUES (new.id, new.name_fold);
 END;
 CREATE TRIGGER IF NOT EXISTS files_ad AFTER DELETE ON files BEGIN
-  DELETE FROM files_fts WHERE rowid = old.rowid;
+  DELETE FROM files_fts WHERE rowid = old.id;
 END;
 CREATE TRIGGER IF NOT EXISTS files_au AFTER UPDATE OF name_fold ON files BEGIN
-  DELETE FROM files_fts WHERE rowid = old.rowid;
-  INSERT INTO files_fts(rowid, name_fold) VALUES (new.rowid, new.name_fold);
+  DELETE FROM files_fts WHERE rowid = old.id;
+  INSERT INTO files_fts(rowid, name_fold) VALUES (new.id, new.name_fold);
 END;
 CREATE TABLE IF NOT EXISTS renames(
-  frn INTEGER PRIMARY KEY,
+  volume TEXT NOT NULL,
+  frn INTEGER NOT NULL,
   old_path TEXT NOT NULL,
-  old_parent TEXT NOT NULL
+  old_parent TEXT NOT NULL,
+  PRIMARY KEY (volume, frn)
 );
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
@@ -86,6 +91,7 @@ def _parent_of(path: str) -> str:
 
 def apply_event(
     conn: sqlite3.Connection,
+    volume: str,
     frn: int,
     parent_frn: int,
     name: str,
@@ -95,21 +101,29 @@ def apply_event(
 ) -> None:
     """Applique un événement USN à l'index (fonction pure, testable).
 
+    Les FRN n'étant uniques que par volume, chaque ligne est identifiée par (volume, frn).
     Renommage d'un dossier : RENAME_OLD retire la ligne et mémorise l'ancien chemin,
     RENAME_NEW réinsère et décale les chemins de tous les enfants (leurs FRN n'ont pas
     changé, donc NTFS n'émet rien pour eux).
     """
     if reason & usn.USN_REASON_RENAME_OLD_NAME:
-        row = conn.execute("SELECT path, parent FROM files WHERE frn=?", (frn,)).fetchone()
+        row = conn.execute(
+            "SELECT path, parent FROM files WHERE volume=? AND frn=?", (volume, frn)
+        ).fetchone()
         if row is not None:
             conn.execute(
-                "INSERT OR REPLACE INTO renames(frn, old_path, old_parent) VALUES (?, ?, ?)",
-                (frn, row[0], row[1]),
+                "INSERT OR REPLACE INTO renames(volume, frn, old_path, old_parent) "
+                "VALUES (?, ?, ?, ?)",
+                (volume, frn, row[0], row[1]),
             )
-            conn.execute("DELETE FROM files WHERE frn=?", (frn,))  # la ligne, pas les enfants
+            conn.execute(
+                "DELETE FROM files WHERE volume=? AND frn=?", (volume, frn)
+            )  # la ligne, pas les enfants
         return
     if reason & usn.USN_REASON_FILE_DELETE:
-        row = conn.execute("SELECT path, is_dir FROM files WHERE frn=?", (frn,)).fetchone()
+        row = conn.execute(
+            "SELECT path, is_dir FROM files WHERE volume=? AND frn=?", (volume, frn)
+        ).fetchone()
         if row is not None:
             if row[1]:  # un dossier : tout son contenu part avec lui
                 conn.execute(
@@ -117,12 +131,16 @@ def apply_event(
                     (row[0], _like_prefix(row[0])),
                 )
             else:
-                conn.execute("DELETE FROM files WHERE frn=?", (frn,))
-            conn.execute("DELETE FROM renames WHERE frn=?", (frn,))
+                conn.execute("DELETE FROM files WHERE volume=? AND frn=?", (volume, frn))
+            conn.execute("DELETE FROM renames WHERE volume=? AND frn=?", (volume, frn))
         return
     if reason & (usn.USN_REASON_FILE_CREATE | usn.USN_REASON_RENAME_NEW_NAME):
-        parent = conn.execute("SELECT path FROM files WHERE frn=?", (parent_frn,)).fetchone()
-        old = conn.execute("SELECT old_path FROM renames WHERE frn=?", (frn,)).fetchone()
+        parent = conn.execute(
+            "SELECT path FROM files WHERE volume=? AND frn=?", (volume, parent_frn)
+        ).fetchone()
+        old = conn.execute(
+            "SELECT old_path FROM renames WHERE volume=? AND frn=?", (volume, frn)
+        ).fetchone()
         if parent is None:
             if old is None:
                 return  # parent pas encore indexé : la reconstruction le rattrapera
@@ -132,23 +150,23 @@ def apply_event(
         path = parent_path + name + ("\\" if is_dir else "")
         conn.execute(
             """
-            INSERT INTO files(frn, path, parent, name, name_fold, mtime, is_dir)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(frn) DO UPDATE SET
+            INSERT INTO files(volume, frn, path, parent, name, name_fold, mtime, is_dir)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(volume, frn) DO UPDATE SET
               path=excluded.path, parent=excluded.parent, name=excluded.name,
               name_fold=excluded.name_fold, mtime=excluded.mtime, is_dir=excluded.is_dir
             """,
-            (frn, path, parent_path, name, fold(name), mtime, int(is_dir)),
+            (volume, frn, path, parent_path, name, fold(name), mtime, int(is_dir)),
         )
         if old is not None and is_dir and old[0] != path:
             # Les enfants gardent leur fin de chemin ; seul le préfixe change.
             children = conn.execute(
-                "SELECT frn, path FROM files WHERE path LIKE ? ESCAPE '\\'",
+                "SELECT id, path FROM files WHERE path LIKE ? ESCAPE '\\'",
                 (_like_prefix(old[0]),),
             ).fetchall()
             conn.executemany(
                 """
-                UPDATE files SET path=?, parent=? WHERE frn=?
+                UPDATE files SET path=?, parent=? WHERE id=?
                 """,
                 [
                     (
@@ -159,7 +177,7 @@ def apply_event(
                     for child in children
                 ],
             )
-        conn.execute("DELETE FROM renames WHERE frn=?", (frn,))
+        conn.execute("DELETE FROM renames WHERE volume=? AND frn=?", (volume, frn))
 
 
 def search_rows(conn: sqlite3.Connection, query: str, max_results: int) -> list[dict[str, Any]]:
@@ -171,7 +189,7 @@ def search_rows(conn: sqlite3.Connection, query: str, max_results: int) -> list[
     rows = conn.execute(
         """
         SELECT path, name, is_dir, mtime FROM files
-        JOIN files_fts ON files_fts.rowid = files.rowid
+        JOIN files_fts ON files_fts.rowid = files.id
         WHERE files_fts.name_fold MATCH ?
         ORDER BY (files.name_fold = ?) DESC, (files.name_fold LIKE ?) DESC, mtime DESC
         LIMIT ?
@@ -200,13 +218,13 @@ def list_rows(conn: sqlite3.Connection, folder: str, limit: int) -> list[dict[st
 
 def _insert_rows(
     conn: sqlite3.Connection,
-    rows: list[tuple[int, str, str, str, str, float | None, int]],
+    rows: list[tuple[str, int, str, str, str, str, float | None, int]],
     commit: bool = True,
 ) -> None:
     conn.executemany(
         """
-        INSERT INTO files(frn, path, parent, name, name_fold, mtime, is_dir)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO files(volume, frn, path, parent, name, name_fold, mtime, is_dir)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         rows,
     )
@@ -227,7 +245,7 @@ def import_dump(conn: sqlite3.Connection, dump: Path) -> int:
     conn.execute("DELETE FROM renames")
     conn.commit()
     total = 0
-    batch: list[tuple[int, str, str, str, str, float | None, int]] = []
+    batch: list[tuple[str, int, str, str, str, str, float | None, int]] = []
     for line in events.iter_lines(dump):
         parsed = events.parse_dump_line(line)
         if parsed is None:
@@ -236,6 +254,7 @@ def import_dump(conn: sqlite3.Connection, dump: Path) -> int:
         name = path.rstrip("\\").rsplit("\\", 1)[-1]
         batch.append(
             (
+                path[:3],
                 parsed["frn"],
                 path,
                 _parent_of(path),
@@ -279,6 +298,7 @@ def apply_events_file(conn: sqlite3.Connection, path: Path) -> int:
             continue
         apply_event(
             conn,
+            parsed["volume"],
             parsed["frn"],
             parsed["parent"],
             parsed["name"],
@@ -391,11 +411,17 @@ class FileIndex:
             raise RuntimeError(
                 "FTS5 trigram indisponible dans ce Python : index désactivé"
             ) from exc
-        # Migration phase 12d : l'ancienne table FTS (sans content=) est recréée en
-        # « contenu externe » pour des reconstructions d'un bloc, plus des insertions
-        # incrémentales coûteuses.
-        row = conn.execute("SELECT sql FROM sqlite_master WHERE name='files_fts'").fetchone()
-        if row is not None and "content=" not in row[0]:
+        # Migration phase 12d : l'ancien schéma (frn clé primaire, FTS sans content=)
+        # est remplacé par le schéma (volume, frn) + FTS en contenu externe.
+        files_sql = conn.execute("SELECT sql FROM sqlite_master WHERE name='files'").fetchone()
+        if files_sql is not None and "volume TEXT" not in files_sql[0]:
+            conn.execute("DROP TABLE files")
+            conn.execute("DROP TABLE renames")
+            conn.execute("DROP TABLE files_fts")
+            conn.execute("DROP TABLE meta")
+            conn.executescript(_SCHEMA)
+        fts_sql = conn.execute("SELECT sql FROM sqlite_master WHERE name='files_fts'").fetchone()
+        if fts_sql is not None and "content=" not in fts_sql[0]:
             conn.execute("DROP TABLE files_fts")  # supprime aussi les triggers liés
             conn.executescript(_SCHEMA)
             if conn.execute("SELECT 1 FROM meta WHERE key='built_at'").fetchone():
@@ -431,11 +457,11 @@ class FileIndex:
             for path, entry in usn.build_paths(usn.enumerate_files(volume), volume):
                 batch.append((path, entry))
                 if len(batch) >= _INSERT_BATCH:
-                    self._insert_batch(conn, batch)
+                    self._insert_batch(conn, volume, batch)
                     batch = []
                     if self._stop.is_set():
                         return
-            self._insert_batch(conn, batch)
+            self._insert_batch(conn, volume, batch)
             conn.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
                 (f"journal:{volume}", f"{journal_id}:{next_usn}"),
@@ -488,12 +514,13 @@ class FileIndex:
         )
 
     def _insert_batch(
-        self, conn: sqlite3.Connection, batch: list[tuple[str, usn.UsnEntry]]
+        self, conn: sqlite3.Connection, volume: str, batch: list[tuple[str, usn.UsnEntry]]
     ) -> None:
         _insert_rows(
             conn,
             [
                 (
+                    volume,
                     entry.frn,
                     path,
                     _parent_of(path),
@@ -533,6 +560,7 @@ class FileIndex:
                 if usn.relevant(event.reason):
                     apply_event(
                         conn,
+                        volume,
                         event.frn,
                         event.parent_frn,
                         event.name,

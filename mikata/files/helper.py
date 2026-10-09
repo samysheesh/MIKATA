@@ -112,7 +112,7 @@ def watch(share_dir: Path) -> None:
             journal_ids[volume] = (journal_id, next_usn)
             for event in events_list:
                 if usn.relevant(event.reason):
-                    pending.append(events.event_line(event))
+                    pending.append(events.event_line(volume, event))
         if pending:
             try:
                 with _open_append(share_dir / events.EVENTS) as handle:

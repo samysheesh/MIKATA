@@ -44,9 +44,10 @@ def parse_dump_line(line: str) -> dict[str, Any] | None:
     return data
 
 
-def event_line(event: usn.UsnEvent) -> str:
+def event_line(volume: str, event: usn.UsnEvent) -> str:
     return json.dumps(
         {
+            "volume": volume,
             "frn": event.frn,
             "parent": event.parent_frn,
             "name": event.name,
@@ -65,7 +66,9 @@ def parse_event_line(line: str) -> dict[str, Any] | None:
         data = json.loads(line)
     except json.JSONDecodeError:
         return None
-    if not all(k in data for k in ("frn", "parent", "name", "reason", "mtime", "is_dir")):
+    if not all(
+        k in data for k in ("volume", "frn", "parent", "name", "reason", "mtime", "is_dir")
+    ):
         return None
     return data
 

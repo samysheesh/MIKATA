@@ -39,14 +39,20 @@ def _parent_of(path: str) -> str:
 
 
 def _insert(
-    conn: sqlite3.Connection, frn: int, path: str, name: str, is_dir: int, mtime: float = 0.0
+    conn: sqlite3.Connection,
+    frn: int,
+    path: str,
+    name: str,
+    is_dir: int,
+    mtime: float = 0.0,
+    volume: str = "D:\\",
 ) -> None:
     conn.execute(
         """
-        INSERT INTO files(frn, path, parent, name, name_fold, mtime, is_dir)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO files(volume, frn, path, parent, name, name_fold, mtime, is_dir)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (frn, path, _parent_of(path), name, fi.fold(name), mtime, is_dir),
+        (volume, frn, path, _parent_of(path), name, fi.fold(name), mtime, is_dir),
     )
 
 
@@ -68,7 +74,7 @@ def test_build_paths_reconstructs_full_paths() -> None:
 def test_create_event_adds_the_row() -> None:
     conn = _conn()
     _insert(conn, 10, "D:\\Steam\\", "Steam", 1)
-    fi.apply_event(conn, 11, 10, "steamapps", usn.USN_REASON_FILE_CREATE, 5.0, True)
+    fi.apply_event(conn, "D:\\", 11, 10, "steamapps", usn.USN_REASON_FILE_CREATE, 5.0, True)
     row = conn.execute("SELECT path, name_fold, is_dir FROM files WHERE frn=11").fetchone()
     assert row == ("D:\\Steam\\steamapps\\", "steamapps", 1)
 
@@ -77,9 +83,9 @@ def test_renaming_a_folder_moves_its_children() -> None:
     conn = _conn()
     _insert(conn, 10, "D:\\A\\", "A", 1)
     _insert(conn, 11, "D:\\A\\fichier.txt", "fichier.txt", 0)
-    fi.apply_event(conn, 10, usn.ROOT_FRN, "A", usn.USN_REASON_RENAME_OLD_NAME, 0.0, True)
+    fi.apply_event(conn, "D:\\", 10, usn.ROOT_FRN, "A", usn.USN_REASON_RENAME_OLD_NAME, 0.0, True)
     assert conn.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 1  # l'enfant reste
-    fi.apply_event(conn, 10, usn.ROOT_FRN, "B", usn.USN_REASON_RENAME_NEW_NAME, 0.0, True)
+    fi.apply_event(conn, "D:\\", 10, usn.ROOT_FRN, "B", usn.USN_REASON_RENAME_NEW_NAME, 0.0, True)
     rows = [r[0] for r in conn.execute("SELECT path FROM files ORDER BY path").fetchall()]
     assert rows == ["D:\\B\\", "D:\\B\\fichier.txt"]
 
@@ -89,9 +95,23 @@ def test_deleting_a_folder_removes_the_subtree() -> None:
     _insert(conn, 10, "D:\\A\\", "A", 1)
     _insert(conn, 11, "D:\\A\\fichier.txt", "fichier.txt", 0)
     _insert(conn, 12, "D:\\autre.txt", "autre.txt", 0)
-    fi.apply_event(conn, 10, usn.ROOT_FRN, "A", usn.USN_REASON_FILE_DELETE, 0.0, True)
+    fi.apply_event(conn, "D:\\", 10, usn.ROOT_FRN, "A", usn.USN_REASON_FILE_DELETE, 0.0, True)
     rows = [r[0] for r in conn.execute("SELECT path FROM files").fetchall()]
     assert rows == ["D:\\autre.txt"]
+
+
+def test_same_frn_on_two_volumes_coexists() -> None:
+    """Régression : les FRN sont uniques par volume, pas globalement."""
+    conn = _conn()
+    _insert(conn, 5, "C:\\pagefile.sys", "pagefile.sys", 0, volume="C:\\")
+    _insert(conn, 5, "D:\\pagefile.sys", "pagefile.sys", 0, volume="D:\\")
+    assert conn.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 2
+    # Et le journal d'un volume ne touche pas l'autre.
+    fi.apply_event(
+        conn, "C:\\", 5, usn.ROOT_FRN, "pagefile.sys", usn.USN_REASON_FILE_DELETE, 0.0, False
+    )
+    rows = [r[0] for r in conn.execute("SELECT path FROM files").fetchall()]
+    assert rows == ["D:\\pagefile.sys"]
 
 
 def test_search_is_accent_insensitive_and_ranked() -> None:
@@ -138,11 +158,11 @@ def test_dump_and_event_lines_roundtrip() -> None:
     assert parsed is not None and parsed["path"] == "D:\\Steam\\Cyberpunk 2077.exe"
     assert parsed["frn"] == 12 and parsed["is_dir"] == 0
     event_line = events.event_line(
-        usn.UsnEvent(13, 10, "nouveau.txt", usn.USN_REASON_FILE_CREATE, 7.0, 1000, False)
+        "D:\\", usn.UsnEvent(13, 10, "nouveau.txt", usn.USN_REASON_FILE_CREATE, 7.0, 1000, False)
     )
     event = events.parse_event_line(event_line)
     assert event is not None and event["name"] == "nouveau.txt"
-    assert event["reason"] == usn.USN_REASON_FILE_CREATE
+    assert event["reason"] == usn.USN_REASON_FILE_CREATE and event["volume"] == "D:\\"
 
 
 def test_iter_lines_ignores_a_truncated_tail(tmp_path: Path) -> None:
@@ -181,7 +201,7 @@ def test_apply_events_file_consumes_what_was_applied(tmp_path: Path) -> None:
     events_path = tmp_path / "events.log"
     events_path.write_text(
         events.event_line(
-            usn.UsnEvent(20, 10, "créé.txt", usn.USN_REASON_FILE_CREATE, 1.0, 1, False)
+            "D:\\", usn.UsnEvent(20, 10, "créé.txt", usn.USN_REASON_FILE_CREATE, 1.0, 1, False)
         )
         + "\n",
         encoding="utf-8",
