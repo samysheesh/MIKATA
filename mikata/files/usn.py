@@ -242,6 +242,7 @@ def enumerate_files(volume: str) -> Iterator[UsnEntry]:
             produced = 0
             for record, name in _parse_records(output[8:]):  # 8 octets d'en-tête USN
                 produced += 1
+                last_frn = record.file_reference_number
                 if not name or ":" in name:  # flux alternatifs : pas des fichiers visibles
                     continue
                 yield UsnEntry(
@@ -251,9 +252,8 @@ def enumerate_files(volume: str) -> Iterator[UsnEntry]:
                     mtime=_timestamp_to_epoch(record.timestamp),
                     is_dir=bool(record.file_attributes & FILE_ATTRIBUTE_DIRECTORY),
                 )
-                last_frn = record.file_reference_number
-            if produced == 0 or len(output) < _BUFFER_SIZE:
-                break
+            if produced == 0:
+                break  # MFT terminée (le tampon peut être partiel sans être la fin)
             request.start_file_reference_number = last_frn
             input_buffer = _bytes_of(request)
     finally:
@@ -275,10 +275,23 @@ def query_journal(volume: str) -> tuple[int, int]:
 
 def _journal_io(handle: int, ioctl: int, input_bytes: bytes, size: int) -> bytes:
     """DeviceIoControl avec un tampon de sortie aligné sur 64 Ko (exigé par le journal
-    USN : un buffer Python classique n'est pas aligné, d'où l'erreur 87)."""
+    USN : un buffer Python classique n'est pas aligné, d'où l'erreur 87). Les types
+    ctypes sont déclarés : sans `restype`, le pointeur 64 bits de VirtualAlloc serait
+    tronqué à 32 bits (erreur 1784, tampon invalide)."""
     import ctypes
 
     kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    kernel32.VirtualAlloc.restype = ctypes.c_void_p
+    kernel32.VirtualAlloc.argtypes = [
+        ctypes.c_void_p, ctypes.c_size_t, ctypes.c_ulong, ctypes.c_ulong,
+    ]
+    kernel32.VirtualFree.restype = ctypes.c_int
+    kernel32.VirtualFree.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_ulong]
+    kernel32.DeviceIoControl.restype = ctypes.c_int
+    kernel32.DeviceIoControl.argtypes = [
+        ctypes.c_void_p, ctypes.c_ulong, ctypes.c_void_p, ctypes.c_ulong,
+        ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong), ctypes.c_void_p,
+    ]
     buffer = kernel32.VirtualAlloc(None, size, 0x3000, 0x04)  # MEM_COMMIT|RESERVE, RW
     if not buffer:
         raise OSError("VirtualAlloc a échoué")
@@ -287,7 +300,7 @@ def _journal_io(handle: int, ioctl: int, input_bytes: bytes, size: int) -> bytes
         ok = kernel32.DeviceIoControl(
             ctypes.c_void_p(int(handle)), ioctl,
             input_bytes, len(input_bytes),
-            ctypes.c_void_p(buffer), size,
+            buffer, size,
             ctypes.byref(returned), None,
         )
         if not ok:
@@ -332,6 +345,7 @@ def read_journal(
             produced = 0
             for record, name in _parse_records(output[8:]):  # 8 octets d'en-tête USN
                 produced += 1
+                next_usn = record.usn + 1
                 if not name or ":" in name:
                     continue
                 events.append(
@@ -345,8 +359,7 @@ def read_journal(
                         is_dir=bool(record.file_attributes & FILE_ATTRIBUTE_DIRECTORY),
                     )
                 )
-                next_usn = record.usn + 1
-            if produced == 0 or len(output) < _BUFFER_SIZE:
+            if produced == 0:
                 break
             request.start_usn = next_usn
     finally:
