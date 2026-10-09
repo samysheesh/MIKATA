@@ -80,6 +80,11 @@ $xml = @"
 </Task>
 "@
 $xml | Out-File -FilePath $xmlPath -Encoding unicode
+# Arrête l'instance précédente (sinon IgnoreNew garde l'ancien code en mémoire).
+schtasks /End /TN $task 2>$null | Out-Null
+Get-CimInstance Win32_Process -Filter "Name='pythonw.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like "*mikata.files.helper*" } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 schtasks /Create /TN $task /XML $xmlPath /F
 Remove-Item $xmlPath -Force
 

@@ -355,7 +355,7 @@ def read_journal(
 
 
 def diagnose(volume: str) -> str:
-    """Hexdump du premier tampon de FSCTL_ENUM_USN_DATA (diagnostic, volume élevé)."""
+    """Décodage du premier tampon de FSCTL_ENUM_USN_DATA (diagnostic, volume élevé)."""
     import win32file
 
     handle = _open_volume(volume)
@@ -367,8 +367,32 @@ def diagnose(volume: str) -> str:
         output = win32file.DeviceIoControl(
             handle, FSCTL_ENUM_USN_DATA, _bytes_of(request), _BUFFER_SIZE
         )
-        head = output[:64]
-        return " ".join(f"{b:02x}" for b in head) + f" ({len(output)} octets)"
+        parts = [f"{len(output)} octets"]
+        if len(output) > 72:
+            record = UsnRecordV2.from_buffer_copy(output, 8)
+            raw_name = output[
+                8 + record.file_name_offset : 8 + record.file_name_offset
+                + record.file_name_length
+            ]
+            try:
+                name = raw_name.decode("utf-16-le", errors="replace")
+            except ValueError:
+                name = "<decode impossible>"
+            parts.append(
+                f"record@8 len={record.record_length} "
+                f"frn={record.file_reference_number:#x} "
+                f"parent={record.parent_file_reference_number:#x} "
+                f"name_len={record.file_name_length} name_off={record.file_name_offset} "
+                f"name={name!r}"
+            )
+        parsed = sum(1 for _ in _parse_records(output[8:]))
+        names: list[str] = []
+        for _, name in _parse_records(output[8:]):
+            names.append(repr(name))
+            if len(names) >= 5:
+                break
+        parts.append(f"parsed={parsed} noms={', '.join(names)}")
+        return " | ".join(parts)
     except win32file.error as exc:
         return f"erreur {exc.winerror} : {exc}"
     finally:
