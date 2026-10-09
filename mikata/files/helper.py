@@ -63,15 +63,28 @@ def dump_all(share_dir: Path) -> int:
     return total
 
 
+_DUMP_REUSE_S = 600.0  # un dump de moins de 10 min est réutilisé tel quel
+
+
 def watch(share_dir: Path) -> None:
     """Dump puis rejeu du journal, pour toujours (arrêt par fin de processus)."""
-    started = time.monotonic()
+    dump = share_dir / DUMP
     try:
-        total = dump_all(share_dir)
-        logger.info("Dump initial : {} entrées en {:.1f} s.", total, time.monotonic() - started)
-    except Exception as exc:
-        logger.error("Dump initial impossible : {}", exc)
-        raise
+        age = time.time() - dump.stat().st_mtime
+    except OSError:
+        age = _DUMP_REUSE_S + 1
+    if age <= _DUMP_REUSE_S:
+        logger.info("Dump récent ({} s) : reprise directe du journal.", int(age))
+    else:
+        started = time.monotonic()
+        try:
+            total = dump_all(share_dir)
+            logger.info(
+                "Dump initial : {} entrées en {:.1f} s.", total, time.monotonic() - started
+            )
+        except Exception as exc:
+            logger.error("Dump initial impossible : {}", exc)
+            raise
     volumes = usn.list_ntfs_volumes()
     journal_ids: dict[str, tuple[int, int]] = {}
     for volume in volumes:
