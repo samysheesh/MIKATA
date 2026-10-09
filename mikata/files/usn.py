@@ -254,7 +254,9 @@ def enumerate_files(volume: str) -> Iterator[UsnEntry]:
                 )
             if produced == 0:
                 break  # MFT terminée (le tampon peut être partiel sans être la fin)
-            request.start_file_reference_number = last_frn
+            # Le driver reprend À PARTIR de StartFileReferenceNumber (inclus) : sans
+            # + 1, il renverrait le même record en boucle.
+            request.start_file_reference_number = last_frn + 1
             input_buffer = _bytes_of(request)
     finally:
         win32file.CloseHandle(handle)

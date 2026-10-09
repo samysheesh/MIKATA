@@ -33,13 +33,6 @@ DUMP = "build.jsonl"
 EVENTS = "events.log"
 LOG = "helper.log"
 _POLL_S = 3.0
-_APPEND_FLUSH = 64  # lignes par flush ; l'append reste atomique (loin sous 64 Ko)
-
-
-def _atomic_lines(path: Path, lines: list[str]) -> None:
-    part = path.with_suffix(path.suffix + ".part")
-    part.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
-    part.replace(path)
 
 
 def _open_append(path: Path) -> TextIO:
@@ -47,21 +40,27 @@ def _open_append(path: Path) -> TextIO:
 
 
 def dump_all(share_dir: Path) -> int:
-    """Dump complet des volumes NTFS dans `share_dir` ; renvoie le nombre de lignes."""
-    lines: list[str] = []
-    for volume in usn.list_ntfs_volumes():
-        paths = 0
-        for path, entry in usn.build_paths(usn.enumerate_files(volume), volume):
-            paths += 1
-            lines.append(events.dump_line(path, entry))
-            if len(lines) >= 200_000:
-                logger.info("Dump en cours : {} lignes.", len(lines))
-        if paths == 0:
-            logger.info("Volume {} : aucun chemin produit ({})", volume, usn.diagnose(volume))
-        else:
-            logger.info("Volume {} : {} entrées.", volume, paths)
-    _atomic_lines(share_dir / DUMP, lines)
-    return len(lines)
+    """Dump complet des volumes NTFS dans `share_dir` ; renvoie le nombre de lignes.
+
+    Écrit en flux (jamais tout en RAM) et journalise la progression tous les 500 000.
+    """
+    part = share_dir / (DUMP + ".part")
+    total = 0
+    with part.open("w", encoding="utf-8") as handle:
+        for volume in usn.list_ntfs_volumes():
+            paths = 0
+            for path, entry in usn.build_paths(usn.enumerate_files(volume), volume):
+                handle.write(events.dump_line(path, entry) + "\n")
+                paths += 1
+                if paths % 500_000 == 0:
+                    logger.info("Volume {} : {} entrées...", volume, paths)
+            if paths == 0:
+                logger.info("Volume {} : aucun chemin produit ({})", volume, usn.diagnose(volume))
+            else:
+                logger.info("Volume {} : {} entrées.", volume, paths)
+            total += paths
+    part.replace(share_dir / DUMP)
+    return total
 
 
 def watch(share_dir: Path) -> None:
