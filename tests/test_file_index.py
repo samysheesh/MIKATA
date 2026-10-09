@@ -227,3 +227,26 @@ def test_build_from_helper_without_dump_does_not_crash(tmp_path: Path) -> None:
     conn = _conn()
     service._build_from_helper(conn)
     assert not service.ready()
+
+
+def test_existing_base_is_ready_without_reimport(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Régression : au redémarrage, une base déjà construite doit être prête tout de
+    suite — le flag restait faux et l'index répondait « se construit » pour toujours."""
+    from tool_fakes import make_config
+
+    config = make_config(tmp_path)
+    db = config.resolve(config.files_index.db)
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db)
+    conn.executescript(fi._SCHEMA)
+    _insert(conn, 5, "D:\\pagefile.sys", "pagefile.sys", 0)
+    conn.execute("INSERT INTO meta(key, value) VALUES ('built_at', '2026-10-09 12:00:00')")
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr("mikata.files.index.usn.can_read_volumes", lambda: False)
+    service = fi.FileIndex(config)
+    service._ensure_built(sqlite3.connect(db))
+    assert service.ready()
+    assert service.stats()["entries"] == 1
