@@ -42,7 +42,9 @@ CREATE TABLE IF NOT EXISTS files(
   is_dir INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_files_parent ON files(parent);
-CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(name_fold, tokenize='trigram');
+CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
+  name_fold, content='files', content_rowid='frn', tokenize='trigram'
+);
 CREATE TRIGGER IF NOT EXISTS files_ai AFTER INSERT ON files BEGIN
   INSERT INTO files_fts(rowid, name_fold) VALUES (new.rowid, new.name_fold);
 END;
@@ -199,6 +201,7 @@ def list_rows(conn: sqlite3.Connection, folder: str, limit: int) -> list[dict[st
 def _insert_rows(
     conn: sqlite3.Connection,
     rows: list[tuple[int, str, str, str, str, float | None, int]],
+    commit: bool = True,
 ) -> None:
     conn.executemany(
         """
@@ -207,11 +210,19 @@ def _insert_rows(
         """,
         rows,
     )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 def import_dump(conn: sqlite3.Connection, dump: Path) -> int:
-    """Remplace l'index par le contenu du dump du helper (fonction pure, testable)."""
+    """Remplace l'index par le contenu du dump du helper (fonction pure, testable).
+
+    L'indexation FTS incrémentale est coupée pendant l'import (elle trigrammerait
+    1,6 M de noms un par un) : la table FTS est reconstruite d'un bloc à la fin.
+    """
+    conn.execute("DROP TRIGGER IF EXISTS files_ai")
+    conn.execute("DROP TRIGGER IF EXISTS files_ad")
+    conn.execute("DROP TRIGGER IF EXISTS files_au")
     conn.execute("DELETE FROM files")
     conn.execute("DELETE FROM renames")
     conn.commit()
@@ -236,10 +247,12 @@ def import_dump(conn: sqlite3.Connection, dump: Path) -> int:
         )
         total += 1
         if len(batch) >= _INSERT_BATCH:
-            _insert_rows(conn, batch)
+            _insert_rows(conn, batch, commit=False)
             batch = []
-    _insert_rows(conn, batch)
+    _insert_rows(conn, batch, commit=False)
+    conn.execute("INSERT INTO files_fts(files_fts) VALUES ('rebuild')")
     conn.commit()
+    conn.executescript(_SCHEMA)  # recrée les triggers (IF NOT EXISTS)
     return total
 
 
@@ -378,6 +391,15 @@ class FileIndex:
             raise RuntimeError(
                 "FTS5 trigram indisponible dans ce Python : index désactivé"
             ) from exc
+        # Migration phase 12d : l'ancienne table FTS (sans content=) est recréée en
+        # « contenu externe » pour des reconstructions d'un bloc, plus des insertions
+        # incrémentales coûteuses.
+        row = conn.execute("SELECT sql FROM sqlite_master WHERE name='files_fts'").fetchone()
+        if row is not None and "content=" not in row[0]:
+            conn.execute("DROP TABLE files_fts")  # supprime aussi les triggers liés
+            conn.executescript(_SCHEMA)
+            if conn.execute("SELECT 1 FROM meta WHERE key='built_at'").fetchone():
+                conn.execute("INSERT INTO files_fts(files_fts) VALUES ('rebuild')")
         built = conn.execute("SELECT value FROM meta WHERE key='built_at'").fetchone()
         if built is not None:
             return
@@ -394,6 +416,9 @@ class FileIndex:
         self._ready = False
         volumes = usn.list_ntfs_volumes()
         self._volumes = volumes
+        conn.execute("DROP TRIGGER IF EXISTS files_ai")
+        conn.execute("DROP TRIGGER IF EXISTS files_ad")
+        conn.execute("DROP TRIGGER IF EXISTS files_au")
         conn.execute("DELETE FROM files")
         conn.execute("DELETE FROM renames")
         conn.execute("DELETE FROM meta")
@@ -419,7 +444,9 @@ class FileIndex:
                 return
         built_at = time.strftime("%Y-%m-%d %H:%M:%S")
         conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('built_at', ?)", (built_at,))
+        conn.execute("INSERT INTO files_fts(files_fts) VALUES ('rebuild')")
         conn.commit()
+        conn.executescript(_SCHEMA)  # recrée les triggers (IF NOT EXISTS)
         self._count = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
         self._built_at = built_at
         self._ready = True
