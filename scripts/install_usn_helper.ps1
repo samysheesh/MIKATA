@@ -60,9 +60,9 @@ $xml = @"
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>"$python"</Command>
+      <Command>$python</Command>
       <Arguments>-m mikata.files.helper --data "$data"</Arguments>
-      <WorkingDirectory>"$Project"</WorkingDirectory>
+      <WorkingDirectory>$Project</WorkingDirectory>
     </Exec>
   </Actions>
 </Task>
