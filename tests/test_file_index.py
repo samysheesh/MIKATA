@@ -196,3 +196,14 @@ def test_apply_events_file_consumes_what_was_applied(tmp_path: Path) -> None:
     events_path.write_text('{"frn": 21', encoding="utf-8")
     assert fi.apply_events_file(conn, events_path) == 0
     assert events_path.stat().st_size > 0
+
+
+def test_build_from_helper_without_dump_does_not_crash(tmp_path: Path) -> None:
+    """Régression : l'index référençait des constantes absentes du module des événements
+    (AttributeError silencieuse dans le thread) — sans dump, il doit attendre proprement."""
+    from tool_fakes import make_config
+
+    service = fi.FileIndex(make_config(tmp_path))
+    conn = _conn()
+    service._build_from_helper(conn)
+    assert not service.ready()

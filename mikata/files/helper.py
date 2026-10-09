@@ -29,8 +29,6 @@ from loguru import logger
 
 from mikata.files import events, usn
 
-DUMP = "build.jsonl"
-EVENTS = "events.log"
 LOG = "helper.log"
 _POLL_S = 3.0
 
@@ -44,7 +42,7 @@ def dump_all(share_dir: Path) -> int:
 
     Écrit en flux (jamais tout en RAM) et journalise la progression tous les 500 000.
     """
-    part = share_dir / (DUMP + ".part")
+    part = share_dir / (events.DUMP + ".part")
     total = 0
     with part.open("w", encoding="utf-8") as handle:
         for volume in usn.list_ntfs_volumes():
@@ -59,7 +57,7 @@ def dump_all(share_dir: Path) -> int:
             else:
                 logger.info("Volume {} : {} entrées.", volume, paths)
             total += paths
-    part.replace(share_dir / DUMP)
+    part.replace(share_dir / events.DUMP)
     return total
 
 
@@ -68,7 +66,7 @@ _DUMP_REUSE_S = 600.0  # un dump de moins de 10 min est réutilisé tel quel
 
 def watch(share_dir: Path) -> None:
     """Dump puis rejeu du journal, pour toujours (arrêt par fin de processus)."""
-    dump = share_dir / DUMP
+    dump = share_dir / events.DUMP
     try:
         age = time.time() - dump.stat().st_mtime
     except OSError:
@@ -117,12 +115,12 @@ def watch(share_dir: Path) -> None:
                     pending.append(events.event_line(event))
         if pending:
             try:
-                with _open_append(share_dir / EVENTS) as handle:
+                with _open_append(share_dir / events.EVENTS) as handle:
                     for line in pending:
                         handle.write(line + "\n")
                     handle.flush()
             except OSError as exc:
-                logger.error("Écriture de {} impossible : {}", EVENTS, exc)
+                logger.error("Écriture de {} impossible : {}", events.EVENTS, exc)
             else:
                 pending = []
         time.sleep(_POLL_S)

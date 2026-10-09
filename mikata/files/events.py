@@ -22,6 +22,9 @@ from typing import Any
 
 from mikata.files import usn
 
+DUMP = "build.jsonl"  # dump complet (une ligne par chemin), régénéré par le helper
+EVENTS = "events.log"  # deltas du journal USN, en append, consommés par MIKATA
+
 
 def dump_line(path: str, entry: usn.UsnEntry) -> str:
     return json.dumps(
