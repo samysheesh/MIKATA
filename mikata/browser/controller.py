@@ -166,6 +166,9 @@ class BrowserController:
             profile = self._config.resolve(cfg.profile_dir)
             profile.mkdir(parents=True, exist_ok=True)
             argv.append(f"--user-data-dir={profile}")
+            # Les clics de MIKATA passent par du JavaScript (pas un « geste utilisateur ») :
+            # sans ce drapeau, Chromium mettrait les vidéos en pause sur un profil neuf.
+            argv.append("--autoplay-policy=no-user-gesture-required")
             if sys.platform == "win32":
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -181,6 +184,44 @@ class BrowserController:
             "profil de travail dédié (fenêtre minimisée)" if cfg.own_profile else "profil normal"
         )
         logger.info("Brave lancé avec le port de contrôle {} ({}).", cfg.cdp_port, label)
+
+    def _minimize_work_window(self) -> None:
+        """Re-minimise la fenêtre du profil de travail (best effort, Windows).
+
+        Le drapeau SW_MINIMIZE n'agit qu'au lancement : si la fenêtre a été restaurée à
+        la main (connexion à un compte...), on la re-minimise à chaque attache. La fenêtre
+        est repérée par la ligne de commande de son processus (`--user-data-dir`) : celle
+        du Brave de l'utilisateur n'est jamais touchée.
+        """
+        if sys.platform != "win32":
+            return
+        import ctypes
+
+        import psutil
+
+        profile = str(self._config.resolve(self._config.browser.profile_dir))
+        user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+        hwnds: list[int] = []
+
+        @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+        def visit(hwnd: int, _: Any) -> bool:
+            hwnds.append(hwnd)
+            return True
+
+        try:
+            user32.EnumWindows(visit, 0)
+            for hwnd in hwnds:
+                if not user32.IsWindowVisible(hwnd):
+                    continue
+                pid = ctypes.c_ulong()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                try:
+                    if profile in psutil.Process(pid.value).cmdline():
+                        user32.ShowWindow(hwnd, 6)  # SW_MINIMIZE
+                except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+                    continue
+        except OSError:
+            return  # l'état de la fenêtre est un plus, jamais une erreur
 
     async def _list_targets(self) -> list[Target]:
         try:
@@ -241,6 +282,8 @@ class BrowserController:
                 await client.close()
                 continue
             self._client = client
+            if cfg.own_profile:
+                self._minimize_work_window()
             return client
         raise ToolError(f"impossible de piloter le navigateur ({last_error})")
 

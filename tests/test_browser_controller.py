@@ -211,6 +211,11 @@ def test_own_profile_launches_a_minimized_dedicated_profile(
     def fake_popen(argv: list[str], **kwargs: Any) -> None:
         launches.append({"argv": argv, **kwargs})
 
+    minimized = {"n": 0}
+    monkeypatch.setattr(
+        "mikata.browser.controller.BrowserController._minimize_work_window",
+        lambda self: minimized.__setitem__("n", minimized["n"] + 1),
+    )
     monkeypatch.setattr("mikata.browser.controller.list_targets", async_fake_targets)
     monkeypatch.setattr("mikata.browser.controller.subprocess.Popen", fake_popen)
 
@@ -225,8 +230,11 @@ def test_own_profile_launches_a_minimized_dedicated_profile(
     asyncio.run(run())
     assert len(launches) == 1
     assert any(
-        arg.startswith("--user-data-dir=") and "brave_profile" in arg for arg in launches[0]["argv"]
+        arg.startswith("--user-data-dir=") and "brave_profile" in arg
+        for arg in launches[0]["argv"]
     )
+    assert "--autoplay-policy=no-user-gesture-required" in launches[0]["argv"]
+    assert minimized["n"] == 1  # la fenêtre de travail est re-minimisée à l'attache
     if _sys.platform == "win32":
         startupinfo = launches[0]["startupinfo"]
         assert startupinfo is not None
@@ -249,6 +257,10 @@ def test_own_profile_attaches_without_relaunching(monkeypatch: Any, tmp_path: Pa
     def fake_popen(argv: list[str], **kwargs: Any) -> None:
         launched["n"] += 1
 
+    monkeypatch.setattr(
+        "mikata.browser.controller.BrowserController._minimize_work_window",
+        lambda self: None,
+    )
     monkeypatch.setattr("mikata.browser.controller.list_targets", async_fake_targets)
     monkeypatch.setattr("mikata.browser.controller.subprocess.Popen", fake_popen)
 
