@@ -63,7 +63,8 @@ def config_file(tmp_path: Path) -> Path:
 
 
 class FakeIcon:
-    """Substitut de pystray.Icon : run() bloque jusqu'à stop(), comme sous Windows."""
+    """Substitut de pystray.Icon : run() bloque jusqu'à stop(), comme sous Windows ;
+    run_detached() rend la main tout de suite (backend Cocoa, thread principal)."""
 
     instances: ClassVar[list[FakeIcon]] = []
 
@@ -73,6 +74,7 @@ class FakeIcon:
         self.title = title
         self.menu = menu
         self.running = threading.Event()
+        self.detached = False
         self._stopped = threading.Event()
         self.stop_calls = 0
         FakeIcon.instances.append(self)
@@ -80,6 +82,10 @@ class FakeIcon:
     def run(self) -> None:
         self.running.set()
         self._stopped.wait(timeout=10)
+
+    def run_detached(self) -> None:
+        self.detached = True
+        self.running.set()  # prêt tout de suite, sans bloquer (boucle Cocoa pompée à côté)
 
     def stop(self) -> None:
         self.stop_calls += 1

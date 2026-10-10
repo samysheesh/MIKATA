@@ -505,6 +505,13 @@ class App:
         self._io_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mikata-io")
         try:
             if self._tray is not None:
+                # Mascotte masquée : l'icône de la barre de menus devient le seul moyen de
+                # la faire revenir ; l'icône suit data/ui_state.json (écrit par l'interface).
+                watch = getattr(self._tray, "watch_mascot_state", None)
+                if callable(watch):
+                    from mikata.ui.prefs import STATE_FILE
+
+                    watch(self.config.resolve(STATE_FILE))
                 self._tray.start(
                     on_quit=lambda: self.request_shutdown("menu Quitter"),
                     on_action=self._on_tray_action if self._ui is not None else None,
