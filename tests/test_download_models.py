@@ -38,7 +38,10 @@ def test_downloads_missing_files_and_whisper(
     monkeypatch.setattr(dm, "download", fake_download)
     monkeypatch.setattr(dm, "download_whisper", lambda m, d: whisper.append((m, d)) or d)
     assert dm.main(["--dir", str(tmp_path), "--config", str(config_file)]) == 0
-    assert sorted(fetched) == sorted(set(dm.MODELS) - {"hey_jarvis.onnx"})
+    expected = set(dm.MODELS) - {"hey_jarvis.onnx"}
+    if dm.sys.platform == "linux":  # assets Parakeet sherpa, Linux uniquement
+        expected |= set(dm.SHERPA_FILES)
+    assert sorted(fetched) == sorted(expected)
     assert (tmp_path / "hey_jarvis.onnx").read_bytes() == b"deja la"  # jamais écrasé
     assert whisper == [("large-v3-turbo", tmp_path / "whisper")]
 
