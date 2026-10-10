@@ -77,6 +77,14 @@ def test_browser_type_writes_into_the_field(tmp_path: Path) -> None:
     assert ("type", ("Recherche", "black clover")) in browser.log
 
 
+def test_browser_close_stops_the_work_browser(tmp_path: Path) -> None:
+    """Phase 12f : browser_close ferme le navigateur de travail (lecture comprise)."""
+    browser = FakeBrowser()
+    result = _execute(make_ctx(tmp_path, browser=browser), "browser_close", {})
+    assert result.ok and "Navigateur de travail fermé" in result.content
+    assert ("quit", ()) in browser.log
+
+
 def test_browser_type_refuses_a_deletion_command(tmp_path: Path, caplog_loguru) -> None:
     browser = FakeBrowser()
     result = _execute(

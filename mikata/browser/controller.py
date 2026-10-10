@@ -436,6 +436,33 @@ class BrowserController:
             raise await self._lost(exc) from exc
         return "Page précédente."
 
+    async def quit(self) -> str:
+        """Ferme complètement le navigateur de travail : fenêtre et lecture comprises.
+
+        Seuls les processus du profil dédié sont arrêtés (ligne de commande
+        `--user-data-dir`) — le Brave de l'utilisateur n'est jamais touché.
+        """
+        import psutil
+
+        profile = str(self._config.resolve(self._config.browser.profile_dir)).casefold()
+        killed = 0
+        try:
+            for proc in psutil.process_iter(["pid"]):
+                try:
+                    if any(profile in arg.casefold() for arg in proc.cmdline()):
+                        proc.kill()
+                        killed += 1
+                except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+                    continue
+        except OSError:
+            pass
+        if self._client is not None:
+            await self._client.close()
+            self._client = None
+        self._work_pids = None
+        logger.info("Navigateur de travail fermé ({} processus).", killed)
+        return "Navigateur de travail fermé."
+
 
 # Réutilisé par les tests : le JavaScript de lecture est fixe.
 __all__ = ["BrowserController", "Target"]

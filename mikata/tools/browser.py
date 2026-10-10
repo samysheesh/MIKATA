@@ -137,3 +137,21 @@ class BrowserTabs(BaseTool[BrowserTabsParams]):
 
     async def run(self, args: BrowserTabsParams) -> str:
         return await _browser(self.ctx).tabs()
+
+
+class BrowserCloseParams(BaseModel):
+    """Fermeture du navigateur de travail."""
+
+
+@register_tool
+class BrowserClose(BaseTool[BrowserCloseParams]):
+    name = "browser_close"
+    description = (
+        "Ferme complètement le navigateur de travail de MIKATA : sa fenêtre et sa lecture "
+        "en cours s'arrêtent (jamais le navigateur de l'utilisateur)."
+    )
+    params = BrowserCloseParams
+    terminal = True
+
+    async def run(self, args: BrowserCloseParams) -> str:
+        return await _browser(self.ctx).quit()
