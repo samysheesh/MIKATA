@@ -340,7 +340,7 @@ def build_app(
     from mikata.stt.whisper_local import WhisperSTT
     from mikata.ui.hotkeys import HotkeyListener
     from mikata.vad.silero import SileroVAD
-    from mikata.wake.oww import OpenWakeWordDetector
+    from mikata.wake.oww import OpenWakeWordDetector, resolve_wake_files
 
     lower_priority()
     try:
@@ -364,8 +364,9 @@ def build_app(
         )
     player = AudioPlayer(headset)
     verifier = config.resolve(config.wake.verifier) if config.wake.verifier else None
+    wake_model, verifier = resolve_wake_files(config.resolve(config.wake.model), verifier)
     detector = OpenWakeWordDetector(
-        config.resolve(config.wake.model),
+        wake_model,
         verifier,
         threshold=config.wake.threshold,
         verifier_threshold=config.wake.verifier_threshold,

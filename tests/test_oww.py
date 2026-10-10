@@ -11,7 +11,12 @@ import pytest
 
 from mikata.config import PROJECT_ROOT, ConfigError
 from mikata.wake.base import WakeWordDetector
-from mikata.wake.oww import FEATURE_MODELS, OpenWakeWordDetector, WakeModelMissingError
+from mikata.wake.oww import (
+    FEATURE_MODELS,
+    OpenWakeWordDetector,
+    WakeModelMissingError,
+    resolve_wake_files,
+)
 
 
 class FakePreprocessor:
@@ -74,6 +79,35 @@ def test_missing_models_are_listed(tmp_path: Path) -> None:
     assert "melspectrogram.onnx" in message
     assert "download_models.py" in message
     assert isinstance(info.value, ConfigError)
+
+
+def test_resolve_wake_files_falls_back_to_dev_model(models_dir: Path) -> None:
+    """Artefacts entraînés (phase 7) facultatifs : mikata.onnx absent → hey_jarvis.onnx."""
+    model, verifier = resolve_wake_files(models_dir / "mikata.onnx", None)
+    assert model == models_dir / "hey_jarvis.onnx"
+    assert verifier is None
+
+
+def test_resolve_wake_files_drops_missing_verifier(models_dir: Path) -> None:
+    model, verifier = resolve_wake_files(models_dir / "hey_jarvis.onnx", models_dir / "absent.pkl")
+    assert model == models_dir / "hey_jarvis.onnx"
+    assert verifier is None  # vérificateur absent ignoré, pas d'erreur
+
+
+def test_resolve_wake_files_keeps_present_artifacts(models_dir: Path) -> None:
+    (models_dir / "mikata.onnx").write_bytes(b"onnx")
+    verifier = _verifier(models_dir, 0.9)
+    model, resolved = resolve_wake_files(models_dir / "mikata.onnx", verifier)
+    assert model == models_dir / "mikata.onnx"
+    assert resolved == verifier
+
+
+def test_resolve_wake_files_leaves_error_when_nothing_present(tmp_path: Path) -> None:
+    """Aucun modèle du tout : le résolveur ne masque pas l'erreur, le détecteur la lève."""
+    model, verifier = resolve_wake_files(tmp_path / "mikata.onnx", None)
+    assert model == tmp_path / "mikata.onnx" and verifier is None
+    with pytest.raises(WakeModelMissingError):
+        OpenWakeWordDetector(model)
 
 
 def test_loads_onnx_with_local_feature_models(models_dir: Path, fake_oww: None) -> None:

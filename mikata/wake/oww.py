@@ -36,6 +36,7 @@ from mikata.audio.base import Frame
 from mikata.config import ConfigError
 
 FEATURE_MODELS = ("melspectrogram.onnx", "embedding_model.onnx")
+DEV_MODEL_NAME = "hey_jarvis.onnx"  # modèle de développement livré par download_models.py
 REJECTION_LOG_S = 2.0  # un refus par période réfractaire dans le log, pas un par trame
 
 
@@ -48,6 +49,32 @@ def required_model_files(model: Path, verifier: Path | None = None) -> list[Path
     if verifier is not None:
         files.append(verifier)
     return files
+
+
+def resolve_wake_files(model: Path, verifier: Path | None) -> tuple[Path, Path | None]:
+    """Rend les artefacts entraînés facultatifs : si `model` (ex. `mikata.onnx`, produit sur
+    Colab phase 7) est absent, on retombe sur le modèle de développement livré
+    (`hey_jarvis.onnx`, même dossier) avec un avertissement. Un `verifier` absent est ignoré.
+    Si aucun modèle n'est présent, on rend le chemin d'origine : `OpenWakeWordDetector` lève
+    alors son erreur canonique (« lance download_models.py »)."""
+    if not model.is_file():
+        dev_model = model.parent / DEV_MODEL_NAME
+        if dev_model.is_file() and dev_model != model:
+            logger.warning(
+                "Mot d'activation entraîné introuvable ({}) : repli sur le modèle de "
+                "développement « {} » (il réagit à « hey jarvis », pas « MIKATA » ; voir "
+                "README, phase 7).",
+                model.name,
+                DEV_MODEL_NAME,
+            )
+            model = dev_model
+    if verifier is not None and not verifier.is_file():
+        logger.warning(
+            "Vérificateur de voix introuvable ({}) : ignoré (aucun filtre sur ta voix).",
+            verifier.name,
+        )
+        verifier = None
+    return model, verifier
 
 
 def load_verifier(path: Path) -> Any:
