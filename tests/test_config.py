@@ -94,6 +94,7 @@ def test_defaults_match_section_10(config_file: Path) -> None:
     # ajouts phase 12f
     assert config.browser.own_profile is True
     assert config.browser.profile_dir == Path("data/brave_profile")
+    assert config.browser.window_hidden is True
     # ajouts phase 12c
     assert config.skills.enabled is True and config.skills.max_skills == 30
     assert config.skills.confidence == 70 and config.skills.auto_learn is True

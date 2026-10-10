@@ -162,8 +162,8 @@ class BrowserController:
         argv = [exe, f"--remote-debugging-port={cfg.cdp_port}", "--remote-allow-origins=*"]
         startupinfo = None
         if cfg.own_profile:
-            # Phase 12f : profil de travail dédié, fenêtre minimisée en arrière-plan —
-            # le navigateur de l'utilisateur n'est jamais touché. Si ce profil tourne
+            # Phase 12f : profil de travail dédié, fenêtre cachée/minimisée en arrière-plan
+            # — le navigateur de l'utilisateur n'est jamais touché. Si ce profil tourne
             # déjà, le lancement est un no-op (verrou singleton de Chromium) et le port
             # répond déjà.
             profile = self._config.resolve(cfg.profile_dir)
@@ -172,10 +172,22 @@ class BrowserController:
             # Les clics de MIKATA passent par du JavaScript (pas un « geste utilisateur ») :
             # sans ce drapeau, Chromium mettrait les vidéos en pause sur un profil neuf.
             argv.append("--autoplay-policy=no-user-gesture-required")
+            # Une fenêtre cachée/occluse est mise en pause par Chromium (chargement
+            # arrêté, vidéo jamais lancée) : on désactive cet étranglement.
+            argv.extend(
+                [
+                    "--disable-background-timer-throttling",
+                    "--disable-backgrounding-occluded-windows",
+                    "--disable-renderer-backgrounding",
+                    "--disable-features=CalculateNativeWinOcclusion",
+                ]
+            )
             if sys.platform == "win32":
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                startupinfo.wShowWindow = 6  # SW_MINIMIZE
+                # Cachée dès la création : elle n'apparaît jamais ; SW_MINIMIZE quand
+                # l'utilisateur veut la voir (connexion à un compte, browser.window_hidden).
+                startupinfo.wShowWindow = 0 if cfg.window_hidden else 6
         subprocess.Popen(
             argv,
             stdout=subprocess.DEVNULL,
@@ -214,12 +226,13 @@ class BrowserController:
         return pids
 
     def _minimize_work_window(self) -> None:
-        """Re-minimise la fenêtre du profil de travail (best effort, Windows).
+        """Remet la fenêtre du profil de travail en arrière-plan (best effort, Windows).
 
-        Le drapeau SW_MINIMIZE n'agit qu'au lancement : si la fenêtre a été restaurée à
-        la main (connexion à un compte...), on la re-minimise à chaque commande navigateur.
-        Seules les fenêtres des processus du profil de travail sont touchées : celles du
-        Brave de l'utilisateur ne le sont jamais.
+        Le drapeau de lancement n'agit qu'à la création : si la fenêtre a été montrée à la
+        main (connexion à un compte...), on la re-cache (SW_HIDE) ou la re-minimise
+        (selon `browser.window_hidden`) à chaque commande navigateur. Seules les fenêtres
+        des processus du profil de travail sont touchées : celles du Brave de
+        l'utilisateur ne le sont jamais.
         """
         if sys.platform != "win32":
             return
@@ -228,6 +241,7 @@ class BrowserController:
         pids = self._work_window_pids()
         if not pids:
             return
+        show = 0 if self._config.browser.window_hidden else 6  # SW_HIDE / SW_MINIMIZE
         user32 = ctypes.windll.user32  # type: ignore[attr-defined]
         hwnds: list[int] = []
 
@@ -244,7 +258,7 @@ class BrowserController:
                 pid = ctypes.c_ulong()
                 user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
                 if pid.value in pids:
-                    user32.ShowWindow(hwnd, 6)  # SW_MINIMIZE
+                    user32.ShowWindow(hwnd, show)
         except OSError:
             return  # l'état de la fenêtre est un plus, jamais une erreur
 

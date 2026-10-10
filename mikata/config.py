@@ -190,6 +190,7 @@ class BrowserConfig(_Section):
     click_timeout_s: float = Field(default=5, gt=0, le=30)  # délai d'une commande DevTools
     own_profile: bool = True  # phase 12f : profil de travail dédié, en arrière-plan
     profile_dir: Path = Path("data/brave_profile")  # dossier du profil dédié
+    window_hidden: bool = True  # fenêtre créée cachée (false : minimisée, pour se connecter)
 
 
 class SkillsConfig(_Section):

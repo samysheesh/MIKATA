@@ -234,12 +234,13 @@ def test_own_profile_launches_a_minimized_dedicated_profile(
         for arg in launches[0]["argv"]
     )
     assert "--autoplay-policy=no-user-gesture-required" in launches[0]["argv"]
-    assert minimized["n"] >= 2  # re-minimisée à chaque commande (entrée + après attache)
+    assert "--disable-backgrounding-occluded-windows" in launches[0]["argv"]
+    assert minimized["n"] >= 2  # re-cachée à chaque commande (entrée + après attache)
     if _sys.platform == "win32":
         startupinfo = launches[0]["startupinfo"]
         assert startupinfo is not None
         assert startupinfo.dwFlags & controller_module.subprocess.STARTF_USESHOWWINDOW
-        assert startupinfo.wShowWindow == 6  # SW_MINIMIZE
+        assert startupinfo.wShowWindow == 0  # SW_HIDE : jamais visible
 
 
 def test_own_profile_attaches_without_relaunching(monkeypatch: Any, tmp_path: Path) -> None:
