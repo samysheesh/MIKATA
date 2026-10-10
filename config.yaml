@@ -2,8 +2,8 @@
 # Les chemins relatifs sont résolus depuis le dossier de ce fichier.
 # Les secrets (LLM_API_KEY, SEARCH_API_KEY) vont dans .env, jamais ici.
 audio:
-  input_device: "NT-USB"           # sous-chaîne du nom, voir scripts/list_audio_devices.py
-  output_device: "default"         # "default" = sortie par défaut de Windows
+  input_device: "default"          # sous-chaîne du nom, ou "default" = micro par défaut du système
+  output_device: "default"         # "default" = sortie par défaut du système
   pre_roll_s: 2.0
   input_channel: null              # 1, 2... = canal du micro ; null = moyenne des canaux
   earcon_volume: 0.5               # volume des sons d'interface (0 à 1)

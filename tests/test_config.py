@@ -32,7 +32,7 @@ def test_repo_config_yaml_is_valid() -> None:
 
 def test_defaults_match_section_10(config_file: Path) -> None:
     config = load_config(config_file)
-    assert config.audio.input_device == "NT-USB"
+    assert config.audio.input_device == "default"
     assert config.audio.output_device == "default"
     assert config.wake.model == Path("models/hey_jarvis.onnx")
     assert config.wake.verifier is None

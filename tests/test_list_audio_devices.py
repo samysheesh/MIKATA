@@ -67,7 +67,7 @@ def test_main_with_repo_config(
     assert lad.main(["--config", str(config_file)]) == 0
     out = capsys.readouterr().out
     assert "MME" not in out  # WASAPI seulement par défaut
-    assert "[OK] audio.input_device = 'NT-USB'" in out
+    assert "[OK] audio.input_device = 'default'" in out
     assert "[OK] audio.output_device = 'default' -> #2 Casque (HyperX Cloud)" in out
 
     assert lad.main(["--config", str(config_file), "--all"]) == 0

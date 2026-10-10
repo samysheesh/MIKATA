@@ -106,7 +106,8 @@ Le tableau liste les périphériques WASAPI (`--all` pour toutes les API). Mets 
 `config.yaml` une sous-chaîne de ton micro (`audio.input_device`) et de ton casque
 (`audio.output_device`), puis relance la commande : les deux dernières lignes doivent
 commencer par `[OK]` (code de sortie 0). `[!!] ... aucun` ou `[!!] ... ambigu` = sous-chaîne
-à corriger. (L'audio n'est ouvert qu'à partir de la phase 1.)
+à corriger. (L'audio n'est ouvert qu'à partir de la phase 1.) La valeur `default` (défaut du
+code) suit le micro et la sortie par défaut du système : rien à régler pour démarrer.
 
 ### 6. Démarrage, icône et arrêt propre
 

@@ -43,10 +43,10 @@ class _Section(BaseModel):
 
 
 class AudioConfig(_Section):
-    # Sous-chaîne du micro : un micro USB (ici le RØDE NT-USB) se nomme pareil sous
-    # Windows (WASAPI) et macOS (Core Audio), donc ce défaut reste valable partout ;
-    # « default » suit le micro par défaut du système (voir scripts/list_audio_devices.py).
-    input_device: str = "NT-USB"
+    # « default » suit le micro par défaut du système (Windows WASAPI, macOS Core Audio) :
+    # aucun nom de matériel en dur, donc valable sur n'importe quelle machine. Mettre une
+    # sous-chaîne (ex. « NT-USB ») pour cibler un micro précis (voir list_audio_devices.py).
+    input_device: str = "default"
     output_device: str = "default"
     pre_roll_s: float = Field(default=2.0, gt=0, le=10)
     # Ajouts phase 1 : canal du micro (1 = premier canal ; null = moyenne des canaux)

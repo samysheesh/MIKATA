@@ -370,7 +370,7 @@ def test_settings_show_the_current_values(base: Path) -> None:
         base / "config.yaml"
     ).wake  # le seuil réglé dans config.yaml (pas une valeur figée)
     assert values["wake.threshold"] == wake.threshold and values["agent.follow_up_s"] == 6
-    assert values["audio.input_device"] == "NT-USB" and values["llm.reasoning_effort"] == "none"
+    assert values["audio.input_device"] == "default" and values["llm.reasoning_effort"] == "none"
     assert "ui.skin" not in values and values["ui.mascot"] is True  # onglet Skins : immédiat
     assert window.tabs.count() == 7
     window.close()
@@ -455,7 +455,7 @@ def test_cost_audio_tests_and_live_log(base: Path) -> None:
     assert window.mic_level.value() == 42
     window._test_output()
     window.close()
-    assert window._tester.calls == [("mic", "NT-USB"), ("out", "default"), ("stop", "")]
+    assert window._tester.calls == [("mic", "default"), ("out", "default"), ("stop", "")]
 
 
 # -- processus de l'interface ---------------------------------------------------------------
