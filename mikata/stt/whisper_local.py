@@ -4,6 +4,10 @@ Piège Windows n°1 : CTranslate2 a besoin des DLL CUDA 12 cuBLAS et cuDNN 9. El
 des paquets pip `nvidia-cublas-cu12` et `nvidia-cudnn-cu12` (dossiers `nvidia/*/bin`), qu'on
 ajoute au chemin de recherche des DLL **avant** d'importer faster-whisper.
 Aucune bascule CPU automatique (décision §1) : sans GPU, erreur claire au démarrage.
+L'amorçage des DLL CUDA et la vérification du GPU via ctranslate2 ne concernent que
+Windows (`sys.platform == "win32"`) : sous macOS, `stt.device = "mlx"` sélectionne le
+backend MLX (`mikata/stt/mlx_whisper.py`, Apple Silicon), avec repli faster-whisper CPU
+si `mlx-whisper` est absent.
 
 Ajout phase 6 : le prompt initial de Whisper (`stt.initial_prompt`, vocabulaire fixe :
 « MIKATA », Bloc-notes, minuteur...) est complété par les noms des applications installées
@@ -173,6 +177,7 @@ class WhisperSTT:
         self.download_root = download_root
         self.vocabulary = vocabulary
         self._model: Any = None
+        self._delegate: Any = None  # MlxWhisperSTT (macOS, stt.device = "mlx"), import paresseux
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mikata-stt")
         self._prompt_key: tuple[str, ...] | None = None
         self._prompt = cfg.initial_prompt
@@ -195,19 +200,55 @@ class WhisperSTT:
 
     @property
     def loaded(self) -> bool:
+        if self._delegate is not None:
+            return bool(self._delegate.loaded)
         return self._model is not None
+
+    def _load_mlx(self) -> None:
+        """Backend MLX (macOS) ; repli faster-whisper CPU si `mlx-whisper` est absent."""
+        try:
+            from mikata.stt.mlx_whisper import MlxWhisperSTT
+
+            delegate = MlxWhisperSTT(self.cfg, self.download_root, self.vocabulary)
+            delegate.load()
+        except Exception as exc:
+            logger.warning(
+                "Backend MLX indisponible ({}), repli faster-whisper CPU.",
+                exc,
+            )
+            delegate = None
+        if delegate is not None:
+            self._delegate = delegate
+            return
+        compute = self.cfg.compute_type if self.cfg.compute_type != "float16" else "int8"
+        from faster_whisper import WhisperModel
+
+        try:
+            self._model = WhisperModel(
+                self.cfg.model,
+                device="cpu",
+                compute_type=compute,
+                download_root=str(self.download_root),
+            )
+        except RuntimeError as exc:
+            raise SttUnavailableError(f"Whisper CPU de repli impossible : {exc}") from exc
+        logger.info("Whisper {} prêt sur CPU (repli macOS, {}).", self.cfg.model, compute)
 
     def load(self) -> None:
         """Charge le modèle et le préchauffe (bloquant, plusieurs secondes)."""
         cfg = self.cfg
-        if cfg.device == "cuda":
+        device = getattr(cfg, "device", "cuda")
+        if device == "mlx":
+            self._load_mlx()
+            return
+        if device == "cuda" and sys.platform == "win32":
             dirs = add_cuda_dll_directories()
             if dirs:
                 logger.debug("DLL CUDA : {}", ", ".join(map(str, dirs)))
         import ctranslate2
         from faster_whisper import WhisperModel
 
-        if cfg.device == "cuda" and ctranslate2.get_cuda_device_count() == 0:
+        if device == "cuda" and ctranslate2.get_cuda_device_count() == 0:
             raise SttUnavailableError(
                 "Aucun GPU NVIDIA utilisable par Whisper (stt.device = cuda).\n"
                 "Vérifie le pilote NVIDIA : « nvidia-smi » doit afficher la RTX 3080. "
@@ -251,6 +292,8 @@ class WhisperSTT:
     def transcribe_sync(self, audio: np.ndarray, prompt: str | None = None) -> Transcript:
         """Transcription bloquante (int16 ou float32 mono 16 kHz) ; hors de la boucle asyncio.
         `prompt` : prompt initial (défaut : `stt.initial_prompt`)."""
+        if self._delegate is not None:
+            return self._delegate.transcribe_sync(audio, prompt)
         if self._model is None:
             raise RuntimeError("Whisper n'est pas chargé")
         start = time.perf_counter()
@@ -283,4 +326,7 @@ class WhisperSTT:
 
     def close(self) -> None:
         self._executor.shutdown(wait=True, cancel_futures=True)
+        delegate, self._delegate = self._delegate, None
+        if delegate is not None:
+            delegate.close()
         self._model = None

@@ -1,16 +1,50 @@
-"""Choix des périphériques audio par sous-chaîne du nom, en privilégiant WASAPI (§3).
+"""Choix des périphériques audio par sous-chaîne du nom, en privilégiant l'API native (§3).
 
+API native selon la plateforme : WASAPI sous Windows, CoreAudio sous macOS.
 Les index PortAudio changent au redémarrage : on ne les stocke jamais dans la config.
 """
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from mikata.config import ConfigError
 
-PREFERRED_HOST_API = "Windows WASAPI"
+# Nom PortAudio de l'API native par plateforme (relevé via `query_hostapis`).
+HOST_API_BY_PLATFORM: dict[str, str] = {
+    "win32": "Windows WASAPI",
+    "darwin": "Core Audio",
+}
+
+# Conservé pour la compatibilité (tests, script) : valeur Windows.
+PREFERRED_HOST_API = HOST_API_BY_PLATFORM["win32"]
+
+
+def preferred_host_api() -> str:
+    """Nom de l'API hôte native de la plateforme courante.
+
+    Plateforme inconnue (Linux de test, CI) : WASAPI, pour garder un tri
+    déterministe ; `filter_preferred` retombe sur l'autre API native si absente.
+    """
+    return HOST_API_BY_PLATFORM.get(sys.platform, HOST_API_BY_PLATFORM["win32"])
+
+
+def preferred_host_apis() -> list[str]:
+    """Ordre de préférence des API natives : celle de la plateforme d'abord."""
+    native = preferred_host_api()
+    return [native, *[name for name in HOST_API_BY_PLATFORM.values() if name != native]]
+
+
+def filter_preferred(devices: list[DeviceInfo]) -> list[DeviceInfo]:
+    """Périphériques de l'API native préférée, présente ; sinon l'autre API native ;
+    sinon tout (aucune des deux n'existe, ex. : MME seul)."""
+    for api_name in preferred_host_apis():
+        if any(d.host_api == api_name for d in devices):
+            return [d for d in devices if d.host_api == api_name]
+    return devices
+
 
 Kind = Literal["input", "output"]
 
@@ -62,11 +96,13 @@ def match_devices(devices: list[DeviceInfo], substring: str, kind: Kind) -> list
 
 
 def default_device_index(sd: Any, kind: Kind) -> int | None:
-    """Index du périphérique par défaut de Windows pour l'API WASAPI, s'il est connu."""
+    """Index du périphérique par défaut du système pour l'API native, s'il est connu."""
+    wanted = preferred_host_apis()
     key = "default_input_device" if kind == "input" else "default_output_device"
-    for api in sd.query_hostapis():
-        if api["name"] == PREFERRED_HOST_API:
-            index = api.get(key, -1)
+    by_name = {api["name"]: api for api in sd.query_hostapis()}
+    for api_name in wanted:
+        if api_name in by_name:
+            index = by_name[api_name].get(key, -1)
             return int(index) if index is not None and index >= 0 else None
     return None
 
@@ -77,19 +113,22 @@ def find_device(
     kind: Kind,
     default_index: int | None = None,
 ) -> DeviceInfo:
-    """Le périphérique WASAPI (à défaut, de n'importe quelle API) dont le nom contient
-    `substring`. Un nom exactement égal l'emporte sur les correspondances partielles.
+    """Le périphérique de l'API native (à défaut, de n'importe quelle API) dont le nom
+    contient `substring`. Un nom exactement égal l'emporte sur les correspondances partielles.
 
-    La valeur spéciale « default » désigne le périphérique par défaut de Windows
-    (`default_index`), qui suit les changements de casque ou d'enceintes."""
-    candidates = filter_host_api(devices, PREFERRED_HOST_API)
+    La valeur spéciale « default » désigne le périphérique par défaut du système
+    (`default_index`), qui suit les changements de casque ou d'enceintes. La
+    correspondance se fait sur le nom CoreAudio / WASAPI tel que PortAudio le rapporte.
+    """
+    api_name = preferred_host_api()
+    candidates = filter_preferred(devices)
     if substring.casefold() == "default":
         for device in candidates:
             if device.index == default_index and device.supports(kind):
                 return device
         key = "audio.input_device" if kind == "input" else "audio.output_device"
         raise DeviceNotFoundError(
-            f"{key} = « default » : aucun périphérique par défaut trouvé dans Windows."
+            f"{key} = « default » : aucun périphérique par défaut trouvé ({api_name})."
         )
     matches = match_devices(candidates, substring, kind)
     exact = [d for d in matches if d.name.casefold() == substring.casefold()]

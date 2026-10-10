@@ -70,6 +70,26 @@ APP_ALIASES: dict[str, tuple[str, ...]] = {
     "Pense-bête": ("stickynotes", "sticky notes"),
 }
 
+# Noms macOS (noms d'applis et de processus courants) : s'ajoutent aux alias Windows,
+# jamais à la place (comparés avec `fold`, dans les deux sens comme les autres).
+DARWIN_ALIASES: dict[str, tuple[str, ...]] = {
+    "Finder": ("finder",),
+    "Safari": ("safari",),
+    "Aperçu": ("preview", "apercu"),
+    "Réglages Système": ("system settings", "systemsettings", "preferences systeme"),
+    "App Store": ("app store",),
+    "Messages": ("messages",),
+    "Mail": ("mail",),
+    "Plans": ("maps",),
+    "Notes": ("notes",),
+    "Rappels": ("reminders",),
+    "Musique": ("music",),
+    "Photos": ("photos",),
+    "Calendrier": ("calendar", "calendrier"),
+    "Terminal macOS": ("terminal",),
+}
+APP_ALIASES.update(DARWIN_ALIASES)
+
 
 def fold(text: str) -> str:
     """Forme de comparaison : minuscules, sans accents, sans « .exe » ni ponctuation."""

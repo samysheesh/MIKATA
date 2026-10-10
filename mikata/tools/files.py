@@ -278,7 +278,15 @@ def _format_entry(entry: dict[str, Any]) -> str:
 def _absolute(path: str) -> str:
     """Chemin absolu (les chemins de l'index le sont déjà) ; relatif = dossier perso."""
     p = Path(path).expanduser()
-    return str(p if p.is_absolute() else Path.home() / p)
+    if p.is_absolute():
+        return str(p)
+    # Chemin Windows absolu (D:\\, D:/, UNC) vu hors Windows : le garder tel quel
+    # (les outils d'index le transmettent à l'index ou au bureau sans le toucher).
+    if path.startswith("\\\\") or (
+        len(path) >= 3 and path[0].isalpha() and path[1] == ":" and path[2] in "\\/"
+    ):
+        return path
+    return str(Path.home() / p)
 
 
 class FindPathParams(BaseModel):
@@ -303,9 +311,10 @@ class FindPath(BaseTool[FindPathParams]):
         limit = self.ctx.config.files_index.max_results
         results = index.search(args.name, limit * 2)
         if args.folder:
-            folder = _absolute(args.folder)
-            prefix = folder.rstrip("\\/") + "\\"
-            results = [r for r in results if r["path"].startswith(prefix)]
+            # Compare les deux sens de séparateur : les chemins de l'index Windows
+            # (« D:\\… ») doivent matcher même quand os.sep vaut « / » (darwin).
+            folder = _absolute(args.folder).replace("\\", "/").rstrip("/") + "/"
+            results = [r for r in results if r["path"].replace("\\", "/").startswith(folder)]
         if not results:
             return f"Aucun fichier ne correspond à « {args.name} » dans l'index."
         lines = [f"Trouvé dans l'index ({min(len(results), limit)} premiers) :"]
@@ -356,5 +365,6 @@ class OpenInExplorer(BaseTool[OpenInExplorerParams]):
     async def run(self, args: OpenInExplorerParams) -> str:
         path = _absolute(args.path)
         is_dir = await self.ctx.run_blocking(os.path.isdir, path)
+        # open_folder : explorer.exe /select sous Windows, open -R (Finder) sous macOS.
         await self.ctx.run_blocking(self.ctx.require_desktop().open_folder, path, not is_dir)
         return f"Explorateur ouvert sur « {path} »."

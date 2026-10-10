@@ -1,7 +1,7 @@
 """Lecture dans le casque (§8).
 
-`AudioPlayer` : flux de sortie WASAPI ouvert en permanence (le son part au bloc suivant),
-avec deux canaux mixés :
+`AudioPlayer` : flux de sortie ouvert en permanence via sounddevice (WASAPI sous
+Windows, CoreAudio sous macOS ; le son part au bloc suivant), avec deux canaux mixés :
 - **parole** (`play` / `stop`) : une phrase à la fois, coupable immédiatement (barge-in) ;
 - **effets** (`play_nowait`) : bips et sons d'interface, joués **par-dessus** la parole sans
   l'interrompre (avec des commandes en parallèle, le bip d'une nouvelle commande ne doit pas

@@ -16,6 +16,7 @@ import contextlib
 import re
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from loguru import logger
 from pydantic import BaseModel, Field, model_validator
@@ -100,7 +101,9 @@ class GetTime(BaseTool[NoParams]):
 
 
 def collect_status(home: Path | None = None) -> str:
-    """CPU, RAM, disque, GPU (NVML) ; bloquant (~0,3 s)."""
+    """CPU, RAM, disque, GPU (NVML, sauf macOS) ; bloquant (~0,3 s)."""
+    import sys
+
     import psutil
 
     cpu = psutil.cpu_percent(interval=0.3)
@@ -117,27 +120,47 @@ def collect_status(home: Path | None = None) -> str:
         )
     except OSError:
         pass
+    if sys.platform == "darwin":
+        # Pas de NVML sur macOS : on tente quand même pynvml (eGPU simulé dans les
+        # tests), sinon mémoire résidente du processus à la place.
+        try:
+            import pynvml
+
+            lines.append(_nvml_line(pynvml))
+        except Exception:
+            rss = psutil.Process().memory_info().rss
+            lines.append(
+                "Carte graphique : informations indisponibles. "
+                f"(macOS sans NVML ; mémoire résidente MIKATA : {rss / 1e6:.0f} Mo.)"
+            )
+        lines.append("Température du processeur : non mesurable sans droits administrateur.")
+        return "\n".join(lines)
     try:
         import pynvml
 
-        pynvml.nvmlInit()
-        try:
-            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-            name = pynvml.nvmlDeviceGetName(handle)
-            name = name.decode() if isinstance(name, bytes) else str(name)
-            usage = pynvml.nvmlDeviceGetUtilizationRates(handle)
-            gpu_mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
-            temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
-            lines.append(
-                f"Carte graphique {name} : {usage.gpu} %, {gpu_mem.used / 1e9:.1f} Go de "
-                f"mémoire vidéo sur {gpu_mem.total / 1e9:.0f} Go, {temp} degrés."
-            )
-        finally:
-            pynvml.nvmlShutdown()
+        lines.append(_nvml_line(pynvml))
     except Exception:
         lines.append("Carte graphique : informations indisponibles.")
     lines.append("Température du processeur : non mesurable sans droits administrateur.")
     return "\n".join(lines)
+
+
+def _nvml_line(pynvml: Any) -> str:
+    """Ligne d'état du premier GPU NVIDIA (NVML déjà importé)."""
+    pynvml.nvmlInit()
+    try:
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        name = pynvml.nvmlDeviceGetName(handle)
+        name = name.decode() if isinstance(name, bytes) else str(name)
+        usage = pynvml.nvmlDeviceGetUtilizationRates(handle)
+        gpu_mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
+        temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+        return (
+            f"Carte graphique {name} : {usage.gpu} %, {gpu_mem.used / 1e9:.1f} Go de "
+            f"mémoire vidéo sur {gpu_mem.total / 1e9:.0f} Go, {temp} degrés."
+        )
+    finally:
+        pynvml.nvmlShutdown()
 
 
 @register_tool

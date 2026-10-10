@@ -116,6 +116,19 @@ BLACKLIST_CORE = _rules(
 )  # fmt: skip
 BLACKLIST = ALIAS_RULE + BLACKLIST_CORE
 
+# Liste noire macOS : s'ajoute à la liste PowerShell (filtrée dans les deux cas, car
+# run_shell et les scripts Python peuvent aussi lancer ces commandes).
+DARWIN_BLACKLIST = _rules(
+    (r"(^|[;|&\n\r({]\s*)(sudo\s+)?rm\s+.*\s(-rf?|--recursive|--force)\b",
+     "suppression massive interdite ; pour supprimer, utilise delete_file (corbeille)"),
+    (_CMD.format(r"diskutil") + r"\s+(erase[dD]isk|erase[vV]olume|partition[dD]isk|zero[dD]isk)",
+     "effacement de disque interdit"),
+    (r"~?/Library/Application Support/com\.apple\.TCC|tcc\.db|\bsqlite3\b.*TCC",
+     "la base des autorisations macOS (TCC) est intouchable"),
+    (_CMD.format(r"(nvram|csrutil|bless)"), "réglage du démarrage macOS interdit"),
+)  # fmt: skip
+DARWIN_ALL = BLACKLIST + DARWIN_BLACKLIST
+
 # Liste grise : permis, mais seulement après un « oui » de l'utilisateur.
 GRAYLIST = _rules(
     (_CMD.format(r"(stop-process|kill|spps|taskkill(\.exe)?)"), "arrêter un programme"),
@@ -299,9 +312,9 @@ class Guard:
     # -- commandes --------------------------------------------------------------------
 
     def check_command(self, command: str, *, after_web: bool = False) -> Decision:
-        """Commande PowerShell ou cmd : refusée, à confirmer, ou autorisée."""
+        """Commande PowerShell, cmd ou shell : refusée, à confirmer, ou autorisée."""
         text = _flatten(command)
-        denied = check_patterns(text, BLACKLIST)
+        denied = check_patterns(text, DARWIN_ALL if sys.platform == "darwin" else BLACKLIST)
         if denied is not None:
             return denied
         risky = check_patterns(text, GRAYLIST)
@@ -322,7 +335,8 @@ class Guard:
             if denied is not None:
                 return denied
             # Commandes lancées depuis Python (subprocess) : seulement la liste noire.
-            return check_patterns(_flatten(content), BLACKLIST) or Decision(Verdict.ALLOW)
+            platform_blacklist = DARWIN_ALL if sys.platform == "darwin" else BLACKLIST
+            return check_patterns(_flatten(content), platform_blacklist) or Decision(Verdict.ALLOW)
         return self.check_command(content)
 
     def check_typed_text(self, text: str) -> Decision:
@@ -380,8 +394,10 @@ class Guard:
         """Seul chemin de suppression : la corbeille, ou rien.
 
         Refuse (`GuardDenied`) si l'élément risquerait d'être supprimé définitivement :
-        lecteur sans corbeille, taille au-delà de `guard.trash_max_mb`, ou (Windows) module
-        de corbeille sûre absent. Aucune autre méthode n'est tentée en cas d'échec.
+        lecteur sans corbeille, taille au-delà de `guard.trash_max_mb`, ou (Windows
+        seulement) module de corbeille sûre absent. Sous macOS, send2trash natif va
+        au Finder : pas de porte pywin32/IFileOperation, donc pas de vérification.
+        Aucune autre méthode n'est tentée en cas d'échec.
         """
         if not path.exists() and not path.is_symlink():
             raise ToolError(f"introuvable : {path}")

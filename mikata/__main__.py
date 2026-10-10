@@ -178,6 +178,30 @@ def build_tool_context(config: Config) -> ToolContext:
 
             ctx.index = FileIndex(config)
             ctx.index.start()
+    elif sys.platform == "darwin":
+        # Port macOS (Option B) : implémentations Mac chargées paresseusement
+        # (MacDesktop, MacAudio, PynputInput ; ToastNotifier gère darwin en interne ;
+        # backend index « spotlight » et pilotage « appkit », cf. config).
+        from mikata.tools.desktop import MacDesktop
+        from mikata.tools.input import PynputInput
+        from mikata.tools.media import MacAudio
+        from mikata.ui.notify import ToastNotifier
+
+        ctx.desktop, ctx.audio, ctx.notifier = MacDesktop(), MacAudio(), ToastNotifier()
+        ctx.input = PynputInput()
+        if config.uia.enabled:  # phase 12a : backend AX (macuiauto, import paresseux)
+            from mikata.uia.controller import UiController
+
+            ctx.uia = UiController(config, ctx.desktop)
+        if config.browser.enabled:  # phase 12b : navigateur piloté (CDP)
+            from mikata.browser.controller import BrowserController
+
+            ctx.browser = BrowserController(config, ctx.desktop)
+        if config.files_index.enabled:  # phase 12d : backend Spotlight (mdfind + FSEvents)
+            from mikata.files.index import FileIndex
+
+            ctx.index = FileIndex(config)
+            ctx.index.start()
     else:
         logger.warning("Hors Windows : outils du bureau, du volume et des notifications inactifs.")
     return ctx

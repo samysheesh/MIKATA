@@ -71,7 +71,11 @@ def setup_logging(cfg: LoggingConfig, base_dir: Path) -> Path:
     actions_file.parent.mkdir(parents=True, exist_ok=True)
 
     logger.remove()
-    # Sous pythonw.exe (démarrage automatique), il n'y a pas de console : sys.stderr vaut None.
+    # Sous pythonw.exe (démarrage automatique Windows), il n'y a pas de console :
+    # sys.stderr vaut None. Sous launchd (darwin), le processus est au premier plan
+    # (compatible launchd, pas de démon détaché) : stderr existe mais peut être
+    # redirigé vers les journaux launchd (StandardOutPath/StandardErrorPath) — on
+    # l'ajoute quand il est présent, comme ailleurs.
     if sys.stderr is not None:
         logger.add(
             sys.stderr, level=cfg.level, format=LOG_FORMAT, backtrace=False, filter=_not_action

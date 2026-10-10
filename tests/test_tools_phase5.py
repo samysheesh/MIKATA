@@ -326,11 +326,13 @@ def test_pynput_input(fake_pynput: list[tuple[str, Any]], monkeypatch: pytest.Mo
     control.press_keys(["alt", "f4"])
     control.mouse("right_click", 50, 60, 3)
     control.mouse("scroll_up", None, None, 5)
+    # F3 (Option B) : le collage utilise Cmd sous macOS, Ctrl ailleurs.
+    paste_mod = "<cmd>" if sys.platform == "darwin" else "<ctrl>"
     assert fake_pynput == [
         ("clipboard", "Hé !"),
-        ("press", "<ctrl>"),
+        ("press", paste_mod),
         ("tap", "v"),
-        ("release", "<ctrl>"),
+        ("release", paste_mod),
         ("clipboard", "avant"),
         ("press", "<ctrl>"),
         ("press", "<shift>"),

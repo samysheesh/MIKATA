@@ -70,6 +70,53 @@ class PycawAudio:
         AudioUtilities.SetDefaultDevice(device_id, roles=roles)
 
 
+class MacAudio:
+    """Implémentation macOS de `tools.base.AudioControl` (osascript, volume maître).
+
+    macOS n'expose pas de gain par application (contrairement au mixeur de Windows) :
+    seul le volume maître est réglable. Le changement de sortie par défaut se fait
+    dans Réglages Système ; `set_default_output` lève donc `ToolError` en expliquant
+    la limite au lieu de simuler un faux gain par appli.
+    """
+
+    @staticmethod
+    def _osascript(script: str) -> str:
+        import subprocess
+
+        completed = subprocess.run(
+            ["osascript", "-e", script], capture_output=True, timeout=10.0, check=True
+        )
+        return completed.stdout.decode("utf-8", errors="replace").strip()
+
+    def get_volume(self) -> float:
+        return float(self._osascript("output volume of (get volume settings)"))
+
+    def set_volume(self, percent: float) -> None:
+        level = round(max(0.0, min(100.0, percent)))
+        self._osascript(f"set volume output volume {level}")
+
+    def set_mute(self, mute: bool) -> None:
+        self._osascript(f"set volume output muted {'true' if mute else 'false'}")
+
+    def output_devices(self) -> list[tuple[str, str]]:
+        """Sorties audio (HAL) : `system_profiler SPAudioDataType`, identifiant = nom."""
+        import re
+        import subprocess
+
+        completed = subprocess.run(
+            ["system_profiler", "SPAudioDataType"], capture_output=True, timeout=15.0, check=True
+        )
+        text = completed.stdout.decode("utf-8", errors="replace")
+        names = re.findall(r"^\s{4}(\S.*?):\s*$", text, re.MULTILINE)
+        return [(name, name) for name in names if name.strip()]
+
+    def set_default_output(self, device_id: str) -> None:
+        raise ToolError(
+            "macOS ne permet pas de changer la sortie par défaut en ligne de commande : "
+            "ouvre Réglages Système > Son > Sortie."
+        )
+
+
 class MediaParams(BaseModel):
     action: Literal["play", "pause", "play_pause", "next", "previous", "stop"] = Field(
         description="play/pause (bascule lecture-pause), next (suivant), previous (précédent), stop"

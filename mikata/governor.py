@@ -20,6 +20,8 @@ def lower_priority(process: Any = None) -> None:
     try:
         if sys.platform == "win32":
             proc.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+        elif sys.platform == "darwin":
+            proc.nice(10)  # macOS : pas de classe de priorité, simple « nice » UNIX
         else:
             proc.nice(10)
     except (OSError, psutil.Error) as exc:

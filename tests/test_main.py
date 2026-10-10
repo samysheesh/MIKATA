@@ -264,15 +264,20 @@ def test_build_app_with_llm_and_voice(
     tools = app._agent.tools
     assert tools is not None and tools.ctx.announce == app.announce
     assert {"open_app", "set_volume", "get_weather"} <= set(tools.tools)
-    on_windows = sys.platform == "win32"  # bureau et volume pilotés seulement sous Windows
-    assert (tools.ctx.desktop is not None, tools.ctx.audio is not None) == (on_windows, on_windows)
+    # Option B : bureau et volume pilotés sous Windows comme sous macOS.
+    has_desktop = sys.platform in ("win32", "darwin")
+    assert (tools.ctx.desktop is not None, tools.ctx.audio is not None) == (
+        has_desktop,
+        has_desktop,
+    )
     assert tools.ctx.search_api_key is None
     assert app._agent.usage is not None
     assert app._agent.usage.path == config_file.parent / "data" / "llm_usage.json"
     assert app._agent.long_memory is tools.ctx.memory
     assert app._agent.long_memory.path == config_file.parent / "data" / "memory.json"
-    # Phase 6 : noms des applications installées dans le prompt de Whisper (sous Windows).
-    assert (app._stt.vocabulary is not None) == on_windows  # type: ignore[union-attr]
+    # Phase 6 : noms des applications installées dans le prompt de Whisper (là où
+    # le bureau est piloté : Windows et macOS).
+    assert (app._stt.vocabulary is not None) == has_desktop  # type: ignore[union-attr]
 
 
 def test_app_vocabulary_reads_the_start_menu_index() -> None:

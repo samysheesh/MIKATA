@@ -32,6 +32,16 @@ from mikata.files import events, usn
 LOG = "helper.log"
 _POLL_S = 3.0
 
+DARWIN_MSG = (
+    "helper USN indisponible sur macOS : volumes NTFS, fsutil et tâche planifiée "
+    "élevée sont Windows uniquement ; l'index macOS passe par Spotlight (files.index)."
+)
+
+
+def _require_win32() -> None:
+    if sys.platform != "win32":
+        raise NotImplementedError(DARWIN_MSG)
+
 
 def _open_append(path: Path) -> TextIO:
     return path.open("a", encoding="utf-8")
@@ -42,6 +52,7 @@ def dump_all(share_dir: Path) -> int:
 
     Écrit en flux (jamais tout en RAM) et journalise la progression tous les 500 000.
     """
+    _require_win32()
     part = share_dir / (events.DUMP + ".part")
     total = 0
     with part.open("w", encoding="utf-8") as handle:
@@ -66,6 +77,7 @@ _DUMP_REUSE_S = 600.0  # un dump de moins de 10 min est réutilisé tel quel
 
 def watch(share_dir: Path) -> None:
     """Dump puis rejeu du journal, pour toujours (arrêt par fin de processus)."""
+    _require_win32()
     dump = share_dir / events.DUMP
     try:
         age = time.time() - dump.stat().st_mtime
@@ -77,9 +89,7 @@ def watch(share_dir: Path) -> None:
         started = time.monotonic()
         try:
             total = dump_all(share_dir)
-            logger.info(
-                "Dump initial : {} entrées en {:.1f} s.", total, time.monotonic() - started
-            )
+            logger.info("Dump initial : {} entrées en {:.1f} s.", total, time.monotonic() - started)
         except Exception as exc:
             logger.error("Dump initial impossible : {}", exc)
             raise

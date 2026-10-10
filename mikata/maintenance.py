@@ -9,6 +9,7 @@ Au démarrage puis toutes les 24 h (thread disque de l'orchestrateur) :
 Déjà bornés ailleurs : `data/logs/` et `data/actions.log` (rotation 5 Mo × 5, archives à la
 corbeille), l'historique (plafond de tokens), `data/negatives/` (`wake.negatives_max_hours`).
 Tout part à la corbeille (send2trash), jamais de suppression définitive (CLAUDE.md).
+Sur macOS, send2trash utilise la corbeille native du Finder : la purge reste inchangée.
 """
 
 from __future__ import annotations

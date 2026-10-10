@@ -1,12 +1,18 @@
 """Icône de la zone de notification (pystray), docs/ARCHITECTURE.md §8.
 
-pystray tourne dans son propre thread (boucle de messages Win32) ; le menu « Quitter »
-rappelle l'orchestrateur via un callback thread-safe. pystray est importé paresseusement :
-il n'est installé que sous Windows et il est mocké dans les tests.
+pystray tourne dans son propre thread ; le menu « Quitter » rappelle
+l'orchestrateur via un callback thread-safe. pystray est importé paresseusement
+(mocké dans les tests).
+- win32 : boucle de messages Win32 dans le thread « mikata-tray ».
+- darwin : backend Cocoa ; AppKit exige le thread principal (NSRunLoop) : `start`
+  doit donc être appelé depuis le thread principal, sinon un avertissement est
+  journalisé et l'icône tourne quand même dans son thread (le menu peut ne pas
+  s'afficher). `stop` reste idempotent.
 """
 
 from __future__ import annotations
 
+import sys
 import threading
 from collections.abc import Callable
 from typing import Any
@@ -63,9 +69,14 @@ class TrayIcon:
     ) -> None:
         """`on_action` (ajout phase 8) : « settings », « mascot », « pause » ; sans lui, le
         menu n'a que « Quitter » (interface désactivée)."""
-        import pystray  # Windows uniquement
+        import pystray  # backend Win32 sous Windows, Cocoa sous macOS
 
         self._on_quit = on_quit
+        if sys.platform == "darwin" and threading.current_thread() is not threading.main_thread():
+            logger.warning(
+                "Icône Cocoa démarrée hors du thread principal : le menu macOS "
+                "exige la boucle NSRunLoop du thread principal."
+            )
         items = []
         if on_action is not None:
             items = [
@@ -86,6 +97,7 @@ class TrayIcon:
         logger.info("Icône de la zone de notification affichée.")
 
     def _run(self) -> None:
+        # win32 : boucle de messages Win32 ; darwin : boucle NSRunLoop (Cocoa).
         try:
             self._icon.run()
         except Exception:

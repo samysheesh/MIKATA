@@ -58,15 +58,29 @@ def parse_keys(combo: str) -> list[str]:
 
 
 class PynputInput:
-    """Implémentation Windows de `tools.base.InputControl` (pynput, import paresseux)."""
+    """Implémentation `tools.base.InputControl` (pynput, import paresseux).
+
+    Sur macOS, la touche « win » normalisée devient Command (pynput `Key.cmd`) :
+    « win+d » y fait donc Commande+D, comme Windows+D sous Windows.
+    """
+
+    @staticmethod
+    def _paste_mod() -> str:
+        """Modificateur du collage : Command sur macOS, Contrôle ailleurs."""
+        import sys
+
+        return "cmd" if sys.platform == "darwin" else "ctrl"
 
     def type_text(self, text: str) -> None:
-        """Colle `text` (presse-papiers + Ctrl+V), puis restaure le presse-papiers.
+        """Colle `text` (presse-papiers + collage), puis restaure le presse-papiers.
 
         Taper caractère par caractère (pynput, SendInput) dépend de la disposition du clavier :
         sur un AZERTY, « à » devient « ç » et la suite se corrompt. Coller est indépendant de
-        la disposition et conserve tous les caractères, accents et emojis compris.
+        la disposition et conserve tous les caractères, accents et emojis compris — d'où
+        le collage préféré pour le français accentué, sur Windows comme sur macOS
+        (où le raccourci est Commande+V au lieu de Ctrl+V).
         """
+        import sys
         import time
 
         import pyperclip
@@ -79,11 +93,12 @@ class PynputInput:
         pyperclip.copy(text)
         time.sleep(0.05)
         keyboard = Controller()
-        keyboard.press(Key.ctrl)
+        mod = Key.cmd if sys.platform == "darwin" else Key.ctrl
+        keyboard.press(mod)
         try:
             keyboard.tap(KeyCode.from_char("v"))
         finally:
-            keyboard.release(Key.ctrl)
+            keyboard.release(mod)
         time.sleep(0.25)  # laisse l'application lire le presse-papiers avant de le restaurer
         if previous is not None:
             pyperclip.copy(previous)
@@ -91,6 +106,8 @@ class PynputInput:
     def press_keys(self, keys: list[str]) -> None:
         from pynput.keyboard import Controller, Key, KeyCode
 
+        # « win » normalisé -> Commande macOS (Key.cmd) : pynput nomme ainsi la touche
+        # pomme, le mapping vaut donc aussi pour darwin, pas seulement Windows.
         names = {"ctrl": "ctrl", "alt": "alt", "shift": "shift", "win": "cmd",
                  "enter": "enter", "esc": "esc", "pageup": "page_up", "pagedown": "page_down",
                  "printscreen": "print_screen", "capslock": "caps_lock"}  # fmt: skip

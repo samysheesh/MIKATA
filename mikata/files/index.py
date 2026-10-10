@@ -15,7 +15,10 @@ une panne : l'index est un plus, pas une dépendance vitale.
 
 from __future__ import annotations
 
+import contextlib
 import sqlite3
+import subprocess
+import sys
 import threading
 import time
 import unicodedata
@@ -87,6 +90,107 @@ def _parent_of(path: str) -> str:
     if path.endswith("\\"):
         return path.rsplit("\\", 2)[0] + "\\"
     return path.rsplit("\\", 1)[0] + "\\"
+
+
+# -- backend Spotlight (darwin) -----------------------------------------------------
+# `mdfind` (import paresseux : sous-processus, jamais au chargement) interroge
+# l'index Spotlight du système ; les mises à jour en direct passent par FSEvents
+# via `watchdog` (observateur lazy, no-op si absent). Le consommateur SQLite/FTS5
+# reste identique : Spotlight ne fait que remplir / rafraîchir les lignes.
+
+_SPOTLIGHT_LIMIT = 200
+
+
+def spotlight_query(query: str, max_results: int = _SPOTLIGHT_LIMIT) -> list[str]:
+    """Chemins renvoyés par `mdfind` pour `query` (darwin uniquement, lazy)."""
+    if sys.platform != "darwin":
+        raise NotImplementedError("Spotlight (mdfind) n'existe que sous macOS.")
+    wanted = query.strip()
+    if not wanted:
+        return []
+    try:
+        proc = subprocess.run(
+            ["mdfind", "-interpret", wanted],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except FileNotFoundError as exc:
+        raise NotImplementedError("mdfind introuvable (macOS requis).") from exc
+    if proc.returncode != 0:
+        return []
+    return [line for line in proc.stdout.splitlines() if line][:max_results]
+
+
+def spotlight_snapshot(query: str = "kind:any") -> list[tuple[str, float]]:
+    """(chemin, mtime) de tous les fichiers vus par Spotlight (dump initial darwin)."""
+    paths = spotlight_query(query)
+    rows: list[tuple[str, float]] = []
+    for path in paths:
+        try:
+            rows.append((path, Path(path).stat().st_mtime))
+        except OSError:
+            rows.append((path, 0.0))
+    return rows
+
+
+class SpotlightWatcher:
+    """Mises à jour en direct via FSEvents/watchdog (lazy, no-op si absent).
+
+    `on_change` reçoit des chemins modifiés ; l'appelant les réindexe
+    (upsert SQLite). Sans `watchdog` : journalise une fois, ne fait rien.
+    """
+
+    def __init__(self, roots: list[str], on_change: Any = None) -> None:
+        self._roots = roots
+        self._on_change = on_change
+        self._observer: Any = None
+
+    def start(self) -> None:
+        try:
+            from watchdog.events import FileSystemEventHandler  # type: ignore[import-not-found]
+            from watchdog.observers import Observer  # type: ignore[import-not-found]
+        except ImportError:
+            logger.warning(
+                "Surveillance FSEvents inactive : watchdog non installé "
+                "(mdfind reste disponible à la demande)."
+            )
+            return
+
+        handler = self._make_handler(FileSystemEventHandler)
+
+        from loguru import logger as _logger
+
+        observer = Observer()
+        for root in self._roots:
+            try:
+                observer.schedule(handler, root, recursive=True)
+            except Exception as exc:
+                _logger.warning("Surveillance de {} impossible : {}", root, exc)
+        observer.daemon = True
+        observer.start()
+        self._observer = observer
+        logger.info("Surveillance FSEvents active sur {} racine(s).", len(self._roots))
+
+    def _make_handler(self, base: Any) -> Any:
+        callback = self._on_change
+
+        class _Handler(base):  # type: ignore[valid-type,misc]
+            def on_any_event(self, event: Any) -> None:
+                if callback is not None and not getattr(event, "is_directory", False):
+                    with contextlib.suppress(Exception):
+                        callback(str(event.src_path))
+
+        return _Handler()
+
+    def stop(self) -> None:
+        observer, self._observer = self._observer, None
+        if observer is not None:
+            try:
+                observer.stop()
+                observer.join(timeout=2)
+            except Exception:
+                pass
 
 
 def apply_event(
@@ -330,6 +434,7 @@ class FileIndex:
         self._volumes: list[str] = []
         self._source = "direct"
         self._last_rebuild = 0.0
+        self._watcher: SpotlightWatcher | None = None
 
     # -- cycle de vie (patron AmbientState) --------------------------------------------
 
@@ -341,6 +446,9 @@ class FileIndex:
 
     def stop(self) -> None:
         self._stop.set()
+        if self._watcher is not None:
+            self._watcher.stop()
+            self._watcher = None
         if self._thread is not None:
             self._thread.join(timeout=2)
             self._thread = None
@@ -362,6 +470,17 @@ class FileIndex:
         }
 
     def search(self, query: str, max_results: int) -> list[dict[str, Any]]:
+        if self._source == "spotlight" and sys.platform == "darwin":
+            # darwin : Spotlight en direct (l'index SQLite reste le cache FTS5).
+            try:
+                paths = spotlight_query(query, max_results)
+            except Exception as exc:
+                logger.warning("Recherche Spotlight impossible : {}", exc)
+                return []
+            return [
+                {"path": p, "name": p.rstrip("/").rsplit("/", 1)[-1], "is_dir": False, "mtime": 0.0}
+                for p in paths
+            ]
         if not self._ready:
             return []
         try:
@@ -430,6 +549,11 @@ class FileIndex:
         if built is not None:
             return
         # Source directe (MIKATA en administrateur) ou fichiers du helper élevé.
+        # darwin : backend Spotlight (mdfind + FSEvents/watchdog), jamais NTFS.
+        if sys.platform == "darwin":
+            self._source = "spotlight"
+            self._build_from_spotlight(conn)
+            return
         if usn.can_read_volumes():
             self._source = "direct"
             self._rebuild_direct(conn)
@@ -483,6 +607,42 @@ class FileIndex:
             len(volumes),
         )
 
+    def _build_from_spotlight(self, conn: sqlite3.Connection) -> None:
+        """darwin : remplit le cache SQLite/FTS5 depuis Spotlight + arme FSEvents."""
+        started = time.monotonic()
+        self._ready = False
+        try:
+            rows = spotlight_snapshot()
+        except Exception as exc:
+            logger.warning("Index Spotlight indisponible : {}", exc)
+            return
+        conn.execute("DELETE FROM files")
+        conn.execute("DELETE FROM renames")
+        conn.commit()
+        batch: list[tuple[str, int, str, str, str, str, float | None, int]] = []
+        for i, (path, mtime) in enumerate(rows):
+            name = path.rstrip("/").rsplit("/", 1)[-1]
+            batch.append(("", i, path, path.rsplit("/", 1)[0] + "/", name, fold(name), mtime, 0))
+            if len(batch) >= _INSERT_BATCH:
+                _insert_rows(conn, batch, commit=False)
+                batch = []
+        _insert_rows(conn, batch, commit=False)
+        conn.execute("INSERT INTO files_fts(files_fts) VALUES ('rebuild')")
+        built_at = time.strftime("%Y-%m-%d %H:%M:%S")
+        conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('built_at', ?)", (built_at,))
+        conn.commit()
+        self._count = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+        self._built_at = built_at
+        self._ready = True
+        logger.info(
+            "Index des fichiers : {} entrées en {:.1f} s (Spotlight).",
+            self._count,
+            time.monotonic() - started,
+        )
+        if self._watcher is None:
+            self._watcher = SpotlightWatcher(["/Users", "/Applications"])
+            self._watcher.start()
+
     def _build_from_helper(self, conn: sqlite3.Connection) -> None:
         """Import du dump produit par le helper élevé (utilisateur standard)."""
         dump = self._share_dir / events.DUMP
@@ -534,6 +694,8 @@ class FileIndex:
         )
 
     def _poll_once(self, conn: sqlite3.Connection) -> None:
+        if self._source == "spotlight":
+            return  # darwin : le direct vient de FSEvents/watchdog, le reste via mdfind
         if self._source == "helper":
             self._poll_helper(conn)
             return

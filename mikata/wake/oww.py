@@ -1,5 +1,11 @@
 """Détecteur openWakeWord (ONNX, CPU) — §4.
 
+Trames de 80 ms / 1 280 échantillons à 16 kHz, identiques sur toutes les plateformes.
+Sessions ONNX sur le fournisseur d'exécution CPU : le fournisseur CoreML n'est pas
+utilisé (couverture d'opérateurs insuffisante pour les modèles mel + embedding :
+`onnxruntime-silicon` refuserait des nœuds), donc macOS utilise le même chemin CPU.
+openWakeWord limite lui-même ses sessions ONNX à 1 thread (§10).
+
 Phase 1 : modèle pré-entraîné `hey_jarvis` ; phase 7 : `mikata.onnx` + vérificateur de voix,
 sans changer ce code. Les modèles de features (`melspectrogram.onnx`, `embedding_model.onnx`)
 sont lus dans le même dossier que le modèle (cf. scripts/download_models.py).
@@ -74,7 +80,7 @@ class OpenWakeWordDetector:
         self.verifier_threshold = verifier_threshold
         self._model = Model(
             wakeword_models=[str(model)],
-            inference_framework="onnx",  # obligatoire sous Windows (§4)
+            inference_framework="onnx",  # CPU sur toutes les plateformes (pas de CoreML : §4)
             melspec_model_path=str(model.parent / FEATURE_MODELS[0]),
             embedding_model_path=str(model.parent / FEATURE_MODELS[1]),
         )

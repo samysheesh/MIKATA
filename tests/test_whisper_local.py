@@ -62,7 +62,11 @@ def fake_whisper(monkeypatch: pytest.MonkeyPatch) -> types.SimpleNamespace:
 
 
 def _stt(tmp_path: Path, **overrides: Any) -> WhisperSTT:
-    return WhisperSTT(SttConfig().model_copy(update=overrides), download_root=tmp_path)
+    # Ces tests ciblent le backend faster-whisper/CUDA (modules simulés) : le moteur
+    # est fixé car le défaut dépend de la plateforme depuis F1 (mlx sous macOS).
+    return WhisperSTT(
+        SttConfig().model_copy(update={"device": "cuda", **overrides}), download_root=tmp_path
+    )
 
 
 def test_load_and_transcribe(fake_whisper: types.SimpleNamespace, tmp_path: Path) -> None:
@@ -206,7 +210,8 @@ def test_prompt_ends_with_short_follow_up_primers() -> None:
 
 def test_prompt_follows_installed_apps(fake_whisper: types.SimpleNamespace, tmp_path: Path) -> None:
     apps = ["Discord", "Hades"]  # Discord est déjà dans stt.initial_prompt
-    stt = WhisperSTT(SttConfig(), download_root=tmp_path, vocabulary=lambda: apps)
+    cuda = SttConfig().model_copy(update={"device": "cuda"})
+    stt = WhisperSTT(cuda, download_root=tmp_path, vocabulary=lambda: apps)
     assert stt.prompt == f"Applications : Hades. {SttConfig().initial_prompt}"
     apps.append("Balatro")
     assert stt.prompt.startswith("Applications : Balatro, Hades. MIKATA")  # recalculé
@@ -214,13 +219,17 @@ def test_prompt_follows_installed_apps(fake_whisper: types.SimpleNamespace, tmp_
     asyncio.run(stt.transcribe(np.zeros(1600, dtype=np.int16)))
     _, kwargs = FakeWhisperModel.instances[-1].calls[-1]
     assert kwargs["initial_prompt"] == stt.prompt
-    off = WhisperSTT(SttConfig(prompt_apps=False), download_root=tmp_path, vocabulary=lambda: apps)
+    off = WhisperSTT(
+        cuda.model_copy(update={"prompt_apps": False}),
+        download_root=tmp_path,
+        vocabulary=lambda: apps,
+    )
     assert off.prompt == SttConfig().initial_prompt
 
     def broken() -> list[str]:
         raise RuntimeError("index pas prêt")
 
-    assert WhisperSTT(SttConfig(), tmp_path, vocabulary=broken).prompt == stt.cfg.initial_prompt
+    assert WhisperSTT(cuda, tmp_path, vocabulary=broken).prompt == stt.cfg.initial_prompt
     stt.close()
 
 

@@ -15,7 +15,8 @@ from collections.abc import Callable
 
 def _com_init() -> None:
     """COM initialisé dans le thread du poller (Windows) : uiautomation l'exige, sinon
-    « CoInitialize n'a pas été appelé » à chaque lecture. Ailleurs : rien à faire."""
+    « CoInitialize n'a pas été appelé » à chaque lecture. Sur darwin : rien à faire
+    (AXUIElement n'a pas d'appartement COM). Ailleurs : rien à faire."""
     if sys.platform != "win32":
         return
     try:

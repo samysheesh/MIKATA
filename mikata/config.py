@@ -7,6 +7,7 @@ la section `logging` est un ajout de la phase 0 (rotation des logs, §10 « Logs
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from typing import Any, Literal
 
@@ -42,6 +43,9 @@ class _Section(BaseModel):
 
 
 class AudioConfig(_Section):
+    # Sous-chaîne du micro : un micro USB (ici le RØDE NT-USB) se nomme pareil sous
+    # Windows (WASAPI) et macOS (Core Audio), donc ce défaut reste valable partout ;
+    # « default » suit le micro par défaut du système (voir scripts/list_audio_devices.py).
     input_device: str = "NT-USB"
     output_device: str = "default"
     pre_roll_s: float = Field(default=2.0, gt=0, le=10)
@@ -57,6 +61,7 @@ class WakeConfig(_Section):
     threshold: float = Field(default=0.5, ge=0, le=1)
     consecutive_frames: int = Field(default=1, ge=1)
     refractory_s: float = Field(default=1.0, ge=0)
+    # Sur macOS, l'équivalent usuel est <cmd>+<alt>+m (pynput note la touche Cmd « cmd »).
     hotkey: str = "<ctrl>+<alt>+m"
     collect_negatives: bool = False
     log_days: int = Field(default=7, ge=1)  # ajout phase 1 : purge de data/wake_logs/
@@ -90,7 +95,11 @@ class VadConfig(_Section):
 
 class SttConfig(_Section):
     model: str = "large-v3-turbo"
-    device: Literal["cuda", "cpu"] = "cuda"
+    # Moteur de transcription : « cuda » (Windows, RTX 3080), « mlx » (macOS, Apple
+    # Silicon via mlx-whisper), « cpu » en secours partout.
+    device: Literal["cuda", "cpu", "mlx"] = (
+        "cuda" if sys.platform == "win32" else ("mlx" if sys.platform == "darwin" else "cpu")
+    )
     compute_type: Literal["float16", "int8_float16", "int8", "float32"] = "int8_float16"
     beam_size: int = Field(default=1, ge=1)
     # Vocabulaire, puis amorces de suites courtes (phase 6b : « et à Tokyo ? » était lu
@@ -212,6 +221,12 @@ class FilesIndexConfig(_Section):
     poll_s: float = Field(default=5, ge=1, le=3600)  # sondage du journal USN
     max_results: int = Field(default=20, ge=1, le=100)  # résultats renvoyés au LLM
 
+    @property
+    def backend(self) -> Literal["usn", "spotlight"]:
+        """Moteur d'index : « usn » (MFT + journal USN, Windows) ou « spotlight »
+        (macOS). Choisi par la plateforme, pas par un réglage."""
+        return "spotlight" if sys.platform == "darwin" else "usn"
+
 
 VoiceEngine = Literal["piper", "kokoro", "elevenlabs"]
 
@@ -317,6 +332,12 @@ class UiaConfig(_Section):
     # Client d'accessibilité à l'écoute (UiaClientsAreListening) : les applications
     # Chromium/Electron (Discord...) exposent leur arbre complet sans drapeau de lancement.
     accessibility_client: bool = True
+
+    @property
+    def backend(self) -> Literal["uia", "appkit"]:
+        """Moteur de pilotage : « uia » (arbre UIA, Windows) ou « appkit » (API
+        d'accessibilité, macOS). Choisi par la plateforme, pas par un réglage."""
+        return "appkit" if sys.platform == "darwin" else "uia"
 
 
 class LoggingConfig(_Section):

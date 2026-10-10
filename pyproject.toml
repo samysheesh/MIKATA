@@ -33,12 +33,14 @@ dependencies = [
     "send2trash>=1.8",
     "sounddevice>=0.5.1",
     "soxr>=0.5",
-    # Windows uniquement : importées paresseusement, mockées dans les tests.
+    # Windows uniquement (sauf pystray, multiplateforme) : importées paresseusement,
+    # mockées dans les tests.
     # DLL CUDA 12 (cuBLAS, cuDNN 9) pour faster-whisper / CTranslate2 sur la RTX 3080.
     "nvidia-cublas-cu12>=12.4,<13; sys_platform == 'win32'",
     "nvidia-cudnn-cu12==9.10.2.21; sys_platform == 'win32'",
     "pynput>=1.7.7; sys_platform == 'win32'",
-    "pystray>=0.19.5; sys_platform == 'win32'",
+    # Icône de notification : commune à Windows et macOS (backend AppKit via pyobjc).
+    "pystray>=0.19.5",
     "rapidfuzz>=3.9",
     "trafilatura>=2.0",
     "pyperclip>=1.9",
@@ -63,6 +65,21 @@ dependencies = [
     # Phase 12b : contrôle du navigateur (Brave/Chromium) via le protocole DevTools. Le vrai
     # client est testé sur la CI Linux contre un faux serveur WebSocket.
     "websockets>=14",
+    # macOS uniquement (port Option B) : ponts Objective-C importés paresseusement, mockés
+    # dans les tests. La STT locale passe par MLX (Apple Silicon), le pilotage fin des
+    # applis par l'API d'accessibilité, l'index de fichiers par Spotlight (rescan
+    # watchdog en secours).
+    "pyobjc-framework-Cocoa>=11; sys_platform == 'darwin'",
+    "pyobjc-framework-Quartz>=11; sys_platform == 'darwin'",
+    "pyobjc-framework-ApplicationServices>=11; sys_platform == 'darwin'",
+    "pyobjc-framework-UserNotifications>=11; sys_platform == 'darwin'",
+    "pyobjc-framework-Accessibility>=11; sys_platform == 'darwin'",
+    "pyobjc-framework-CoreServices>=11; sys_platform == 'darwin'",
+    # Corbeille sûre du Finder via l'API native (le send2trash de base reste commun).
+    "send2trash[nativeLib]>=1.8; sys_platform == 'darwin'",
+    "mlx-whisper>=0.4; sys_platform == 'darwin'",
+    "macuiauto>=0.1; sys_platform == 'darwin'",
+    "watchdog>=4; sys_platform == 'darwin'",
 ]
 
 [dependency-groups]
@@ -79,9 +96,10 @@ build-backend = "hatchling.build"
 packages = ["mikata"]
 
 [tool.uv]
-# Résolution limitée aux plateformes visées : PC Windows + CI Linux.
+# Résolution limitée aux plateformes visées : PC Windows, Mac Apple Silicon + CI Linux.
 environments = [
     "sys_platform == 'win32'",
+    "sys_platform == 'darwin'",
     "sys_platform == 'linux'",
 ]
 

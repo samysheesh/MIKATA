@@ -1,7 +1,9 @@
 """Sons d'interface (§8) : préchargés en mémoire au taux de la sortie, volume appliqué.
 
 Les fichiers `assets/sounds/<nom>.wav` peuvent être remplacés par les tiens ; s'il en
-manque un, le son par défaut est synthétisé.
+manque un, le son par défaut est synthétisé. `DEFAULT_RATE` n'est que le taux de
+synthèse de repli : le rééchantillonnage soxr adapte chaque son au taux réel du
+périphérique (WASAPI comme CoreAudio).
 """
 
 from __future__ import annotations

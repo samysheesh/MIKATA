@@ -66,6 +66,7 @@ PHASE_5_TOOLS = {
     "delete_file",
     # shell
     "run_powershell",
+    "run_shell",
     "run_script",
 }
 PHASE_6_TOOLS = {"set_history_duration"}  # durée de l'historique, à la voix

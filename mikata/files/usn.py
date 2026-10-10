@@ -12,6 +12,7 @@ des chemins et l'application des événements sont des fonctions pures, testable
 from __future__ import annotations
 
 import ctypes
+import sys
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 
@@ -36,6 +37,16 @@ _HIDDEN_TOP = {"$extend", "system volume information"}
 
 _BUFFER_SIZE = 1024 * 1024  # 1 Mo par appel ioctl
 _NTFS_EPOCH_S = 11_644_473_600  # 1601 -> 1970
+
+DARWIN_MSG = (
+    "lecture MFT/USN indisponible sur macOS : NTFS direct et fsutil sont "
+    "Windows uniquement ; utilisez le backend Spotlight (files.index)."
+)
+
+
+def _require_win32() -> None:
+    if sys.platform != "win32":
+        raise NotImplementedError(DARWIN_MSG)
 
 
 class UsnRecordV2(ctypes.Structure):
@@ -187,6 +198,7 @@ def list_ntfs_volumes() -> list[str]:
 
 
 def _open_volume(volume: str) -> int:
+    _require_win32()
     import win32con
     import win32file
 
@@ -218,6 +230,7 @@ def can_read_volumes() -> bool:
 
 def enumerate_files(volume: str) -> Iterator[UsnEntry]:
     """Toutes les entrées de la MFT du volume (FRN, parent, nom, date, dossier ?)."""
+    _require_win32()
     import win32file
 
     handle = _open_volume(volume)
@@ -264,6 +277,7 @@ def enumerate_files(volume: str) -> Iterator[UsnEntry]:
 
 def query_journal(volume: str) -> tuple[int, int]:
     """(identifiant du journal, prochain USN attendu) du volume."""
+    _require_win32()
     import win32file
 
     handle = _open_volume(volume)
@@ -285,14 +299,23 @@ def _journal_io(handle: int, ioctl: int, input_bytes: bytes, size: int) -> bytes
     kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
     kernel32.VirtualAlloc.restype = ctypes.c_void_p
     kernel32.VirtualAlloc.argtypes = [
-        ctypes.c_void_p, ctypes.c_size_t, ctypes.c_ulong, ctypes.c_ulong,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_ulong,
+        ctypes.c_ulong,
     ]
     kernel32.VirtualFree.restype = ctypes.c_int
     kernel32.VirtualFree.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_ulong]
     kernel32.DeviceIoControl.restype = ctypes.c_int
     kernel32.DeviceIoControl.argtypes = [
-        ctypes.c_void_p, ctypes.c_ulong, ctypes.c_void_p, ctypes.c_ulong,
-        ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong), ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_ulong,
+        ctypes.c_void_p,
+        ctypes.c_ulong,
+        ctypes.c_void_p,
+        ctypes.c_ulong,
+        ctypes.POINTER(ctypes.c_ulong),
+        ctypes.c_void_p,
     ]
     buffer = kernel32.VirtualAlloc(None, size, 0x3000, 0x04)  # MEM_COMMIT|RESERVE, RW
     if not buffer:
@@ -300,10 +323,14 @@ def _journal_io(handle: int, ioctl: int, input_bytes: bytes, size: int) -> bytes
     try:
         returned = ctypes.c_ulong()
         ok = kernel32.DeviceIoControl(
-            ctypes.c_void_p(int(handle)), ioctl,
-            input_bytes, len(input_bytes),
-            buffer, size,
-            ctypes.byref(returned), None,
+            ctypes.c_void_p(int(handle)),
+            ioctl,
+            input_bytes,
+            len(input_bytes),
+            buffer,
+            size,
+            ctypes.byref(returned),
+            None,
         )
         if not ok:
             raise ctypes.WinError()
@@ -320,6 +347,7 @@ def read_journal(
     `timeout_s = 0` : non bloquant (le poller reviendra au tour suivant). Lève sur une
     erreur réelle (journal vidé, volume disparu) : l'appelant reconstruit l'index.
     """
+    _require_win32()
     import win32file
 
     handle = _open_volume(volume)
@@ -371,6 +399,8 @@ def read_journal(
 
 def diagnose(volume: str) -> str:
     """Décodage du premier tampon de FSCTL_ENUM_USN_DATA (diagnostic, volume élevé)."""
+    if sys.platform != "win32":
+        return DARWIN_MSG
     import win32file
 
     handle = _open_volume(volume)
@@ -386,8 +416,7 @@ def diagnose(volume: str) -> str:
         if len(output) > 72:
             record = UsnRecordV2.from_buffer_copy(output, 8)
             raw_name = output[
-                8 + record.file_name_offset : 8 + record.file_name_offset
-                + record.file_name_length
+                8 + record.file_name_offset : 8 + record.file_name_offset + record.file_name_length
             ]
             try:
                 name = raw_name.decode("utf-16-le", errors="replace")

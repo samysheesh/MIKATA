@@ -2,8 +2,9 @@
 
 Usage : uv run python scripts/list_audio_devices.py [--all] [--config config.yaml]
 
-Sous Windows, seuls les périphériques WASAPI sont affichés par défaut (c'est l'API hôte
-utilisée par MIKATA, §3) ; `--all` affiche aussi MME, DirectSound, WDM-KS.
+Seuls les périphériques de l'API native sont affichés par défaut (WASAPI sous Windows,
+CoreAudio sous macOS : c'est l'API hôte utilisée par MIKATA, §3) ; `--all` affiche
+aussi les autres API (MME, DirectSound, WDM-KS...).
 Les valeurs `audio.input_device` / `audio.output_device` sont des sous-chaînes du nom
 (insensibles à la casse) : elles doivent désigner exactement un périphérique.
 """
@@ -21,7 +22,9 @@ from mikata.audio.devices import (
     collect_devices,
     default_device_index,
     filter_host_api,
+    filter_preferred,
     match_devices,
+    preferred_host_api,
 )
 
 __all__ = ["PREFERRED_HOST_API", "collect_devices", "filter_host_api", "main", "match_devices"]
@@ -63,7 +66,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
     devices = collect_devices(sd)
-    shown = devices if args.all else filter_host_api(devices, PREFERRED_HOST_API)
+    api_name = preferred_host_api()
+    shown = devices if args.all else filter_preferred(devices)
     print(format_table(shown))
 
     try:
@@ -76,7 +80,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
     print(f"\nConfiguration : {config_path}")
-    candidates = filter_host_api(devices, PREFERRED_HOST_API)
+    candidates = filter_preferred(devices)  # --all n'élargit que l'affichage, pas le choix
     all_ok = True
     for key, substring, kind in (
         ("audio.input_device", config.audio.input_device, "input"),
@@ -86,7 +90,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             index = default_device_index(sd, kind)
             default = next((d for d in candidates if d.index == index), None)
             if default is None:
-                print(f"[!!] {key} = 'default' -> aucun périphérique par défaut dans Windows")
+                print(f"[!!] {key} = 'default' -> aucun périphérique par défaut ({api_name})")
                 all_ok = False
             else:
                 print(f"[OK] {key} = 'default' -> #{default.index} {default.name}")

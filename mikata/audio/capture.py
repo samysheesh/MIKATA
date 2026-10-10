@@ -1,8 +1,12 @@
-"""Capture micro WASAPI via sounddevice (§3).
+"""Capture micro via sounddevice (§3).
 
 Chaîne : callback PortAudio (copie du bloc + horodatage, rien d'autre)
 → file thread-safe → thread `mikata-audio` (mono, 16 kHz, int16, trames de 80 ms)
 → file asyncio lue par l'orchestrateur.
+
+Le rééchantillonnage soxr couvre tous les taux natifs (mixeur partagé WASAPI sous
+Windows, taux CoreAudio sous macOS) : le taux vient du périphérique, jamais d'un
+a priori de plateforme.
 """
 
 from __future__ import annotations
@@ -73,7 +77,7 @@ class AudioCapture:
         self.device = device
         self._channel = channel
         self._channels = min(device.max_input_channels, 8)
-        self._rate = int(device.default_samplerate)  # WASAPI partagé : taux du mixeur Windows
+        self._rate = int(device.default_samplerate)  # taux annoncé par le pilote audio
         self._raw: queue.SimpleQueue[tuple[np.ndarray, float, bool]] = queue.SimpleQueue()
         self._frames: asyncio.Queue[CapturedFrame] = asyncio.Queue()
         self._loop: asyncio.AbstractEventLoop | None = None

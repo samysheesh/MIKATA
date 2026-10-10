@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -41,7 +42,11 @@ def test_defaults_match_section_10(config_file: Path) -> None:
     assert config.vad.end_silence_ms == 500
     assert config.vad.speculative_ms == 250
     assert config.stt.model == "large-v3-turbo"
-    assert config.stt.device == "cuda"
+    # F1 (Option B) : défaut « mlx » sous macOS, « cuda » sous Windows, « cpu » ailleurs.
+    expected_device = (
+        "mlx" if sys.platform == "darwin" else ("cuda" if sys.platform == "win32" else "cpu")
+    )
+    assert config.stt.device == expected_device
     assert config.stt.compute_type == "int8_float16"
     assert config.llm.max_tool_rounds == 8
     assert config.tts.backend == "piper"

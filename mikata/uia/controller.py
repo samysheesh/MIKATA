@@ -1,8 +1,12 @@
-"""Implémentation Windows de `tools.base.UiAutomation` (phase 12a).
+"""Implémentation Windows/macOS de `tools.base.UiAutomation` (phase 12a).
 
-La bibliothèque `uiautomation` (pur Python, sur comtypes) n'est importée qu'ici, sous
-Windows et paresseusement. Toutes les méthodes sont bloquantes : les outils les appellent
-via `ToolContext.run_blocking` (le thread COM dédié aux outils).
+- win32 : bibliothèque `uiautomation` (pur Python, sur comtypes), importée ici,
+  paresseusement. Toutes les méthodes sont bloquantes : les outils les appellent
+  via `ToolContext.run_blocking` (le thread COM dédié aux outils).
+- darwin : backend AXUIElement via `macuiauto` (import paresseux), mêmes signatures.
+  Rôles AX documentés dans `_AX_KINDS` (AXButton -> bouton, AXTextField -> champ...).
+  Note : pour Chromium/Electron (Discord, VS Code...), préférez CDP quand c'est
+  possible (arbre complet sans droits d'accessibilité) ; AX reste le repli natif.
 
 Noms comparés sans casse ni accents (comme tools/apps.py) : « discorde » trouve « Discord »,
 « envoie » trouve « Envoyer ».
@@ -10,7 +14,9 @@ Noms comparés sans casse ni accents (comme tools/apps.py) : « discorde » trou
 
 from __future__ import annotations
 
+import contextlib
 import re
+import sys
 import unicodedata
 from typing import Any
 
@@ -57,7 +63,12 @@ _NAME_MAX = 200  # caractères gardés d'un nom de contrôle
 
 
 def _module() -> Any:
-    """La bibliothèque uiautomation, importée à la première utilisation (Windows seul)."""
+    """Bibliothèque d'automatisation, importée à la première utilisation.
+
+    win32 : `uiautomation` (comtypes) ; darwin : `macuiauto` (AXUIElement).
+    """
+    if sys.platform == "darwin":
+        return _ax_module()
     try:
         import uiautomation
     except ImportError as exc:
@@ -65,6 +76,76 @@ def _module() -> Any:
             "le pilotage fin des applications n'est pas installé (uiautomation)"
         ) from exc
     return uiautomation
+
+
+def _ax_module() -> Any:
+    """Backend AXUIElement macOS (`macuiauto`), import paresseux."""
+    try:
+        import macuiauto  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise ToolError("le pilotage fin des applications n'est pas installé (macuiauto)") from exc
+    return macuiauto
+
+
+# Rôle AX macOS -> nom français donné au LLM (miroir de `_KINDS` Windows).
+_AX_KINDS = {
+    "AXButton": "bouton",
+    "AXTextField": "champ",
+    "AXSecureTextField": "champ",
+    "AXTextArea": "champ",
+    "AXStaticText": "texte",
+    "AXWebArea": "document",
+    "AXRow": "élément",
+    "AXList": "liste",
+    "AXCheckBox": "case",
+    "AXRadioButton": "case",
+    "AXLink": "lien",
+    "AXMenuItem": "menu",
+    "AXTabGroup": "onglet",
+    "AXComboBox": "liste déroulante",
+    "AXOutlineRow": "arbre",
+    "AXSlider": "curseur",
+    "AXProgressIndicator": "progression",
+    "AXToolbar": "barre d'outils",
+    "AXImage": "image",
+}  # fmt: skip
+
+
+def _ax_kind(role: str) -> str:
+    return _AX_KINDS.get(role, "contrôle")
+
+
+def _ax_name(node: Any) -> str:
+    for attr in ("AXTitle", "AXDescription", "AXValue"):
+        try:
+            value = node.get(attr)
+        except Exception:
+            continue
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    try:
+        return str(getattr(node, "title", "") or "").strip()
+    except Exception:
+        return ""
+
+
+def _ax_role(node: Any) -> str:
+    try:
+        return str(node.get("AXRole") or "")
+    except Exception:
+        return str(getattr(node, "role", "") or "")
+
+
+def _ax_children(node: Any) -> list[Any]:
+    try:
+        children = node.get("AXChildren") or []
+        return list(children)
+    except Exception:
+        pass
+    try:
+        return list(node.children())
+    except Exception:
+        return []
 
 
 def fold(text: str) -> str:
@@ -80,10 +161,25 @@ def _truncate(text: str, max_chars: int) -> str:
 
 def _pattern(node: Any, name: str) -> Any:
     """Pattern UIA `name` du contrôle, ou None s'il ne le supporte pas (ou erreur COM)."""
+    if sys.platform == "darwin":
+        return None  # AX n'a pas de patterns UIA : actions via AXPress/AXSetValue
     try:
         return getattr(node, f"Get{name}Pattern")()
     except Exception:
         return None
+
+
+def _is_darwin() -> bool:
+    return sys.platform == "darwin"
+
+
+def _is_uia_node(node: Any) -> bool:
+    """Nœud `uiautomation` (Windows) plutôt que AX (`macuiauto`) ? Détection par attribut,
+    pas par plateforme : les tests utilisent des sosies UIA sur n'importe quel OS."""
+    try:
+        return getattr(node, "ControlTypeName", None) is not None
+    except Exception:
+        return False
 
 
 class UiController:
@@ -147,7 +243,11 @@ class UiController:
     def _attach(self, window: UiWindowInfo) -> Any:
         """Contrôle racine de la fenêtre, par sa poignée native. `ControlFromHandle` +
         `GetTopLevelControl` est la seule voie fiable : `WindowControl(NativeWindowHandle=...)`
-        ignore la poignée et renvoie la fenêtre au premier plan (constaté sur Discord)."""
+        ignore la poignée et renvoie la fenêtre au premier plan (constaté sur Discord).
+        Sur darwin : racine AXUIElement de l'application (via `macuiauto`, par pid si
+        la poignée porte un pid, sinon fenêtre au premier plan)."""
+        if _is_darwin():
+            return self._attach_ax(window)
         auto = _module()
         if not window.handle:
             raise ToolError(f"la fenêtre « {window.title} » n'a pas de poignée Windows")
@@ -162,20 +262,44 @@ class UiController:
             raise ToolError(f"la fenêtre « {window.title} » ne se laisse pas lire")
         return top
 
+    def _attach_ax(self, window: UiWindowInfo) -> Any:
+        """Racine AX de la fenêtre (darwin, `macuiauto`, import paresseux)."""
+        ax = _ax_module()
+        try:
+            if window.handle:
+                try:
+                    return ax.from_pid(int(window.handle))
+                except (ValueError, TypeError):
+                    pass
+            return ax.focused_window()
+        except Exception as exc:
+            raise ToolError(f"la fenêtre « {window.title} » ne se laisse pas lire : {exc}") from exc
+
     def _walk(self, root: Any, max_nodes: int) -> list[Any]:
-        """Parcours en profondeur, borné : une fenêtre géante ne bloque pas l'outil."""
+        """Parcours en profondeur, borné : une fenêtre géante ne bloque pas l'outil.
+        Nœuds UIA : `GetChildren` ; nœuds AX (darwin) : `AXChildren`."""
+        try:
+            children = list(root.GetChildren())
+        except Exception:
+            children = list(_ax_children(root))
+            get_children = _ax_children
+        else:
+            get_children = lambda node: node.GetChildren()  # noqa: E731
         nodes: list[Any] = []
-        stack = list(root.GetChildren())
+        stack = children
         while stack and len(nodes) < max_nodes:
             node = stack.pop()
             nodes.append(node)
-            stack.extend(node.GetChildren())
+            with contextlib.suppress(Exception):
+                stack.extend(get_children(node))
         return nodes
 
     # -- contrôles --------------------------------------------------------------------
 
     def controls(self, window: UiWindowInfo, max_controls: int) -> list[UiControlInfo]:
         root = self._attach(window)
+        if not _is_uia_node(root):
+            return self._controls_ax(root, max_controls)
         found: list[UiControlInfo] = []
         for node in self._walk(root, _MAX_VISITED):
             name = (node.Name or "").strip()
@@ -189,6 +313,30 @@ class UiController:
                 break
         return found
 
+    def _controls_ax(self, root: Any, max_controls: int) -> list[UiControlInfo]:
+        found: list[UiControlInfo] = []
+        for node in self._walk(root, _MAX_VISITED):
+            name = _ax_name(node)
+            if not name:
+                continue
+            kind = _ax_kind(_ax_role(node))
+            if kind in _SKIP_KINDS:
+                continue
+            found.append(UiControlInfo(name=name[:_NAME_MAX], kind=kind))
+            if len(found) >= max_controls:
+                break
+        return found
+
+    def _node_name(self, node: Any) -> str:
+        if not _is_uia_node(node):
+            return _ax_name(node)
+        return (node.Name or "").strip()
+
+    def _node_kind(self, node: Any) -> str:
+        if not _is_uia_node(node):
+            return _ax_kind(_ax_role(node))
+        return _KINDS.get(node.ControlTypeName, "contrôle")
+
     def _find(
         self,
         window: UiWindowInfo,
@@ -201,10 +349,10 @@ class UiController:
         wanted = fold(control)
         candidates: list[Any] = []
         for node in self._walk(root, _MAX_VISITED):
-            name = (node.Name or "").strip()
+            name = self._node_name(node)
             if not name:
                 continue
-            node_kind = _KINDS.get(node.ControlTypeName, "contrôle")
+            node_kind = self._node_kind(node)
             if kind is not None and fold(kind) != fold(node_kind):
                 continue
             if clickable and kind is None and node_kind not in _CLICKABLE:
@@ -232,6 +380,13 @@ class UiController:
         return _truncate(text, max_chars)
 
     def _document_text(self, root: Any) -> str:
+        if not _is_uia_node(root):
+            for node in [root, *self._walk(root, 200)]:
+                if _ax_role(node) == "AXWebArea":
+                    text = _ax_name(node)
+                    if text:
+                        return text
+            return ""
         for node in [root, *self._walk(root, 200)]:
             if node.ControlTypeName == "DocumentControl":
                 text = _pattern(node, "Text")
@@ -244,8 +399,15 @@ class UiController:
 
     def _visible_text(self, root: Any) -> str:
         parts: list[str] = []
+        ax = not _is_uia_node(root)
         for node in self._walk(root, _MAX_VISITED):
-            if node.ControlTypeName == "TextControl" and node.Name:
+            if ax:
+                role = _ax_role(node)
+                if role in ("AXStaticText", "AXTextField", "AXTextArea"):
+                    name = _ax_name(node)
+                    if name:
+                        parts.append(name)
+            elif node.ControlTypeName == "TextControl" and node.Name:
                 parts.append(node.Name.strip())
             elif node.ControlTypeName == "EditControl":
                 value = _pattern(node, "Value")
@@ -263,7 +425,9 @@ class UiController:
 
     def click(self, window: UiWindowInfo, control: str, kind: str | None, nth: int) -> str:
         node = self._find(window, control, kind, nth, clickable=True)
-        name = node.Name or "(sans nom)"
+        name = self._node_name(node) or "(sans nom)"
+        if not _is_uia_node(node):
+            return self._click_ax(node, name)
         invoke = _pattern(node, "Invoke")
         if invoke is not None:
             try:
@@ -280,8 +444,28 @@ class UiController:
                 raise ToolError(f"« {name} » n'a pas répondu au clic : {exc}") from exc
         raise ToolError(f"« {name} » ne se laisse pas cliquer (pas un bouton)")
 
+    def _click_ax(self, node: Any, name: str) -> str:
+        """Clic AX : action `AXPress` (boutons, cases, liens...)."""
+        try:
+            node.perform("AXPress")
+            return f"« {name} » cliqué."
+        except Exception as exc:
+            try:
+                press = node.get("AXPress")
+                if press is not None:
+                    return f"« {name} » cliqué."
+            except Exception:
+                pass
+            raise ToolError(f"« {name} » n'a pas répondu au clic : {exc}") from exc
+
     def set_text(self, window: UiWindowInfo, control: str, text: str) -> str:
         node = self._find(window, control, "champ", 1)
+        if not _is_uia_node(node):
+            try:
+                node.set("AXValue", text)
+            except Exception as exc:
+                raise ToolError(f"« {control} » n'a pas accepté le texte : {exc}") from exc
+            return f"« {control} » rempli."
         value = _pattern(node, "Value")
         if value is None:
             raise ToolError(f"« {control} » n'est pas un champ modifiable")
@@ -325,6 +509,8 @@ class UiController:
 
 
 def _control_text(node: Any) -> str:
+    if not _is_uia_node(node):
+        return _ax_name(node)
     value = _pattern(node, "Value")
     if value is not None:
         try:
@@ -349,9 +535,14 @@ def _discord_voice_from(nodes: list[Any]) -> tuple[str | None, list[str]]:
     connectés sont des boutons « <nom> (salon vocal) » sans membres : ignorés.
     """
     for node in nodes:
-        if node.ControlTypeName != "HyperlinkControl":
+        if _is_uia_node(node):
+            is_link = node.ControlTypeName == "HyperlinkControl"
+            name = (node.Name or "").strip()
+        else:
+            is_link = _ax_role(node) == "AXLink"
+            name = _ax_name(node)
+        if not is_link:
             continue
-        name = (node.Name or "").strip()
         folded = fold(name)
         if "(salon vocal)," not in folded and "(voice channel)," not in folded:
             continue

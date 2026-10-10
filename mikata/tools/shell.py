@@ -32,7 +32,7 @@ from mikata.tools.base import (
 from mikata.tools.registry import register_tool
 
 USER_SCRIPTS = "scripts/user"
-SCRIPT_TYPES = (".ps1", ".py", ".bat", ".cmd")
+SCRIPT_TYPES = (".ps1", ".py", ".bat", ".cmd", ".sh")
 CREATE_NO_WINDOW = 0x08000000
 # Sortie en UTF-8, pour les accents (PowerShell 5 écrit sinon dans la page de code OEM).
 PS_PREFIX = "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
@@ -103,7 +103,8 @@ class PowerShellParams(BaseModel):
 class RunPowerShell(BaseTool[PowerShellParams]):
     name = "run_powershell"
     description = (
-        "Dernier recours : commande PowerShell pour ce qu'aucun autre outil ne sait faire "
+        "Dernier recours sous Windows : commande PowerShell pour ce qu'aucun autre outil "
+        "ne sait faire "
         "(jamais pour ouvrir ou fermer une appli, taper du texte, déplacer ou supprimer un "
         "fichier) ; le garde-fou peut la refuser ou demander confirmation."
     )
@@ -134,6 +135,44 @@ class RunPowerShell(BaseTool[PowerShellParams]):
         return _report(code, output)
 
 
+class ShellParams(BaseModel):
+    command: str = Field(min_length=1, max_length=4000, description="Commande shell (zsh)")
+
+
+@register_tool
+class RunShell(BaseTool[ShellParams]):
+    name = "run_shell"
+    description = (
+        "Dernier recours sous macOS : commande zsh pour ce qu'aucun autre outil ne sait "
+        "faire (jamais pour ouvrir ou fermer une appli, taper du texte, déplacer ou "
+        "supprimer un fichier) ; le garde-fou peut la refuser ou demander confirmation."
+    )
+    params = ShellParams
+
+    def time_limit(self) -> float:
+        cfg = self.ctx.config
+        return cfg.tools.shell_timeout_s + cfg.guard.confirm_timeout_s + CONFIRM_MARGIN_S
+
+    async def run(self, args: ShellParams) -> str:
+        guard = self.ctx.require_guard()
+        turn = current_turn()
+        decision = guard.check_command(args.command, after_web=bool(turn and turn.web_read))
+        await _approve(self.ctx, guard, decision, "Cette commande")
+        runner = self.ctx.require_shell()
+        try:
+            code, output = await runner.run(
+                ["/bin/zsh", "-lc", args.command],
+                self.ctx.config.tools.shell_timeout_s,
+                cwd=guard.home,
+            )
+        except TimeoutError as exc:
+            limit = self.ctx.config.tools.shell_timeout_s
+            raise ToolError(f"commande arrêtée après {limit:.0f} s") from exc
+        except OSError as exc:
+            raise ToolError(f"zsh introuvable : {exc}") from exc
+        return _report(code, output)
+
+
 class ScriptParams(BaseModel):
     name: str = Field(
         min_length=1, description="Nom du script de scripts/user (ex. « sauvegarde.ps1 »)"
@@ -143,6 +182,8 @@ class ScriptParams(BaseModel):
 
 def script_argv(path: Path, arguments: list[str]) -> list[str]:
     kind = path.suffix.lower()
+    if kind == ".sh":
+        return ["/bin/zsh", str(path), *arguments]
     if kind == ".ps1":
         return ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
                 "-File", str(path), *arguments]  # fmt: skip

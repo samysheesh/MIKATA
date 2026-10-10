@@ -150,6 +150,43 @@ def _run_powershell(command: str, timeout: float = 10.0) -> str:
 
 APP_FRAME_HOST = "applicationframehost"
 
+# -- macOS (darwin) -------------------------------------------------------------------
+# Dossiers d'applications inspectés par MacDesktop.list_apps, avant le repli `mdfind`.
+MAC_APP_DIRS = ("/Applications", "/System/Applications", "~/Applications")
+
+
+def _run_osascript(script: str, timeout: float = 10.0) -> str:
+    """Sortie texte d'un script AppleScript (`osascript -e`), sans fenêtre."""
+    completed = subprocess.run(
+        ["osascript", "-e", script],
+        capture_output=True,
+        timeout=timeout,
+        check=True,
+    )
+    return completed.stdout.decode("utf-8", errors="replace")
+
+
+def scan_applications_dirs(dirs: Iterable[str | Path] | None = None) -> list[AppEntry]:
+    """Paquets `.app` des dossiers d'applications macOS (nom sans extension -> chemin)."""
+    roots = [Path(d).expanduser() for d in (dirs if dirs is not None else MAC_APP_DIRS)]
+    apps: list[AppEntry] = []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for path in sorted(root.glob("*.app")):
+            apps.append(AppEntry(path.stem, str(path)))
+    return apps
+
+
+def parse_mdfind(output: str) -> list[AppEntry]:
+    """Sortie de `mdfind 'kMDItemKind == Application'` -> applications lançables."""
+    apps: list[AppEntry] = []
+    for line in output.splitlines():
+        line = line.strip()
+        if line.endswith(".app"):
+            apps.append(AppEntry(Path(line).stem, line))
+    return apps
+
 
 def _process_name(pid: int) -> str:
     """Nom du programme d'un processus, sans « .exe » (« Notepad ») ; "" si inconnu.
@@ -381,3 +418,191 @@ class WindowsDesktop:
         import pyperclip
 
         pyperclip.copy(text)
+
+
+class MacDesktop:
+    """Implémentation macOS de `tools.base.Desktop` (NSWorkspace/open(1), osascript).
+
+    Même noms et signatures de méthodes que `WindowsDesktop` (protocole
+    `tools.base.Desktop`) : le reste du code ne distingue que par `sys.platform`.
+    Imports lourds (pyobjc) paresseux, dans les fonctions.
+    """
+
+    def __init__(self) -> None:
+        self._apps: list[AppEntry] = []
+        self._apps_at = float("-inf")
+        self._apps_lock = threading.Lock()
+
+    # -- applications -----------------------------------------------------------------
+
+    def list_apps(self, refresh: bool = False) -> list[AppEntry]:
+        with self._apps_lock:
+            stale = time.monotonic() - self._apps_at > APP_INDEX_MAX_AGE_S
+            if refresh or stale or not self._apps:
+                start = time.monotonic()
+                local = scan_applications_dirs()
+                try:
+                    completed = subprocess.run(
+                        ["mdfind", "kMDItemKind == 'Application'"],
+                        capture_output=True,
+                        timeout=15.0,
+                        check=True,
+                    )
+                    spotlight = parse_mdfind(completed.stdout.decode("utf-8", errors="replace"))
+                except (OSError, subprocess.SubprocessError) as exc:
+                    logger.warning("mdfind indisponible : {}", exc)
+                    spotlight = []
+                self._apps = merge_apps(local, spotlight)
+                self._apps_at = time.monotonic()
+                logger.info(
+                    "Index des applications : {} entrées en {:.0f} ms.",
+                    len(self._apps),
+                    (self._apps_at - start) * 1000,
+                )
+            return list(self._apps)
+
+    def cached_apps(self) -> list[AppEntry]:
+        """Index déjà construit (vide avant le premier `list_apps`) ; jamais bloquant."""
+        return list(self._apps)
+
+    def launch(self, app: AppEntry) -> None:
+        self.open_target(app.target)
+
+    def open_target(self, target: str) -> None:
+        """Ouvre une appli, un fichier ou une URL avec l'appli par défaut (open(1))."""
+        if target.startswith(("http://", "https://")) or Path(target).exists():
+            argv = ["open", target]
+        else:  # nom d'appli sans chemin (index) : laisse open(1) la résoudre
+            argv = ["open", "-a", target]
+        try:
+            subprocess.run(argv, check=True, capture_output=True, timeout=15.0)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ToolError(f"macOS n'a pas pu ouvrir « {target} » : {exc}") from exc
+
+    def launch_bundle(self, bundle_path: str) -> None:
+        """Ouvre un paquet `.app` via NSWorkspace (pyobjc, import paresseux)."""
+        from AppKit import NSWorkspace
+        from Foundation import NSURL
+
+        url = NSURL.fileURLWithPath_(bundle_path)
+        if not NSWorkspace.sharedWorkspace().launchApplicationAtURL_options_configuration_error_(
+            url, 0, None, None
+        )[0]:
+            raise ToolError(f"macOS n'a pas pu ouvrir « {bundle_path} »")
+
+    def open_folder(self, path: str, select: bool = False) -> None:
+        """Le Finder sur `path` : le dossier s'ouvre, ou le fichier est sélectionné."""
+        argv = ["open", "-R", str(path)] if select else ["open", str(path)]
+        try:
+            subprocess.run(argv, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError as exc:
+            raise ToolError(f"macOS n'a pas pu ouvrir « {path} » : {exc}") from exc
+
+    # -- fenêtres -----------------------------------------------------------------------
+
+    def windows(self) -> list[WindowInfo]:
+        """Fenêtres visibles via System Events (nom du processus, titre)."""
+        script = (
+            'tell application "System Events" to get {name of every process whose '
+            "background only is false, name of every window of every process whose "
+            "background only is false}"
+        )
+        try:
+            _run_osascript(script)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ToolError(f"liste des fenêtres indisponible : {exc}") from exc
+        # AppleScript renvoie des listes imbriquées difficiles à apparier titre/processus
+        # sans _hosted_process équivalent : on liste une entrée par processus visible.
+        script2 = (
+            'tell application "System Events" to get name of every process whose '
+            "background only is false and number of windows is greater than 0"
+        )
+        try:
+            output = _run_osascript(script2)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ToolError(f"liste des fenêtres indisponible : {exc}") from exc
+        return [
+            WindowInfo(0, name.strip(), name.strip()) for name in output.split(",") if name.strip()
+        ]
+
+    def foreground_window(self) -> WindowInfo | None:
+        try:
+            name = _run_osascript(
+                'tell application "System Events" to get name '
+                "of first process whose frontmost is true"
+            ).strip()
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return WindowInfo(0, name, name) if name else None
+
+    def close_window(self, window: WindowInfo) -> None:
+        """Ferme la fenêtre en quittant l'appli (Cmd+Q ciblé impossible sans handle)."""
+        if not window.process:
+            raise ToolError("aucun processus à fermer")
+        try:
+            _run_osascript(f'tell application "{window.process}" to quit')
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ToolError(f"macOS n'a pas pu fermer « {window.title} » : {exc}") from exc
+
+    def focus_window(self, window: WindowInfo) -> None:
+        if not window.process:
+            raise ToolError("aucun processus à mettre au premier plan")
+        try:
+            _run_osascript(f'tell application "{window.process}" to activate')
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ToolError(
+                f"macOS a refusé de mettre « {window.title} » au premier plan : {exc}"
+            ) from exc
+
+    # -- divers -------------------------------------------------------------------------
+
+    def media_key(self, action: str) -> None:
+        mapping = {"play_pause": "playpause", "next": "next track", "previous": "previous track"}
+        if action == "stop":
+            _run_osascript('tell application "Music" to stop')
+            return
+        try:
+            _run_osascript(f'tell application "Music" to {mapping[action]}')
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ToolError(f"touche média indisponible : {exc}") from exc
+
+    def lock(self) -> None:
+        """Verrouille la session (CGSession, droits normaux)."""
+        cgsession = (
+            "/System/Library/CoreServices/Menu Extras/User.menu/Contents/Resources/CGSession"
+        )
+        try:
+            subprocess.run([cgsession, "-suspend"], check=True, capture_output=True, timeout=10.0)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ToolError(f"macOS a refusé de verrouiller la session : {exc}") from exc
+
+    def power(self, action: str) -> None:
+        """Veille (pmset), extinction ou redémarrage (événement loginwindow)."""
+        try:
+            if action == "sleep":
+                subprocess.run(["pmset", "sleepnow"], check=True, capture_output=True, timeout=10.0)
+            elif action == "shutdown":
+                _run_osascript('tell application "loginwindow" to «event aevtrsdn»')
+            elif action == "restart":
+                _run_osascript('tell application "loginwindow" to «event aevtrrst»')
+            else:
+                raise ToolError(f"action inconnue : {action}")
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ToolError(f"macOS a refusé : {exc}") from exc
+
+    def clipboard_read(self) -> str:
+        import pyperclip
+
+        return str(pyperclip.paste() or "")
+
+    def clipboard_write(self, text: str) -> None:
+        import pyperclip
+
+        pyperclip.copy(text)
+
+
+def make_desktop() -> WindowsDesktop | MacDesktop:
+    """Bureau du système courant (Windows ou macOS)."""
+    if sys.platform == "darwin":
+        return MacDesktop()
+    return WindowsDesktop()

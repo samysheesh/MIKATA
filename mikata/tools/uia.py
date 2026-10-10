@@ -1,8 +1,9 @@
 """Outils de pilotage fin des applications (phase 12a) : uia_window, uia_read, uia_click,
 uia_set_text, uia_state.
 
-Ces outils lisent l'arbre d'accessibilité Windows (noms, types et textes des contrôles) et
-cliquent par nom, au lieu de taper à l'aveugle au clavier. Garde-fou : les contrôles
+Ces outils lisent l'arbre d'accessibilité (Windows : UIA via `uiautomation` ; macOS :
+AXUIElement via `macuiauto`, mêmes signatures ; Chromium : préférez CDP quand c'est
+possible) et cliquent par nom, au lieu de taper à l'aveugle au clavier. Garde-fou : les contrôles
 destructifs (suppression définitive, formatage...) sont refusés, les contrôles sensibles
 (supprimer, désinstaller, payer...) demandent un « oui » oral, et le texte écrit dans un
 champ passe le même filtre que type_text (une commande de suppression ne se tape pas).

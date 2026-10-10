@@ -1,9 +1,13 @@
 """Relance de MIKATA s'il plante (ajout phase 7, démarrage automatique §10).
 
-La tâche planifiée lance `pythonw.exe -m mikata --supervise`. Ce petit processus démarre
-MIKATA dans un processus enfant et le relance s'il s'arrête sur une erreur : l'option
-« redémarrer en cas d'échec » du Planificateur de tâches ne couvre qu'un échec au
-lancement, pas un plantage en cours de route.
+- win32 : la tâche planifiée lance `pythonw.exe -m mikata --supervise`. Ce petit
+  processus démarre MIKATA dans un processus enfant et le relance s'il s'arrête sur
+  une erreur : l'option « redémarrer en cas d'échec » du Planificateur de tâches ne
+  couvre qu'un échec au lancement, pas un plantage en cours de route.
+- darwin : compatible launchd — le superviseur tourne au premier plan (pas de
+  pythonw, pas de DETACHED_PROCESS) sous un agent `~/Library/LaunchAgents`
+  (voir scripts/install_launchd.py : RunAtLoad + KeepAlive) ; launchd relance
+  déjà l'agent, la boucle ci-dessous couvre les plantages en cours de route.
 - « Quitter » (code 0) ou une config invalide (code 2, rien ne changerait) : pas de relance.
 - Sinon (erreur, GPU pas encore prêt juste après l'ouverture de session...) : relance après
   `delay_s`, au plus `max_restarts` fois par heure, puis abandon (pas de boucle infinie).
@@ -83,7 +87,12 @@ def child_command(argv: Sequence[str]) -> list[str]:
 
 
 def relaunch_self(argv: Sequence[str]) -> None:
-    """Redémarrage sans supervision : nouveau processus détaché (sans console), puis on quitte."""
+    """Redémarrage sans supervision : nouveau processus détaché, puis on quitte.
+
+    win32 : sans console (DETACHED_PROCESS + CREATE_NO_WINDOW). darwin : premier
+    plan compatible launchd (pas de détachement : launchd gère le cycle de vie,
+    un double détachement casserait KeepAlive) ; ailleurs : simple Popen.
+    """
     flags = 0
     if sys.platform == "win32":
         flags = (
