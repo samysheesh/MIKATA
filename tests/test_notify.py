@@ -9,6 +9,7 @@ from mikata.ui.notify import ToastNotifier
 
 
 def test_toast_uses_win11toast(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")  # force la branche Windows sur tout hôte
     sent: list[tuple[str, str]] = []
     module = types.ModuleType("win11toast")
     module.notify = lambda title, body: sent.append((title, body))  # type: ignore[attr-defined]
@@ -20,6 +21,7 @@ def test_toast_uses_win11toast(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_toast_failure_is_only_logged(
     monkeypatch: pytest.MonkeyPatch, caplog_loguru: list[str]
 ) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")  # force la branche Windows sur tout hôte
     module = types.ModuleType("win11toast")
 
     def broken(title: str, body: str) -> None:

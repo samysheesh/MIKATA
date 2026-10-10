@@ -127,7 +127,16 @@ DARWIN_BLACKLIST = _rules(
      "la base des autorisations macOS (TCC) est intouchable"),
     (_CMD.format(r"(nvram|csrutil|bless)"), "réglage du démarrage macOS interdit"),
 )  # fmt: skip
-DARWIN_ALL = BLACKLIST + DARWIN_BLACKLIST
+
+
+def _blacklist_for(platform: str) -> list[tuple[re.Pattern[str], str]]:
+    """Liste noire de la plateforme : PowerShell partout, plus les commandes du shell
+    natif sur macOS. Les deux listes restent des constantes distinctes : modifier
+    `BLACKLIST` (Windows) ne doit pas changer silencieusement la sémantique macOS."""
+    if platform == "darwin":
+        return BLACKLIST + DARWIN_BLACKLIST
+    return BLACKLIST
+
 
 # Liste grise : permis, mais seulement après un « oui » de l'utilisateur.
 GRAYLIST = _rules(
@@ -314,7 +323,7 @@ class Guard:
     def check_command(self, command: str, *, after_web: bool = False) -> Decision:
         """Commande PowerShell, cmd ou shell : refusée, à confirmer, ou autorisée."""
         text = _flatten(command)
-        denied = check_patterns(text, DARWIN_ALL if sys.platform == "darwin" else BLACKLIST)
+        denied = check_patterns(text, _blacklist_for(sys.platform))
         if denied is not None:
             return denied
         risky = check_patterns(text, GRAYLIST)
@@ -335,8 +344,9 @@ class Guard:
             if denied is not None:
                 return denied
             # Commandes lancées depuis Python (subprocess) : seulement la liste noire.
-            platform_blacklist = DARWIN_ALL if sys.platform == "darwin" else BLACKLIST
-            return check_patterns(_flatten(content), platform_blacklist) or Decision(Verdict.ALLOW)
+            return check_patterns(_flatten(content), _blacklist_for(sys.platform)) or Decision(
+                Verdict.ALLOW
+            )
         return self.check_command(content)
 
     def check_typed_text(self, text: str) -> Decision:

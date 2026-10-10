@@ -28,19 +28,10 @@ from typing import TextIO
 from loguru import logger
 
 from mikata.files import events, usn
+from mikata.files.usn import _require_win32  # garde Windows unique (définie dans usn.py)
 
 LOG = "helper.log"
 _POLL_S = 3.0
-
-DARWIN_MSG = (
-    "helper USN indisponible sur macOS : volumes NTFS, fsutil et tâche planifiée "
-    "élevée sont Windows uniquement ; l'index macOS passe par Spotlight (files.index)."
-)
-
-
-def _require_win32() -> None:
-    if sys.platform != "win32":
-        raise NotImplementedError(DARWIN_MSG)
 
 
 def _open_append(path: Path) -> TextIO:

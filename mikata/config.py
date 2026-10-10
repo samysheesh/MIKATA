@@ -7,7 +7,6 @@ la section `logging` est un ajout de la phase 0 (rotation des logs, §10 « Logs
 from __future__ import annotations
 
 import os
-import sys
 from pathlib import Path
 from typing import Any, Literal
 
@@ -23,6 +22,8 @@ from pydantic import (
     model_validator,
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from mikata.plat import files_index_backend_default, platform, uia_backend_default
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_ENV_VAR = "MIKATA_CONFIG"
@@ -102,7 +103,7 @@ class SttConfig(_Section):
     # Moteur de transcription : « cuda » (Windows, RTX 3080), « mlx » (macOS, Apple
     # Silicon via mlx-whisper), « cpu » en secours partout.
     device: Literal["cuda", "cpu", "mlx"] = (
-        "cuda" if sys.platform == "win32" else ("mlx" if sys.platform == "darwin" else "cpu")
+        "cuda" if platform() == "win32" else ("mlx" if platform() == "darwin" else "cpu")
     )
     compute_type: Literal["float16", "int8_float16", "int8", "float32"] = "int8_float16"
     beam_size: int = Field(default=1, ge=1)
@@ -228,8 +229,9 @@ class FilesIndexConfig(_Section):
     @property
     def backend(self) -> Literal["usn", "spotlight"]:
         """Moteur d'index : « usn » (MFT + journal USN, Windows) ou « spotlight »
-        (macOS). Choisi par la plateforme, pas par un réglage."""
-        return "spotlight" if sys.platform == "darwin" else "usn"
+        (macOS). Choisi par la plateforme, pas par un réglage ; la décision vit
+        dans `mikata/plat.py` (`files_index_backend_default`)."""
+        return files_index_backend_default()
 
 
 VoiceEngine = Literal["piper", "kokoro", "elevenlabs"]
@@ -340,8 +342,9 @@ class UiaConfig(_Section):
     @property
     def backend(self) -> Literal["uia", "appkit"]:
         """Moteur de pilotage : « uia » (arbre UIA, Windows) ou « appkit » (API
-        d'accessibilité, macOS). Choisi par la plateforme, pas par un réglage."""
-        return "appkit" if sys.platform == "darwin" else "uia"
+        d'accessibilité, macOS). Choisi par la plateforme, pas par un réglage ;
+        la décision vit dans `mikata/plat.py` (`uia_backend_default`)."""
+        return uia_backend_default()
 
 
 class LoggingConfig(_Section):

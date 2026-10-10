@@ -21,8 +21,11 @@ Oui, c'est viable 24h/24. Au repos, MIKATA ne fait qu'écouter le micro et faire
 | LLM | Tout passe par le LLM cloud : DeepSeek « flash » via ton abonnement CommandCode, pas de routeur local |
 | Autonomie | Toutes les actions sans confirmation, sauf la suppression définitive, interdite |
 | Implémentation | Claude Code en sessions cloud, validation de chaque phase sur ton PC |
+| Plateformes | Windows 11 et macOS pris en charge ; Linux seulement pour les tests (STT Parakeet/CPU). Toute la logique de plateforme est centralisée dans `mikata/plat.py` |
+| Port macOS (Option B) | Implémenté et couvert par les tests : les moteurs par plateforme sont choisis par les propriétés `backend` de la config, décidées dans `mikata/plat.py` (STT Parakeet/MLX, pilotage AX, index Spotlight) |
+| Tests sur Linux | Tout code spécifique à une plateforme est isolé derrière une interface et mocké : `pytest` passe sous Linux (CI : ubuntu + windows) |
 
-Hypothèse : le PC est sous **Windows 10/11**. Les chiffres sont des ordres de grandeur à mesurer dès la phase 1.
+Hypothèse : le PC est sous **Windows 11** ; **macOS (Apple Silicon) est également pris en charge** (port « Option B », section 9), et **Linux ne sert qu'aux tests** (backends STT Parakeet/CPU). Tout code spécifique à une plateforme est isolé derrière une interface et mocké dans les tests. Les chiffres sont des ordres de grandeur à mesurer dès la phase 1.
 
 ## 2. Vue d'ensemble, choix techno et budget de latence
 
@@ -68,7 +71,7 @@ Un seul processus Python, une boucle `asyncio` au centre, et les calculs lourds 
 
 **Capture audio**
 
-- Bibliothèque `sounddevice` (PortAudio), API hôte **WASAPI**. Le périphérique d'entrée est choisi par nom dans la config (ton interface audio pro), pas par index (les index changent au redémarrage).
+- Bibliothèque `sounddevice` (PortAudio), API hôte **native** (WASAPI sous Windows, Core Audio sous macOS, choisie dans `audio/devices.py` selon `plat.py`). Le périphérique d'entrée est choisi par nom dans la config (ton interface audio pro), pas par index (les index changent au redémarrage).
 - Ton micro tourne probablement en 48 kHz : on capture au taux natif puis on rééchantillonne en 16 kHz mono int16 (`soxr` ou `scipy.signal.resample_poly`, ratio 1/3).
 - Trames de **80 ms** (1 280 échantillons à 16 kHz), la taille attendue par openWakeWord.
 - Le callback PortAudio ne fait **rien d'autre** que copier la trame dans une file thread-safe. Jamais de calcul dans le callback, sinon craquements et trames perdues.
@@ -131,6 +134,8 @@ Bonne nouvelle côté matériel : avec un casque fermé, le son du jeu ne revien
 
 **STT : faster-whisper, modèle `large-v3-turbo`, sur la 3080, chargé h24.** C'est le meilleur compromis qualité/vitesse disponible en local pour le français : précision proche de `large-v3`, mais son décodeur de 4 couches (contre 32) le rend plusieurs fois plus rapide. `large-v3` complet coûterait plus de VRAM et de latence pour un gain marginal sur des commandes courtes.
 
+**Backend STT selon la plateforme** (`stt.backend`, voir §10) : « auto » prend **Parakeet v3** hors Windows — `parakeet-mlx` sous macOS, `sherpa-onnx` (CPU) sous Linux — et Whisper sous Windows ; « whisper », « parakeet » et « mlx » forcent le moteur. Sous macOS, `stt.device: mlx` fait passer Whisper par `mlx-whisper` (Apple Silicon, repli faster-whisper CPU) ; `stt.device: cuda` reste propre à Windows.
+
 - `compute_type="float16"` : environ 1,6 Go de VRAM, dans ton budget de 2 Go. À vérifier avec `nvidia-smi` en phase 2 ; si ça dépasse, `int8_float16` (\~1 Go) avec une perte de précision quasi nulle.
 - `language="fr"` forcé, `beam_size=1`, `without_timestamps=True`, `condition_on_previous_text=False`, `vad_filter=False` (le découpage est déjà fait).
 - `initial_prompt` / `hotwords` avec ton vocabulaire : noms de tes applis, de tes jeux, « MIKATA ».
@@ -181,7 +186,7 @@ Bonne nouvelle côté matériel : avec un casque fermé, le son du jeu ne revien
 **Ce que fait le garde-fou :**
 
 - **Supprimer = corbeille.** `delete_file` passe toujours par `send2trash`. Aucun outil ne supprime définitivement.
-- **PowerShell filtré.** Avant exécution, `run_powershell` refuse les commandes de suppression ou d'effacement : `Remove-Item` et ses alias (`rm`, `ri`, `del`, `erase`, `rd`, `rmdir`), `Clear-RecycleBin`, `Format-Volume`, `diskpart`, `cipher /w`, `sdelete`, `vssadmin delete`, appels `.Delete()` .NET. Le refus est renvoyé au LLM avec la consigne d'utiliser `delete_file`. C'est une liste noire, donc un filet de sécurité et pas une garantie absolue.
+- **PowerShell filtré.** Avant exécution, `run_powershell` refuse les commandes de suppression ou d'effacement : `Remove-Item` et ses alias (`rm`, `ri`, `del`, `erase`, `rd`, `rmdir`), `Clear-RecycleBin`, `Format-Volume`, `diskpart`, `cipher /w`, `sdelete`, `vssadmin delete`, appels `.Delete()` .NET. Le refus est renvoyé au LLM avec la consigne d'utiliser `delete_file`. C'est une liste noire, donc un filet de sécurité et pas une garantie absolue. Sur macOS, la liste noire est composée explicitement par `_blacklist_for(platform)` : liste commune + commandes du shell natif (`sudo rm -rf`, `diskutil erase`, base TCC, `nvram`/`csrutil`/`bless`).
 - **Écrasement = sauvegarde.** Avant que `write_file` ou `move_file` n'écrase un fichier existant, une copie part dans `data/backups/` (purge après 14 jours).
 - **Extinction / redémarrage avec 5 s pour annuler** : MIKATA annonce l'action, « stop » dans les 5 s l'annule. Pas une confirmation, juste un filet contre une mauvaise transcription.
 - **Contrôles d'interface** (phase 12a, `check_ui_action`) : un clic UIA sur un contrôle destructif (suppression définitive, formatage, réinitialisation du PC) est refusé ; les contrôles sensibles (supprimer, désinstaller, payer) demandent un « oui » oral ; le texte écrit dans un champ passe le filtre de `type_text`. Le nom du contrôle est le seul signal : c'est un filet, pas une garantie — chaque clic reste journalisé dans `data/actions.log`.
@@ -192,16 +197,16 @@ Bonne nouvelle côté matériel : avec un casque fermé, le son du jeu ne revien
 **Catalogue v1** (un module par famille dans `tools/`, ★ = outil terminal) :
 
 - **system** : `get_time`, `system_status` (CPU, RAM, GPU, températures via `psutil` + `nvidia-ml-py`), `set_timer` ★, `set_reminder` ★, `shutdown` / `restart` / `sleep` / `lock` ★.
-- **apps** : `open_app` ★ (index des raccourcis `.lnk` du menu Démarrer + correspondance floue `rapidfuzz`), `close_app` ★, `focus_window` ★ (`pywin32`), `list_windows`.
+- **apps** : `open_app` ★ (index des raccourcis `.lnk` du menu Démarrer sous Windows, dossier Applications + Spotlight sous macOS ; correspondance floue `rapidfuzz`), `close_app` ★, `focus_window` ★, `list_windows`.
 - **web** : `open_url` ★, `web_search` (Brave Search ou Tavily, palier gratuit), `fetch_page` (texte nettoyé via `httpx` + `trafilatura`).
-- **media** : `media_control` ★ (lecture, pause, suivant, précédent), `set_volume` ★ / `mute` ★ (`pycaw`), `set_output_device` ★.
+- **media** : `media_control` ★ (lecture, pause, suivant, précédent), `set_volume` ★ / `mute` ★ (`pycaw` sous Windows, `osascript` volume maître sous macOS), `set_output_device` ★ (Windows).
 - **input** : `type_text`, `press_keys` (`pyautogui`).
 - **files** : `find_files`, `read_file` (tronqué), `write_file`, `move_file`, `delete_file` (corbeille).
-- **index des fichiers** (phase 12d) : `find_path`, `list_folder`, `open_in_explorer` ★. Étage « connaissances locales » : un index SQLite + FTS5 trigram de tous les noms de fichiers des volumes NTFS (`data/files_index.db`, WAL), bâti en lisant la MFT (`FSCTL_ENUM_USN_DATA`, la méthode d'Everything) et tenu à jour par le journal USN (`FSCTL_READ_USN_JOURNAL`) — jamais de rescan. Windows refuse l'accès aux volumes à un utilisateur standard : un helper élevé (`mikata/files/helper.py`, tâche planifiée installée par `scripts/install_usn_helper.ps1`, un UAC) lit MFT + journal et dépose `data/index/build.jsonl` + `events.log` ; MIKATA consomme ce flux (appends atomiques, troncature sûre) — ou lit les volumes directement s'il tourne en administrateur. Le LLM ne voit jamais l'index : il interroge et reçoit quelques lignes filtrées ; ces outils ne montrent que des noms, jamais du contenu.
+- **index des fichiers** (phase 12d) : `find_path`, `list_folder`, `open_in_explorer` ★. Étage « connaissances locales » : un index SQLite + FTS5 trigram de tous les noms de fichiers (`data/files_index.db`, WAL). Sous Windows : MFT (`FSCTL_ENUM_USN_DATA`, la méthode d'Everything) + journal USN (`FSCTL_READ_USN_JOURNAL`) — jamais de rescan. Windows refuse l'accès aux volumes à un utilisateur standard : un helper élevé (`mikata/files/helper.py`, tâche planifiée installée par `scripts/install_usn_helper.ps1`, un UAC) lit MFT + journal et dépose `data/index/build.jsonl` + `events.log` ; MIKATA consomme ce flux (appends atomiques, troncature sûre) — ou lit les volumes directement s'il tourne en administrateur. Sous macOS : backend « spotlight » (`mikata/files/spotlight.py` : `mdfind` + FSEvents/watchdog), même consommateur SQLite/FTS5. Le LLM ne voit jamais l'index : il interroge et reçoit quelques lignes filtrées ; ces outils ne montrent que des noms, jamais du contenu.
 - **shell** : `run_powershell` (timeout 30 s, sortie tronquée), `run_script` pour tes scripts dans `scripts/user/`.
 - **ui** : `show_text` (fenêtre avec texte long), `clipboard_read`, `clipboard_write`.
 - **memory** : `remember`, `forget`.
-- **uia** (phase 12a) : `uia_window` (contrôles d'une fenêtre : noms, types), `uia_read` (texte d'un contrôle ou de la fenêtre), `uia_click` ★ / `uia_set_text` ★ (par nom de contrôle, vérifiés par `check_ui_action` et `check_typed_text`), `uia_state` (état ambiant en cache : présence vocale Discord...). Implémentation : `mikata/uia/controller.py`, bibliothèque `uiautomation` (comtypes, Apache-2.0), fenêtres trouvées par `tools/desktop.py`, appels sur le thread COM dédié des outils. L'état ambiant est relu par un thread à part toutes les `uia.state_poll_s` secondes, mis en pause pendant qu'un outil agit, gardé en RAM seulement (jamais loggé). `mikata/uia/client.py` s'abonne aux événements d'accessibilité au démarrage : `UiaClientsAreListening()` devient vrai et les applications Chromium/Electron exposent leur arbre complet sans drapeau de lancement.
+- **uia** (phase 12a) : `uia_window` (contrôles d'une fenêtre : noms, types), `uia_read` (texte d'un contrôle ou de la fenêtre), `uia_click` ★ / `uia_set_text` ★ (par nom de contrôle, vérifiés par `check_ui_action` et `check_typed_text`), `uia_state` (état ambiant en cache : présence vocale Discord...). Implémentation : `mikata/uia/controller.py` — `UiController` (signature publique inchangée) choisit une fois à la construction le moteur selon `config.uia.backend` : bibliothèque `uiautomation` (comtypes, Apache-2.0) sous Windows, `macuiauto` (API AX) sous macOS ; fenêtres trouvées par `tools/desktop.py`, appels sur le thread COM dédié des outils. L'état ambiant est relu par un thread à part toutes les `uia.state_poll_s` secondes, mis en pause pendant qu'un outil agit, gardé en RAM seulement (jamais loggé). `mikata/uia/client.py` s'abonne aux événements d'accessibilité au démarrage : `UiaClientsAreListening()` devient vrai et les applications Chromium/Electron exposent leur arbre complet sans drapeau de lancement.
 - **browser** (phase 12b) : `browser_tabs`, `browser_open` (il ne conclut pas la commande : une tâche web continue par `browser_read` puis `browser_click`), `browser_read` (titre, texte, liens, boutons de la page), `browser_click` ★ / `browser_type` ★ (par texte visible / libellé, vérifiés par `check_ui_action`, `check_download` et `check_typed_text`), `browser_back` ★. Implémentation : `mikata/browser/cdp.py` (client DevTools sur WebSocket, bibliothèque `websockets`, testé sous Linux contre un faux serveur) et `mikata/browser/controller.py` (attache paresseuse : port ouvert → attaché ; Brave fermé → lancé avec `--remote-debugging-port` ; Brave ouvert sans le port → refus poli, jamais de fermeture automatique). Le JavaScript envoyé au navigateur est fixe, jamais fourni par le LLM.
 - **skills** (phase 12c) : `list_skills`, `remember_skill` ★, `forget_skill` ★. Mémoire procédurale (`mikata/skills/library.py`, `data/skills/skills.json`) : une commande multi-étapes réussie est distillée (`mikata/skills/distill.py`, un appel LLM en arrière-plan) en procédure ; la commande suivante qui ressemble la rejoue sans appel LLM (étapes rejouées via le registre : garde-fou compris), ou la reçoit comme plan si elle a des paramètres `{x}` à remplir. Échec au rejeu → repli sur le LLM avec les étapes déjà faites, compteur d'échecs, désactivation après `skills.max_failures` ; rejeu réussi → réactivation.
 
@@ -233,7 +238,7 @@ Fichiers `.wav` dans `assets/sounds/`, volume réglable, préchargés en mémoir
 
 **Icône de la zone de notification** (`pystray`) : couleur selon l'état (gris repos, bleu écoute, orange réflexion, vert parole, rouge erreur). Menu : mettre en pause l'écoute (micro coupé côté logiciel), ouvrir les logs, quitter.
 
-**Notifications Windows** (`win11toast` ou `winotify`) pour `show_text` et les rappels.
+**Notifications** (`win11toast` sous Windows ; sous macOS `pync`, sinon `osascript`) pour `show_text` et les rappels.
 
 ## 9. Arborescence et contrats d'interface
 
@@ -257,27 +262,39 @@ mikata/
 └─ mikata/
    ├─ __main__.py            # python -m mikata
    ├─ app.py                 # orchestrateur + machine à états
-   ├─ config.py              # pydantic-settings, charge config.yaml + .env
-   ├─ events.py              # dataclasses d'événements + bus
-   ├─ governor.py            # priorité process, threads
-   ├─ logging_setup.py       # loguru, rotation
-   ├─ audio/  capture.py  player.py  ringbuffer.py  earcons.py
-   ├─ wake/   base.py  oww.py
-   ├─ vad/    silero.py
-   ├─ stt/    base.py  whisper_local.py  speculative.py
-   ├─ llm/    client.py  prompts.py
-   ├─ agent/  loop.py  memory.py  guard.py
-   ├─ tools/  registry.py  system.py  apps.py  web.py  media.py
-   │        input.py  files.py  shell.py  ui.py  memory_tools.py  uia.py  browser.py
-   │        skills.py
-    ├─ uia/    controller.py  state.py  client.py  # phase 12a : arbre d'accessibilité + état ambiant + client à l'écoute
+    ├─ config.py              # pydantic-settings, charge config.yaml + .env
+    ├─ plat.py                # plateforme unique : un seul endroit décide des moteurs par défaut
+    ├─ events.py              # dataclasses d'événements + bus
+    ├─ governor.py            # priorité process, threads
+    ├─ logging_setup.py       # loguru, rotation
+    ├─ audio/  capture.py  player.py  ringbuffer.py  earcons.py  devices.py
+    ├─ wake/   base.py  oww.py
+    ├─ vad/    silero.py
+    ├─ stt/    base.py  whisper_local.py  mlx_whisper.py  parakeet_mlx.py
+    │        parakeet_sherpa.py  speculative.py
+    ├─ llm/    client.py  prompts.py
+    ├─ agent/  loop.py  memory.py  guard.py
+    ├─ tools/  registry.py  system.py  apps.py  web.py  media.py
+    │        input.py  files.py  shell.py  ui.py  memory_tools.py  uia.py  browser.py
+    │        skills.py
+    ├─ uia/    controller.py  state.py  client.py  # phase 12a : UiController + adaptateurs
+    │                                              # UiaBackend (Windows) / AxBackend (macOS)
     ├─ browser/ cdp.py  controller.py              # phase 12b : navigateur piloté (DevTools)
     ├─ skills/ library.py  distill.py              # phase 12c : savoir-faire (mémoire procédurale)
-    ├─ files/  usn.py  index.py  events.py  helper.py  # phase 12d : index des fichiers (MFT + journal USN)
+    ├─ files/  usn.py  spotlight.py  index.py  events.py  helper.py
+    │                                              # phase 12d : index des fichiers (MFT+USN
+    │                                              # sous Windows, Spotlight sous macOS)
     ├─ tts/    base.py  piper_tts.py  kokoro_tts.py  normalize.py  cache.py
     │        router.py  elevenlabs.py  credits.py   # phase 11 : profils de voix, ElevenLabs
     └─ ui/     tray.py  notify.py  hotkeys.py
 ```
+
+**Séparation par plateforme** (Windows / macOS / Linux de test) :
+
+- **Un seul site de décision** : `mikata/plat.py` (Platform = `Literal["win32", "darwin", "linux", "other"]` ; défauts par plateforme pour STT, index des fichiers, pilotage UIA). La config en dérive (`SttConfig.device`, `FilesIndexConfig.backend`, `UiaConfig.backend`), de même que `stt/whisper_local.py` (`resolve_backend`, `_parakeet_backend`), `audio/devices.py` (API hôte native : WASAPI / Core Audio) et `ui/notify.py`. Aucun réglage « inversé » (`sys.platform != "win32"`) ne subsiste sur ces chemins.
+- **Port macOS (Option B)** : `tools/desktop.py` (`MacDesktop`), `tools/media.py` (`MacAudio`), `ui/notify.py` (chaîne darwin : `pync` puis `osascript`), `files/spotlight.py` (mdfind + FSEvents), `uia/controller.py` (`AxBackend`), STT `mlx_whisper.py` / `parakeet_mlx.py`. En face, l'équivalent Windows : `WindowsDesktop`, `PycawAudio`, `win11toast`, `files/usn.py`, `UiaBackend`, Whisper CUDA. Les TTS (Piper, Kokoro, ElevenLabs) et la majeure partie du code sont communs.
+- **Branchement des services** : `__main__.py` construit le contexte d'outils depuis **un seul tableau par plateforme** (`win32` : `WindowsDesktop`/`PycawAudio`/`PynputInput`/`ToastNotifier` ; `darwin` : `MacDesktop`/`MacAudio`/`PynputInput`/`ToastNotifier`) via `_load_service` paresseux ; UIA, navigateur et index sont branchés sur les deux ; les autres plateformes reçoivent l'avertissement et aucun service.
+- **Coutures** : interfaces `Protocol` dans les fichiers `base.py`, classes adaptatrices parallèles (`WindowsDesktop`/`MacDesktop`, `UiaBackend`/`AxBackend`, `FileIndex` sur « usn »/« spotlight »), imports paresseux des modules de plateforme (dans les fonctions), marqueurs de dépendances dans `pyproject.toml` (`sys_platform` ; `pynput` sous win32 **et** darwin, jamais Linux). La garde Windows du helper USN (`DARWIN_MSG`, `_require_win32`) vit une seule fois dans `files/usn.py`.
 
 **Interfaces** (dans les fichiers `base.py`, avec `typing.Protocol`) :
 
@@ -361,7 +378,10 @@ vad:
   no_speech_timeout_s: 4
 stt:
   model: large-v3-turbo
-  device: cuda
+  backend: auto                     # auto | whisper | parakeet | mlx
+                                    #   auto : Parakeet v3 sous macOS (parakeet-mlx) et
+                                    #   Linux (sherpa-onnx), Whisper sous Windows
+  device: cuda                      # cuda (win32) | mlx (darwin) | cpu (linux)
   compute_type: float16
   beam_size: 1
   initial_prompt: "MIKATA, Spotify, Discord, Steam, Chrome, VS Code"
@@ -405,11 +425,15 @@ files_index:                        # phase 12d : index local des fichiers (MFT 
   db: data/files_index.db           # SQLite WAL, jamais envoyé au LLM
   poll_s: 5                         # sondage du journal USN (secondes)
   max_results: 20                   # résultats renvoyés au LLM (au plus)
+  # backend (lecture seule, décidé dans mikata/plat.py) : "usn" sous Windows,
+  # "spotlight" (mdfind + FSEvents) sous macOS ; pas un réglage config.yaml.
 uia:                                # phase 12a : pilotage fin des applications (arbre UIA)
   enabled: true
   state_poll_s: 2                   # état ambiant en RAM (Discord...) ; 0 = jamais
   max_controls: 200                 # contrôles listés par uia_window (au plus)
   max_text_chars: 2000              # texte lu par uia_read, tronqué
+  # backend (lecture seule, décidé dans mikata/plat.py) : "uia" sous Windows,
+  # "appkit" (AXUIElement) sous macOS ; pas un réglage config.yaml.
 ```
 
 Les secrets (`LLM_API_KEY`, `SEARCH_API_KEY`, `ELEVENLABS_API_KEY`) vont dans `.env`, jamais dans le dépôt. Les profils de personnage (`ui.profiles`, skin -> voix) sont dans `config.yaml` : un identifiant de voix n'est pas un secret.
@@ -448,6 +472,8 @@ Les secrets (`LLM_API_KEY`, `SEARCH_API_KEY`, `ELEVENLABS_API_KEY`) vont dans `.
    - Critère : dire MIKATA pendant une réponse la coupe en < 300 ms ; question de suivi sans mot d'activation OK.
 8. **Phase 7 — Wake word définitif + production.** Entraînement `mikata.onnx` (GPU cloud ou Colab), vérificateur de voix, `eval_wakeword.py`, tâche planifiée, purge des logs.
    - Critère : < 0,2 faux déclenchement par heure et < 5 % de ratés sur le jeu d'évaluation, puis une semaine d'usage réel confortable.
+
+**Port macOS (Option B)** : implémenté et couvert par les tests (section 9). La logique de plateforme est centralisée dans `mikata/plat.py` — tout nouveau moteur spécifique à une plateforme doit être **sélectionné depuis ce module** (via une propriété de la config), pas par des `sys.platform` éparpillés.
 
 Astuce : pendant que tu valides la phase N sur ton PC, une autre session cloud peut déjà préparer des pièces indépendantes (outils de la phase 4, scripts de benchmark), puisqu'elles sont isolées derrière leurs interfaces.
 

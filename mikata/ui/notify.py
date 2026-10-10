@@ -2,23 +2,25 @@
 
 - win32 : `win11toast`, importé paresseusement.
 - darwin : `pync` si présent, sinon `osascript -e 'display notification ...'`.
+  Jamais `win11toast` sous macOS : c'est un module Windows (déclaré
+  `sys_platform == 'win32'` dans pyproject.toml).
 Une notification ratée est journalisée, jamais bloquante.
 """
 
 from __future__ import annotations
 
-import importlib
 import subprocess
-import sys
 
 from loguru import logger
+
+from mikata.plat import platform
 
 
 class ToastNotifier:
     """Implémente `tools.base.Notifier` ; à appeler hors de la boucle asyncio (bloquant)."""
 
     def notify(self, title: str, body: str) -> None:
-        if sys.platform == "darwin":
+        if platform() == "darwin":
             self._notify_darwin(title, body)
             return
         self._notify_win32(title, body)
@@ -42,16 +44,8 @@ class ToastNotifier:
             except Exception as exc:
                 logger.warning("Notification macOS impossible : {}", exc)
             return
-        # Repli : win11toast si présent (ou mocké dans les tests), sinon osascript natif.
-        try:
-            mod = importlib.import_module("win11toast")
-        except ImportError:
-            self._notify_osascript(title, body)
-        else:
-            try:
-                mod.notify(title, body)
-            except Exception as exc:
-                logger.warning("Notification Windows impossible : {}", exc)
+        # Repli : osascript natif (jamais win11toast, module Windows).
+        self._notify_osascript(title, body)
 
     def _notify_osascript(self, title: str, body: str) -> None:
         try:

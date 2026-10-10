@@ -1,12 +1,16 @@
 """Implémentation Windows/macOS de `tools.base.UiAutomation` (phase 12a).
 
-- win32 : bibliothèque `uiautomation` (pur Python, sur comtypes), importée ici,
-  paresseusement. Toutes les méthodes sont bloquantes : les outils les appellent
-  via `ToolContext.run_blocking` (le thread COM dédié aux outils).
-- darwin : backend AXUIElement via `macuiauto` (import paresseux), mêmes signatures.
-  Rôles AX documentés dans `_AX_KINDS` (AXButton -> bouton, AXTextField -> champ...).
-  Note : pour Chromium/Electron (Discord, VS Code...), préférez CDP quand c'est
-  possible (arbre complet sans droits d'accessibilité) ; AX reste le repli natif.
+`UiController` est le point d'entrée unique (même construction partout) : il choisit une
+seule fois, à l'initialisation, le moteur de pilotage — `config.uia.backend`, décidé par la
+plateforme (`mikata/plat.py`) :
+- `UiaBackend` : arbre UIA Windows via `uiautomation` (pur Python, sur comtypes), importé
+  paresseusement, dans `attach` uniquement. Toutes les méthodes sont bloquantes : les
+  outils les appellent via `ToolContext.run_blocking` (le thread COM dédié aux outils).
+- `AxBackend` : arbre AXUIElement macOS via `macuiauto` (import paresseux), mêmes
+  signatures. Rôles AX documentés dans `AxBackend._AX_KINDS` (AXButton -> bouton,
+  AXTextField -> champ...). Note : pour Chromium/Electron (Discord, VS Code...), préférez
+  CDP quand c'est possible (arbre complet sans droits d'accessibilité) ; AX reste le
+  repli natif.
 
 Noms comparés sans casse ni accents (comme tools/apps.py) : « discorde » trouve « Discord »,
 « envoie » trouve « Envoyer ».
@@ -16,9 +20,10 @@ from __future__ import annotations
 
 import contextlib
 import re
-import sys
 import unicodedata
-from typing import Any
+from abc import ABC, abstractmethod
+from collections.abc import Callable
+from typing import Any, ClassVar
 
 from loguru import logger
 from rapidfuzz import fuzz
@@ -28,30 +33,6 @@ from mikata.tools.base import Desktop, ToolError, UiControlInfo, UiWindowInfo
 from mikata.uia.client import UiaAccessibilityClient
 from mikata.uia.state import AmbientState
 
-# Nom de contrôle UIA -> nom français donné au LLM.
-_KINDS = {
-    "ButtonControl": "bouton",
-    "EditControl": "champ",
-    "TextControl": "texte",
-    "DocumentControl": "document",
-    "ListItemControl": "élément",
-    "ListControl": "liste",
-    "CheckBoxControl": "case",
-    "RadioButtonControl": "case",
-    "HyperlinkControl": "lien",
-    "MenuItemControl": "menu",
-    "TabItemControl": "onglet",
-    "ComboBoxControl": "liste déroulante",
-    "TreeItemControl": "arbre",
-    "HeaderControl": "en-tête",
-    "TitleBarControl": "barre de titre",
-    "SliderControl": "curseur",
-    "SpinnerControl": "spinner",
-    "ProgressBarControl": "progression",
-    "ToolBarControl": "barre d'outils",
-    "ImageControl": "image",
-    "CustomControl": "contrôle",
-}  # fmt: skip
 # Conteneurs sans intérêt pour le LLM : pas listés par `controls`.
 _SKIP_KINDS = {"fenêtre", "panneau", "groupe", "barre de titre", "document"}
 # Un clic sans type précis ne vise que les contrôles réellement cliquables.
@@ -60,92 +41,6 @@ _MAX_VISITED = 2000  # garde-fou contre les arbres énormes (navigateurs...)
 _MATCH_RATIO = 80.0  # score rapidfuzz minimal pour qu'un nom de contrôle « corresponde »
 _TITLE_RATIO = 55.0  # un titre de fenêtre court matche à un score plus faible
 _NAME_MAX = 200  # caractères gardés d'un nom de contrôle
-
-
-def _module() -> Any:
-    """Bibliothèque d'automatisation, importée à la première utilisation.
-
-    win32 : `uiautomation` (comtypes) ; darwin : `macuiauto` (AXUIElement).
-    """
-    if sys.platform == "darwin":
-        return _ax_module()
-    try:
-        import uiautomation
-    except ImportError as exc:
-        raise ToolError(
-            "le pilotage fin des applications n'est pas installé (uiautomation)"
-        ) from exc
-    return uiautomation
-
-
-def _ax_module() -> Any:
-    """Backend AXUIElement macOS (`macuiauto`), import paresseux."""
-    try:
-        import macuiauto  # type: ignore[import-not-found]
-    except ImportError as exc:
-        raise ToolError("le pilotage fin des applications n'est pas installé (macuiauto)") from exc
-    return macuiauto
-
-
-# Rôle AX macOS -> nom français donné au LLM (miroir de `_KINDS` Windows).
-_AX_KINDS = {
-    "AXButton": "bouton",
-    "AXTextField": "champ",
-    "AXSecureTextField": "champ",
-    "AXTextArea": "champ",
-    "AXStaticText": "texte",
-    "AXWebArea": "document",
-    "AXRow": "élément",
-    "AXList": "liste",
-    "AXCheckBox": "case",
-    "AXRadioButton": "case",
-    "AXLink": "lien",
-    "AXMenuItem": "menu",
-    "AXTabGroup": "onglet",
-    "AXComboBox": "liste déroulante",
-    "AXOutlineRow": "arbre",
-    "AXSlider": "curseur",
-    "AXProgressIndicator": "progression",
-    "AXToolbar": "barre d'outils",
-    "AXImage": "image",
-}  # fmt: skip
-
-
-def _ax_kind(role: str) -> str:
-    return _AX_KINDS.get(role, "contrôle")
-
-
-def _ax_name(node: Any) -> str:
-    for attr in ("AXTitle", "AXDescription", "AXValue"):
-        try:
-            value = node.get(attr)
-        except Exception:
-            continue
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    try:
-        return str(getattr(node, "title", "") or "").strip()
-    except Exception:
-        return ""
-
-
-def _ax_role(node: Any) -> str:
-    try:
-        return str(node.get("AXRole") or "")
-    except Exception:
-        return str(getattr(node, "role", "") or "")
-
-
-def _ax_children(node: Any) -> list[Any]:
-    try:
-        children = node.get("AXChildren") or []
-        return list(children)
-    except Exception:
-        pass
-    try:
-        return list(node.children())
-    except Exception:
-        return []
 
 
 def fold(text: str) -> str:
@@ -159,35 +54,348 @@ def _truncate(text: str, max_chars: int) -> str:
     return text if len(text) <= max_chars else text[:max_chars] + " […tronqué]"
 
 
-def _pattern(node: Any, name: str) -> Any:
-    """Pattern UIA `name` du contrôle, ou None s'il ne le supporte pas (ou erreur COM)."""
-    if sys.platform == "darwin":
-        return None  # AX n'a pas de patterns UIA : actions via AXPress/AXSetValue
-    try:
-        return getattr(node, f"Get{name}Pattern")()
-    except Exception:
-        return None
+class _BackendBase(ABC):
+    """Partie commune aux deux moteurs : parcours d'arbre borné et état ambiant (salon
+    vocal Discord). Le bureau sert à énumérer les fenêtres pour l'état ambiant ; chaque
+    moteur apporte ses opérations de nœuds (`attach`, `children`, nom, type, texte,
+    clic, champ)."""
+
+    def __init__(self, desktop: Desktop) -> None:
+        self._desktop = desktop
+
+    @abstractmethod
+    def attach(self, window: UiWindowInfo) -> Any:
+        """Racine de l'arbre d'accessibilité de la fenêtre, par son moteur."""
+
+    @abstractmethod
+    def children(self, node: Any) -> list[Any]:
+        """Enfants d'un nœud : `GetChildren` (UIA) ou `AXChildren` (AX)."""
+
+    def walk(self, root: Any, max_nodes: int) -> list[Any]:
+        """Parcours en profondeur, borné : une fenêtre géante ne bloque pas l'outil.
+        Enfants lus par le moteur : `GetChildren` (UIA) ou `AXChildren` (AX)."""
+        nodes: list[Any] = []
+        stack = self.children(root)
+        while stack and len(nodes) < max_nodes:
+            node = stack.pop()
+            nodes.append(node)
+            with contextlib.suppress(Exception):
+                stack.extend(self.children(node))
+        return nodes
+
+    def discord_voice(self, window_for_process: Callable[[str], UiWindowInfo]) -> str:
+        """Présence vocale Discord : lue dans l'arbre d'accessibilité du client. Le salon
+        connecté y est un lien dont le nom commence par « <salon> (salon vocal), membre1,
+        membre2, durée de l'appel... » (structure constatée sur le vrai client, fenêtre
+        Discord en français ; motif anglais accepté aussi). Ne lève jamais : un état
+        illisible est vide, pas une erreur."""
+        windows = [w for w in self._desktop.windows() if w.process and "discord" in fold(w.process)]
+        if not windows:
+            return ""
+        try:
+            root = self.attach(window_for_process(windows[0].process))
+            nodes = self.walk(root, _MAX_VISITED)
+            channel, members = _discord_voice_from(nodes)
+        except Exception as exc:
+            logger.debug("État ambiant Discord illisible : {}", exc)
+            return ""
+        if channel is None:
+            return ""
+        text = f"Discord : salon vocal « {channel} »."
+        if members:
+            text += f" En vocal : {', '.join(members[:12])}."
+        return text
 
 
-def _is_darwin() -> bool:
-    return sys.platform == "darwin"
+class UiaBackend(_BackendBase):
+    """Moteur Windows : arbre UIA via `uiautomation`, importé paresseusement (`attach`)."""
+
+    # Nom de contrôle UIA -> nom français donné au LLM.
+    _KINDS: ClassVar[dict[str, str]] = {
+        "ButtonControl": "bouton",
+        "EditControl": "champ",
+        "TextControl": "texte",
+        "DocumentControl": "document",
+        "ListItemControl": "élément",
+        "ListControl": "liste",
+        "CheckBoxControl": "case",
+        "RadioButtonControl": "case",
+        "HyperlinkControl": "lien",
+        "MenuItemControl": "menu",
+        "TabItemControl": "onglet",
+        "ComboBoxControl": "liste déroulante",
+        "TreeItemControl": "arbre",
+        "HeaderControl": "en-tête",
+        "TitleBarControl": "barre de titre",
+        "SliderControl": "curseur",
+        "SpinnerControl": "spinner",
+        "ProgressBarControl": "progression",
+        "ToolBarControl": "barre d'outils",
+        "ImageControl": "image",
+        "CustomControl": "contrôle",
+    }  # fmt: skip
+
+    def attach(self, window: UiWindowInfo) -> Any:
+        """Contrôle racine de la fenêtre, par sa poignée native. `ControlFromHandle` +
+        `GetTopLevelControl` est la seule voie fiable : `WindowControl(NativeWindowHandle=...)`
+        ignore la poignée et renvoie la fenêtre au premier plan (constaté sur Discord)."""
+        try:
+            import uiautomation as auto
+        except ImportError as exc:
+            raise ToolError(
+                "le pilotage fin des applications n'est pas installé (uiautomation)"
+            ) from exc
+        if not window.handle:
+            raise ToolError(f"la fenêtre « {window.title} » n'a pas de poignée Windows")
+        try:
+            node = auto.ControlFromHandle(window.handle)
+        except Exception as exc:
+            raise ToolError(f"la fenêtre « {window.title} » ne se laisse pas lire : {exc}") from exc
+        if node is None:
+            raise ToolError(f"la fenêtre « {window.title} » ne se laisse pas lire")
+        top = node.GetTopLevelControl()
+        if top is None:
+            raise ToolError(f"la fenêtre « {window.title} » ne se laisse pas lire")
+        return top
+
+    def children(self, node: Any) -> list[Any]:
+        try:
+            return list(node.GetChildren())
+        except Exception:
+            return []
+
+    def node_name(self, node: Any) -> str:
+        return (node.Name or "").strip()
+
+    def node_kind(self, node: Any) -> str:
+        return self._KINDS.get(node.ControlTypeName, "contrôle")
+
+    @staticmethod
+    def _pattern(node: Any, name: str) -> Any:
+        """Pattern UIA `name` du contrôle, ou None s'il ne le supporte pas (ou erreur COM)."""
+        try:
+            return getattr(node, f"Get{name}Pattern")()
+        except Exception:
+            return None
+
+    def control_text(self, node: Any) -> str:
+        value = self._pattern(node, "Value")
+        if value is not None:
+            try:
+                if value.Value:
+                    return value.Value
+            except Exception:
+                pass
+        text = self._pattern(node, "Text")
+        if text is not None:
+            try:
+                return text.DocumentRange.GetText(-1)
+            except Exception:
+                pass
+        return node.Name or ""
+
+    def document_text(self, root: Any) -> str:
+        for node in [root, *self.walk(root, 200)]:
+            if node.ControlTypeName == "DocumentControl":
+                text = self._pattern(node, "Text")
+                if text is not None:
+                    try:
+                        return text.DocumentRange.GetText(-1)
+                    except Exception:
+                        continue
+        return ""
+
+    def visible_text(self, root: Any) -> str:
+        parts: list[str] = []
+        for node in self.walk(root, _MAX_VISITED):
+            if node.ControlTypeName == "TextControl" and node.Name:
+                parts.append(node.Name.strip())
+            elif node.ControlTypeName == "EditControl":
+                value = self._pattern(node, "Value")
+                if value is not None:
+                    try:
+                        if value.Value:
+                            parts.append(value.Value.strip())
+                    except Exception:
+                        pass
+            if sum(len(part) for part in parts) > 8000:
+                break
+        return "\n".join(parts)
+
+    def click(self, node: Any, name: str) -> str:
+        invoke = self._pattern(node, "Invoke")
+        if invoke is not None:
+            try:
+                invoke.Invoke()
+                return f"« {name} » cliqué."
+            except Exception as exc:
+                raise ToolError(f"« {name} » n'a pas répondu au clic : {exc}") from exc
+        toggle = self._pattern(node, "Toggle")
+        if toggle is not None:
+            try:
+                toggle.Toggle()
+                return f"« {name} » basculé."
+            except Exception as exc:
+                raise ToolError(f"« {name} » n'a pas répondu au clic : {exc}") from exc
+        raise ToolError(f"« {name} » ne se laisse pas cliquer (pas un bouton)")
+
+    def set_text(self, node: Any, control: str, text: str) -> str:
+        value = self._pattern(node, "Value")
+        if value is None:
+            raise ToolError(f"« {control} » n'est pas un champ modifiable")
+        try:
+            value.SetValue(text)
+        except Exception as exc:
+            raise ToolError(f"« {control} » n'a pas accepté le texte : {exc}") from exc
+        return f"« {control} » rempli."
 
 
-def _is_uia_node(node: Any) -> bool:
-    """Nœud `uiautomation` (Windows) plutôt que AX (`macuiauto`) ? Détection par attribut,
-    pas par plateforme : les tests utilisent des sosies UIA sur n'importe quel OS."""
-    try:
-        return getattr(node, "ControlTypeName", None) is not None
-    except Exception:
-        return False
+class AxBackend(_BackendBase):
+    """Moteur macOS : arbre AXUIElement via `macuiauto`, importé paresseusement (`attach`)."""
+
+    # Rôle AX macOS -> nom français donné au LLM (miroir de `UiaBackend._KINDS` Windows).
+    _AX_KINDS: ClassVar[dict[str, str]] = {
+        "AXButton": "bouton",
+        "AXTextField": "champ",
+        "AXSecureTextField": "champ",
+        "AXTextArea": "champ",
+        "AXStaticText": "texte",
+        "AXWebArea": "document",
+        "AXRow": "élément",
+        "AXList": "liste",
+        "AXCheckBox": "case",
+        "AXRadioButton": "case",
+        "AXLink": "lien",
+        "AXMenuItem": "menu",
+        "AXTabGroup": "onglet",
+        "AXComboBox": "liste déroulante",
+        "AXOutlineRow": "arbre",
+        "AXSlider": "curseur",
+        "AXProgressIndicator": "progression",
+        "AXToolbar": "barre d'outils",
+        "AXImage": "image",
+    }  # fmt: skip
+
+    def attach(self, window: UiWindowInfo) -> Any:
+        """Racine AX de la fenêtre (`macuiauto`, import paresseux) : par pid si la poignée
+        porte un pid, sinon fenêtre au premier plan."""
+        try:
+            import macuiauto as ax  # type: ignore[import-not-found]
+        except ImportError as exc:
+            raise ToolError(
+                "le pilotage fin des applications n'est pas installé (macuiauto)"
+            ) from exc
+        try:
+            if window.handle:
+                try:
+                    return ax.from_pid(int(window.handle))
+                except (ValueError, TypeError):
+                    pass
+            return ax.focused_window()
+        except Exception as exc:
+            raise ToolError(f"la fenêtre « {window.title} » ne se laisse pas lire : {exc}") from exc
+
+    @staticmethod
+    def _ax_name(node: Any) -> str:
+        for attr in ("AXTitle", "AXDescription", "AXValue"):
+            try:
+                value = node.get(attr)
+            except Exception:
+                continue
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        try:
+            return str(getattr(node, "title", "") or "").strip()
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _ax_role(node: Any) -> str:
+        try:
+            return str(node.get("AXRole") or "")
+        except Exception:
+            return str(getattr(node, "role", "") or "")
+
+    @staticmethod
+    def _ax_children(node: Any) -> list[Any]:
+        try:
+            children = node.get("AXChildren") or []
+            return list(children)
+        except Exception:
+            pass
+        try:
+            return list(node.children())
+        except Exception:
+            return []
+
+    def _ax_kind(self, role: str) -> str:
+        return self._AX_KINDS.get(role, "contrôle")
+
+    def children(self, node: Any) -> list[Any]:
+        return self._ax_children(node)
+
+    def node_name(self, node: Any) -> str:
+        return self._ax_name(node)
+
+    def node_kind(self, node: Any) -> str:
+        return self._ax_kind(self._ax_role(node))
+
+    def control_text(self, node: Any) -> str:
+        return self._ax_name(node)
+
+    def document_text(self, root: Any) -> str:
+        for node in [root, *self.walk(root, 200)]:
+            if self._ax_role(node) == "AXWebArea":
+                text = self._ax_name(node)
+                if text:
+                    return text
+        return ""
+
+    def visible_text(self, root: Any) -> str:
+        parts: list[str] = []
+        for node in self.walk(root, _MAX_VISITED):
+            role = self._ax_role(node)
+            if role in ("AXStaticText", "AXTextField", "AXTextArea"):
+                name = self._ax_name(node)
+                if name:
+                    parts.append(name)
+            if sum(len(part) for part in parts) > 8000:
+                break
+        return "\n".join(parts)
+
+    def click(self, node: Any, name: str) -> str:
+        """Clic AX : action `AXPress` (boutons, cases, liens...)."""
+        try:
+            node.perform("AXPress")
+            return f"« {name} » cliqué."
+        except Exception as exc:
+            try:
+                press = node.get("AXPress")
+                if press is not None:
+                    return f"« {name} » cliqué."
+            except Exception:
+                pass
+            raise ToolError(f"« {name} » n'a pas répondu au clic : {exc}") from exc
+
+    def set_text(self, node: Any, control: str, text: str) -> str:
+        try:
+            node.set("AXValue", text)
+        except Exception as exc:
+            raise ToolError(f"« {control} » n'a pas accepté le texte : {exc}") from exc
+        return f"« {control} » rempli."
 
 
 class UiController:
-    """Pilotage UIA réel : fenêtres trouvées par le bureau Windows (tools.desktop),
-    contrôles lus dans l'arbre d'accessibilité. L'état ambiant (présence vocale Discord)
-    est rafraîchi en arrière-plan par un thread dédié, jamais loggé."""
+    """Pilotage fin réel des applications (outils `uia_*`) : fenêtres trouvées par le
+    bureau (`tools.desktop`), contrôles lus dans l'arbre d'accessibilité par le moteur
+    choisi une fois à la construction (UIA Windows ou AX macOS). L'état ambiant (présence
+    vocale Discord) est rafraîchi en arrière-plan par un thread dédié, jamais loggé."""
 
     def __init__(self, config: Config, desktop: Desktop) -> None:
+        # Choix unique du moteur, à la construction, par la plateforme (mikata/plat.py,
+        # via la config) : plus aucune branche sys.platform ni test de type de nœud
+        # dans les méthodes publiques.
+        self._backend = UiaBackend(desktop) if config.uia.backend == "uia" else AxBackend(desktop)
         self._desktop = desktop
         self._state = AmbientState(config.uia.state_poll_s, self._snapshot)
         self._state.start()
@@ -240,102 +448,22 @@ class UiController:
             raise ToolError("aucune fenêtre au premier plan")
         return UiWindowInfo(win.title, win.process, win.handle)
 
-    def _attach(self, window: UiWindowInfo) -> Any:
-        """Contrôle racine de la fenêtre, par sa poignée native. `ControlFromHandle` +
-        `GetTopLevelControl` est la seule voie fiable : `WindowControl(NativeWindowHandle=...)`
-        ignore la poignée et renvoie la fenêtre au premier plan (constaté sur Discord).
-        Sur darwin : racine AXUIElement de l'application (via `macuiauto`, par pid si
-        la poignée porte un pid, sinon fenêtre au premier plan)."""
-        if _is_darwin():
-            return self._attach_ax(window)
-        auto = _module()
-        if not window.handle:
-            raise ToolError(f"la fenêtre « {window.title} » n'a pas de poignée Windows")
-        try:
-            node = auto.ControlFromHandle(window.handle)
-        except Exception as exc:
-            raise ToolError(f"la fenêtre « {window.title} » ne se laisse pas lire : {exc}") from exc
-        if node is None:
-            raise ToolError(f"la fenêtre « {window.title} » ne se laisse pas lire")
-        top = node.GetTopLevelControl()
-        if top is None:
-            raise ToolError(f"la fenêtre « {window.title} » ne se laisse pas lire")
-        return top
-
-    def _attach_ax(self, window: UiWindowInfo) -> Any:
-        """Racine AX de la fenêtre (darwin, `macuiauto`, import paresseux)."""
-        ax = _ax_module()
-        try:
-            if window.handle:
-                try:
-                    return ax.from_pid(int(window.handle))
-                except (ValueError, TypeError):
-                    pass
-            return ax.focused_window()
-        except Exception as exc:
-            raise ToolError(f"la fenêtre « {window.title} » ne se laisse pas lire : {exc}") from exc
-
-    def _walk(self, root: Any, max_nodes: int) -> list[Any]:
-        """Parcours en profondeur, borné : une fenêtre géante ne bloque pas l'outil.
-        Nœuds UIA : `GetChildren` ; nœuds AX (darwin) : `AXChildren`."""
-        try:
-            children = list(root.GetChildren())
-        except Exception:
-            children = list(_ax_children(root))
-            get_children = _ax_children
-        else:
-            get_children = lambda node: node.GetChildren()  # noqa: E731
-        nodes: list[Any] = []
-        stack = children
-        while stack and len(nodes) < max_nodes:
-            node = stack.pop()
-            nodes.append(node)
-            with contextlib.suppress(Exception):
-                stack.extend(get_children(node))
-        return nodes
-
     # -- contrôles --------------------------------------------------------------------
 
     def controls(self, window: UiWindowInfo, max_controls: int) -> list[UiControlInfo]:
-        root = self._attach(window)
-        if not _is_uia_node(root):
-            return self._controls_ax(root, max_controls)
+        root = self._backend.attach(window)
         found: list[UiControlInfo] = []
-        for node in self._walk(root, _MAX_VISITED):
-            name = (node.Name or "").strip()
+        for node in self._backend.walk(root, _MAX_VISITED):
+            name = self._backend.node_name(node)
             if not name:
                 continue
-            kind = _KINDS.get(node.ControlTypeName, "contrôle")
+            kind = self._backend.node_kind(node)
             if kind in _SKIP_KINDS:
                 continue
             found.append(UiControlInfo(name=name[:_NAME_MAX], kind=kind))
             if len(found) >= max_controls:
                 break
         return found
-
-    def _controls_ax(self, root: Any, max_controls: int) -> list[UiControlInfo]:
-        found: list[UiControlInfo] = []
-        for node in self._walk(root, _MAX_VISITED):
-            name = _ax_name(node)
-            if not name:
-                continue
-            kind = _ax_kind(_ax_role(node))
-            if kind in _SKIP_KINDS:
-                continue
-            found.append(UiControlInfo(name=name[:_NAME_MAX], kind=kind))
-            if len(found) >= max_controls:
-                break
-        return found
-
-    def _node_name(self, node: Any) -> str:
-        if not _is_uia_node(node):
-            return _ax_name(node)
-        return (node.Name or "").strip()
-
-    def _node_kind(self, node: Any) -> str:
-        if not _is_uia_node(node):
-            return _ax_kind(_ax_role(node))
-        return _KINDS.get(node.ControlTypeName, "contrôle")
 
     def _find(
         self,
@@ -345,14 +473,14 @@ class UiController:
         nth: int,
         clickable: bool = False,
     ) -> Any:
-        root = self._attach(window)
+        root = self._backend.attach(window)
         wanted = fold(control)
         candidates: list[Any] = []
-        for node in self._walk(root, _MAX_VISITED):
-            name = self._node_name(node)
+        for node in self._backend.walk(root, _MAX_VISITED):
+            name = self._backend.node_name(node)
             if not name:
                 continue
-            node_kind = self._node_kind(node)
+            node_kind = self._backend.node_kind(node)
             if kind is not None and fold(kind) != fold(node_kind):
                 continue
             if clickable and kind is None and node_kind not in _CLICKABLE:
@@ -369,178 +497,52 @@ class UiController:
     # -- lecture ----------------------------------------------------------------------
 
     def read(self, window: UiWindowInfo, control: str | None, max_chars: int) -> str:
-        root = self._attach(window)
+        root = self._backend.attach(window)
         if control is not None:
             node = self._find(window, control, None, 1)
-            text = _control_text(node)
+            text = self._backend.control_text(node)
         else:
-            text = self._document_text(root) or self._visible_text(root)
+            text = self._backend.document_text(root) or self._backend.visible_text(root)
         if not text.strip():
             raise ToolError("aucun texte lisible dans cette fenêtre")
         return _truncate(text, max_chars)
-
-    def _document_text(self, root: Any) -> str:
-        if not _is_uia_node(root):
-            for node in [root, *self._walk(root, 200)]:
-                if _ax_role(node) == "AXWebArea":
-                    text = _ax_name(node)
-                    if text:
-                        return text
-            return ""
-        for node in [root, *self._walk(root, 200)]:
-            if node.ControlTypeName == "DocumentControl":
-                text = _pattern(node, "Text")
-                if text is not None:
-                    try:
-                        return text.DocumentRange.GetText(-1)
-                    except Exception:
-                        continue
-        return ""
-
-    def _visible_text(self, root: Any) -> str:
-        parts: list[str] = []
-        ax = not _is_uia_node(root)
-        for node in self._walk(root, _MAX_VISITED):
-            if ax:
-                role = _ax_role(node)
-                if role in ("AXStaticText", "AXTextField", "AXTextArea"):
-                    name = _ax_name(node)
-                    if name:
-                        parts.append(name)
-            elif node.ControlTypeName == "TextControl" and node.Name:
-                parts.append(node.Name.strip())
-            elif node.ControlTypeName == "EditControl":
-                value = _pattern(node, "Value")
-                if value is not None:
-                    try:
-                        if value.Value:
-                            parts.append(value.Value.strip())
-                    except Exception:
-                        pass
-            if sum(len(part) for part in parts) > 8000:
-                break
-        return "\n".join(parts)
 
     # -- actions ----------------------------------------------------------------------
 
     def click(self, window: UiWindowInfo, control: str, kind: str | None, nth: int) -> str:
         node = self._find(window, control, kind, nth, clickable=True)
-        name = self._node_name(node) or "(sans nom)"
-        if not _is_uia_node(node):
-            return self._click_ax(node, name)
-        invoke = _pattern(node, "Invoke")
-        if invoke is not None:
-            try:
-                invoke.Invoke()
-                return f"« {name} » cliqué."
-            except Exception as exc:
-                raise ToolError(f"« {name} » n'a pas répondu au clic : {exc}") from exc
-        toggle = _pattern(node, "Toggle")
-        if toggle is not None:
-            try:
-                toggle.Toggle()
-                return f"« {name} » basculé."
-            except Exception as exc:
-                raise ToolError(f"« {name} » n'a pas répondu au clic : {exc}") from exc
-        raise ToolError(f"« {name} » ne se laisse pas cliquer (pas un bouton)")
-
-    def _click_ax(self, node: Any, name: str) -> str:
-        """Clic AX : action `AXPress` (boutons, cases, liens...)."""
-        try:
-            node.perform("AXPress")
-            return f"« {name} » cliqué."
-        except Exception as exc:
-            try:
-                press = node.get("AXPress")
-                if press is not None:
-                    return f"« {name} » cliqué."
-            except Exception:
-                pass
-            raise ToolError(f"« {name} » n'a pas répondu au clic : {exc}") from exc
+        name = self._backend.node_name(node) or "(sans nom)"
+        return self._backend.click(node, name)
 
     def set_text(self, window: UiWindowInfo, control: str, text: str) -> str:
         node = self._find(window, control, "champ", 1)
-        if not _is_uia_node(node):
-            try:
-                node.set("AXValue", text)
-            except Exception as exc:
-                raise ToolError(f"« {control} » n'a pas accepté le texte : {exc}") from exc
-            return f"« {control} » rempli."
-        value = _pattern(node, "Value")
-        if value is None:
-            raise ToolError(f"« {control} » n'est pas un champ modifiable")
-        try:
-            value.SetValue(text)
-        except Exception as exc:
-            raise ToolError(f"« {control} » n'a pas accepté le texte : {exc}") from exc
-        return f"« {control} » rempli."
+        return self._backend.set_text(node, control, text)
 
     # -- état ambiant ------------------------------------------------------------------
 
     def _snapshot(self) -> dict[str, str]:
         data: dict[str, str] = {}
-        voice = self._discord_voice()
+        voice = self._backend.discord_voice(lambda process: self.window(None, process))
         if voice:
             data["discord"] = voice
         return data
 
-    def _discord_voice(self) -> str:
-        """Présence vocale Discord : lue dans l'arbre d'accessibilité du client. Le salon
-        connecté y est un lien dont le nom commence par « <salon> (salon vocal), membre1,
-        membre2, durée de l'appel... » (structure constatée sur le vrai client, fenêtre
-        Discord en français ; motif anglais accepté aussi). Ne lève jamais : un état
-        illisible est vide, pas une erreur."""
-        windows = [w for w in self._desktop.windows() if w.process and "discord" in fold(w.process)]
-        if not windows:
-            return ""
-        try:
-            root = self._attach(self.window(None, windows[0].process))
-            nodes = self._walk(root, _MAX_VISITED)
-            channel, members = _discord_voice_from(nodes)
-        except Exception as exc:
-            logger.debug("État ambiant Discord illisible : {}", exc)
-            return ""
-        if channel is None:
-            return ""
-        text = f"Discord : salon vocal « {channel} »."
-        if members:
-            text += f" En vocal : {', '.join(members[:12])}."
-        return text
-
-
-def _control_text(node: Any) -> str:
-    if not _is_uia_node(node):
-        return _ax_name(node)
-    value = _pattern(node, "Value")
-    if value is not None:
-        try:
-            if value.Value:
-                return value.Value
-        except Exception:
-            pass
-    text = _pattern(node, "Text")
-    if text is not None:
-        try:
-            return text.DocumentRange.GetText(-1)
-        except Exception:
-            pass
-    return node.Name or ""
-
 
 def _discord_voice_from(nodes: list[Any]) -> tuple[str | None, list[str]]:
-    """(salon vocal connecté, membres) depuis un arbre UIA de Discord, ou (None, []).
+    """(salon vocal connecté, membres) depuis un arbre de Discord (nœuds UIA ou AX), ou
+    (None, []).
 
     Le lien du salon connecté a la forme « <salon> (salon vocal), <membre>, <membre>,
     durée de l'appel... » (client français ; « voice channel » en anglais). Les salons non
     connectés sont des boutons « <nom> (salon vocal) » sans membres : ignorés.
     """
     for node in nodes:
-        if _is_uia_node(node):
+        if getattr(node, "ControlTypeName", None) is not None:
             is_link = node.ControlTypeName == "HyperlinkControl"
             name = (node.Name or "").strip()
         else:
-            is_link = _ax_role(node) == "AXLink"
-            name = _ax_name(node)
+            is_link = AxBackend._ax_role(node) == "AXLink"
+            name = AxBackend._ax_name(node)
         if not is_link:
             continue
         folded = fold(name)
