@@ -59,6 +59,25 @@ def _absolute(path: Path, base_dir: Path) -> Path:
     return path if path.is_absolute() else base_dir / path
 
 
+def _enqueue_context() -> str | None:
+    """Contexte multiprocessing des files de loguru (`enqueue=True`).
+
+    Sous macOS, le contexte par défaut (« spawn ») crée des sémaphores POSIX **nommés**
+    par handler, détachés seulement à la sortie normale (atexit). Si le processus se
+    termine autrement — l'icône Cocoa de pystray pouvait aborter en SIGTRAP à l'arrêt —,
+    le `resource_tracker` signale alors « leaked semaphore objects ». Le contexte
+    « fork » crée des sémaphores anonymes (jamais enregistrés auprès du tracker) : plus
+    rien à détacher, sans perte (la file sert seulement à découpler la journalisation,
+    jamais à traverser un fork). Windows garde son défaut (ses sémaphores ne sont pas
+    non plus enregistrés) ; Linux est déjà en « fork ».
+    """
+    if sys.platform == "win32":
+        return None
+    import multiprocessing
+
+    return "fork" if "fork" in multiprocessing.get_all_start_methods() else None
+
+
 def setup_logging(cfg: LoggingConfig, base_dir: Path) -> Path:
     """(Re)configure loguru. Idempotent : peut être rappelée après le chargement de la config.
 
@@ -85,6 +104,7 @@ def setup_logging(cfg: LoggingConfig, base_dir: Path) -> Path:
         "retention": trash_old_logs(cfg.retention_files),
         "encoding": "utf-8",
         "enqueue": True,  # écriture depuis plusieurs threads (tray, executors) sans contention
+        "context": _enqueue_context(),  # sémaphores anonymes hors Windows (cf. _enqueue_context)
         "backtrace": False,
     }
     logger.add(log_file, level=cfg.level, format=LOG_FORMAT, filter=_not_action, **common)

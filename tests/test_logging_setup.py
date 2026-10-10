@@ -41,6 +41,35 @@ def test_without_console(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     assert "sans console" in log_file.read_text(encoding="utf-8")
 
 
+def test_enqueue_uses_anonymous_semaphores(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Régression macOS : les files de loguru (`enqueue=True`) ne doivent pas créer de
+    sémaphores POSIX **nommés** (enregistrés auprès du `resource_tracker`). Ceux-ci ne sont
+    détachés qu'à la sortie normale (atexit) ; l'arrêt du tray Cocoa pouvant aborter en
+    SIGTRAP, ils étaient signalés « leaked semaphore objects ». Le contexte « fork » les
+    crée anonymes : rien à nettoyer. Sur Windows (sémaphores non enregistrés) on ignore.
+    """
+    import multiprocessing
+    import multiprocessing.resource_tracker
+    import sys
+
+    if sys.platform == "win32" or "fork" not in multiprocessing.get_all_start_methods():
+        pytest.skip("contexte « fork » indisponible sur cette plateforme")
+
+    registered: list[str] = []
+    real_register = multiprocessing.resource_tracker.register
+
+    def tracking_register(name: str, rtype: str) -> None:
+        if rtype == "semaphore":
+            registered.append(name)
+        real_register(name, rtype)
+
+    monkeypatch.setattr(multiprocessing.resource_tracker, "register", tracking_register)
+    setup_logging(LoggingConfig(), base_dir=tmp_path)
+    logger.info("avec files d'écriture")
+    shutdown_logging()
+    assert registered == [], f"sémaphores nommés créés : {registered}"
+
+
 def test_setup_is_idempotent(tmp_path: Path) -> None:
     cfg = LoggingConfig()
     setup_logging(cfg, base_dir=tmp_path)
