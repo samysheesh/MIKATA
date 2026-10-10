@@ -84,7 +84,15 @@ class ParakeetMlxSTT:
         return self._ready
 
     def load(self) -> None:
-        """Charge le modèle (téléchargement au premier usage) et le préchauffe (bloquant)."""
+        """Charge le modèle (téléchargement au premier usage) et le préchauffe (bloquant).
+
+        Le travail est exécuté sur l'unique thread de `_executor` : MLX attache ses flux
+        (`mx.Stream`) au thread courant, donc le modèle doit être créé **et** utilisé sur le
+        même thread que la transcription (sinon « There is no Stream(cpu, 1) in current
+        thread » au premier `generate`)."""
+        self._executor.submit(self._load_sync).result()
+
+    def _load_sync(self) -> None:
         parakeet_mlx = _import_parakeet()
         start = time.perf_counter()
         self._model = parakeet_mlx.from_pretrained(DEFAULT_MODEL)

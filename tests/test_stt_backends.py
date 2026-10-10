@@ -250,3 +250,50 @@ def test_mlx_transcribe_returns_empty_for_too_short_audio(
         assert stt.transcribe_sync(np.zeros(10, dtype=np.int16)).text == ""
     finally:
         stt.close()
+
+
+def test_mlx_load_runs_on_the_transcribe_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MLX attache ses flux au thread courant : le chargement doit se faire sur le même
+    thread que la transcription (sinon « There is no Stream(cpu, 1) in current thread »)."""
+    import threading
+
+    mlx = types.ModuleType("mlx")
+    core = types.ModuleType("mlx.core")
+    core.array = lambda value: _FakeMxArray(value)  # type: ignore[attr-defined]
+    mlx.core = core  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "mlx", mlx)
+    monkeypatch.setitem(sys.modules, "mlx.core", core)
+    audio = types.ModuleType("parakeet_mlx.audio")
+    audio.get_logmel = lambda samples, config: samples  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "parakeet_mlx.audio", audio)
+
+    created_on: list[str] = []
+
+    class FakeModel:
+        class preprocessor_config:
+            hop_length = 160
+
+        def generate(self, mel: Any, **_: Any) -> list[Any]:
+            return [types.SimpleNamespace(text="")]
+
+    def fake_from_pretrained(_model: str) -> FakeModel:
+        created_on.append(threading.current_thread().name)
+        return FakeModel()
+
+    import mikata.stt.parakeet_mlx as module
+
+    monkeypatch.setattr(
+        module,
+        "_import_parakeet",
+        lambda: types.SimpleNamespace(from_pretrained=fake_from_pretrained),
+    )
+
+    stt = ParakeetMlxSTT(_cfg(), Path("/tmp"), None)
+    try:
+        stt.load()
+        assert created_on and created_on[0].startswith("mikata-stt")  # thread de transcription
+        assert stt.loaded is True
+    finally:
+        stt.close()

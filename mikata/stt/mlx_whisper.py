@@ -85,7 +85,14 @@ class MlxWhisperSTT:
         return self._ready
 
     def load(self) -> None:
-        """Vérifie `mlx_whisper` et préchauffe (bloquant, plusieurs secondes)."""
+        """Vérifie `mlx_whisper` et préchauffe (bloquant, plusieurs secondes).
+
+        Exécuté sur l'unique thread de `_executor` : MLX attache ses flux au thread courant,
+        donc le préchauffage (qui charge les poids) doit se faire sur le même thread que la
+        transcription, sinon « There is no Stream(...) in current thread »."""
+        self._executor.submit(self._load_sync).result()
+
+    def _load_sync(self) -> None:
         try:
             import mlx_whisper  # noqa: F401
         except ImportError as exc:
