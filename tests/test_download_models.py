@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -37,6 +39,7 @@ def test_downloads_missing_files_and_whisper(
     whisper: list[tuple[str, Path]] = []
     monkeypatch.setattr(dm, "download", fake_download)
     monkeypatch.setattr(dm, "download_whisper", lambda m, d: whisper.append((m, d)) or d)
+    monkeypatch.setattr(dm, "download_parakeet_mlx", lambda: 0)  # pas de vrai snapshot_download
     assert dm.main(["--dir", str(tmp_path), "--config", str(config_file)]) == 0
     expected = set(dm.MODELS) - {"hey_jarvis.onnx"}
     if dm.sys.platform == "linux":  # assets Parakeet sherpa, Linux uniquement
@@ -47,6 +50,20 @@ def test_downloads_missing_files_and_whisper(
         assert whisper == [("large-v3-turbo", tmp_path / "whisper")]
     else:
         assert whisper == []
+
+
+def test_parakeet_mlx_prefetch_darwin_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+    fake_hub = types.SimpleNamespace(snapshot_download=lambda repo: calls.append(repo) or repo)
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub)
+
+    monkeypatch.setattr(dm.sys, "platform", "win32")
+    assert dm.download_parakeet_mlx() == 0
+    assert calls == []  # rien téléchargé hors macOS
+
+    monkeypatch.setattr(dm.sys, "platform", "darwin")
+    assert dm.download_parakeet_mlx() == 0
+    assert calls == [dm.PARAKEET_MLX_REPO]  # cache HuggingFace préchargé
 
 
 def test_failures_give_exit_code_1(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

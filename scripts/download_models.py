@@ -13,8 +13,11 @@ Usage : uv run python scripts/download_models.py [--no-whisper]
 - Parakeet v3 (§5, Linux) : les quatre assets du modèle int8 (`encoder.int8.onnx`,
   `decoder.int8.onnx`, `joiner.int8.onnx`, `tokens.txt`) dans models/parakeet/, là où
   `sherpa-onnx` les cherche (backend STT par défaut sous Linux). Asset Linux uniquement :
-  sauté sous Windows et macOS. Les poids Parakeet MLX (macOS) sont récupérés au premier
-  usage par `parakeet-mlx` depuis le HuggingFace Hub : rien à précharger ici.
+  sauté sous Windows et macOS.
+- Parakeet v3 (§5, macOS) : les poids MLX du modèle `mlx-community/parakeet-tdt-0.6b-v3`
+  préchargés dans le cache HuggingFace (`~/.cache/huggingface/hub`, `HF_HOME` pour le
+  déplacer), là où `parakeet_mlx.from_pretrained` les cherche. macOS uniquement : sauté
+  sous Windows et Linux.
 
 Les fichiers déjà présents sont conservés (jamais écrasés).
 """
@@ -51,6 +54,9 @@ MODELS = {
 # Assets Parakeet sherpa-onnx (Linux), sous models/parakeet/ (voir parakeet_sherpa.py).
 SHERPA_DIR = "parakeet"
 SHERPA_FILES = ("encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt")
+# Modèle Parakeet MLX (macOS) : mêmes poids que parakeet_mlx.DEFAULT_MODEL, préchargés
+# dans le cache HuggingFace (voir parakeet_mlx.py). Tenir les deux alignés.
+PARAKEET_MLX_REPO = "mlx-community/parakeet-tdt-0.6b-v3"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DIR = PROJECT_ROOT / "models"
 WHISPER_SUBDIR = "whisper"
@@ -126,6 +132,28 @@ def download_sherpa_parakeet(directory: Path) -> int:
     return failures
 
 
+def download_parakeet_mlx() -> int:
+    """Précharge les poids Parakeet v3 (MLX) dans le cache HuggingFace via `snapshot_download`,
+    là où `parakeet_mlx.from_pretrained` les lit ensuite (aucun chargement du modèle). Renvoie
+    le nombre d'échecs. macOS uniquement ; sous Windows/Linux rien n'est téléchargé."""
+    if sys.platform != "darwin":
+        print(f"[--] Parakeet MLX : poids macOS, sauté ({sys.platform}).")
+        return 0
+    try:
+        from huggingface_hub import snapshot_download
+    except ImportError as exc:  # huggingface-hub absent (non installé avec l'extra)
+        print(f"[!!] Parakeet MLX : huggingface_hub indisponible : {exc}", file=sys.stderr)
+        return 1
+    print(f"Parakeet MLX {PARAKEET_MLX_REPO} : préchargement dans le cache HuggingFace...")
+    try:
+        path = snapshot_download(PARAKEET_MLX_REPO)
+    except Exception as exc:  # réseau, dépôt inconnu
+        print(f"[!!] Parakeet MLX {PARAKEET_MLX_REPO} : échec : {exc}", file=sys.stderr)
+        return 1
+    print(f"[OK] Parakeet MLX : {path}")
+    return 0
+
+
 def whisper_model_name(config_path: Path | None) -> str:
     try:
         from mikata.config import ConfigError, load_config
@@ -177,6 +205,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             else:
                 print(f"[OK] Whisper {model} : {path}")
     failures += download_sherpa_parakeet(args.dir / SHERPA_DIR)
+    failures += download_parakeet_mlx()
     return 1 if failures else 0
 
 
