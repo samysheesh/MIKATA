@@ -39,8 +39,8 @@ _BUFFER_SIZE = 1024 * 1024  # 1 Mo par appel ioctl
 _NTFS_EPOCH_S = 11_644_473_600  # 1601 -> 1970
 
 DARWIN_MSG = (
-    "lecture MFT/USN indisponible sur macOS : NTFS direct et fsutil sont "
-    "Windows uniquement ; utilisez le backend Spotlight (files.index)."
+    "accès direct aux volumes NTFS indisponible sur macOS : MFT, journal USN et "
+    "helper élevé sont Windows uniquement ; utilisez le backend Spotlight (files.index)."
 )
 
 
@@ -400,7 +400,7 @@ def read_journal(
 def diagnose(volume: str) -> str:
     """Décodage du premier tampon de FSCTL_ENUM_USN_DATA (diagnostic, volume élevé)."""
     if sys.platform != "win32":
-        return DARWIN_MSG
+        _require_win32()
     import win32file
 
     handle = _open_volume(volume)

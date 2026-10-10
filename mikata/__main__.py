@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib
 import os
 import sys
 from collections.abc import Callable, Sequence
@@ -152,19 +153,39 @@ def build_tool_context(config: Config) -> ToolContext:
         )
     key = config.secrets.search_api_key
     ctx.search_api_key = key.get_secret_value() if key is not None else None
-    if sys.platform == "win32":
-        from mikata.tools.desktop import WindowsDesktop
-        from mikata.tools.input import PynputInput
-        from mikata.tools.media import PycawAudio
-        from mikata.ui.notify import ToastNotifier
+    from mikata.plat import platform
 
-        ctx.desktop, ctx.audio, ctx.notifier = WindowsDesktop(), PycawAudio(), ToastNotifier()
-        ctx.input = PynputInput()
+    # Services branchés selon la plateforme : un seul tableau (pas de branches dupliquées).
+    # Chaque entrée « module:attribut » est importée paresseusement par `_load_service`.
+    services = {
+        "win32": dict(
+            desktop="mikata.tools.desktop:WindowsDesktop",
+            audio="mikata.tools.media:PycawAudio",
+            input="mikata.tools.input:PynputInput",
+            notifier="mikata.ui.notify:ToastNotifier",
+        ),
+        "darwin": dict(
+            desktop="mikata.tools.desktop:MacDesktop",
+            audio="mikata.tools.media:MacAudio",
+            input="mikata.tools.input:PynputInput",
+            notifier="mikata.ui.notify:ToastNotifier",
+        ),
+    }
+    p = platform()
+    table = services.get(p)
+    if table is not None:
+        ctx.desktop = _load_service(table["desktop"])()
+        ctx.audio = _load_service(table["audio"])()
+        ctx.notifier = _load_service(table["notifier"])()
+        ctx.input = _load_service(table["input"])()
+    else:
+        logger.warning("Hors Windows : outils du bureau, du volume et des notifications inactifs.")
+    if p in ("win32", "darwin"):
         if config.uia.enabled:  # phase 12a : pilotage fin des applications (arbre UIA)
             from mikata.uia.controller import UiController
 
             ctx.uia = UiController(config, ctx.desktop)
-            if config.uia.state_poll_s > 0:
+            if p == "win32" and config.uia.state_poll_s > 0:
                 logger.info(
                     "Pilotage des applications : actif (état ambiant toutes les {} s).",
                     config.uia.state_poll_s,
@@ -178,33 +199,14 @@ def build_tool_context(config: Config) -> ToolContext:
 
             ctx.index = FileIndex(config)
             ctx.index.start()
-    elif sys.platform == "darwin":
-        # Port macOS (Option B) : implémentations Mac chargées paresseusement
-        # (MacDesktop, MacAudio, PynputInput ; ToastNotifier gère darwin en interne ;
-        # backend index « spotlight » et pilotage « appkit », cf. config).
-        from mikata.tools.desktop import MacDesktop
-        from mikata.tools.input import PynputInput
-        from mikata.tools.media import MacAudio
-        from mikata.ui.notify import ToastNotifier
-
-        ctx.desktop, ctx.audio, ctx.notifier = MacDesktop(), MacAudio(), ToastNotifier()
-        ctx.input = PynputInput()
-        if config.uia.enabled:  # phase 12a : backend AX (macuiauto, import paresseux)
-            from mikata.uia.controller import UiController
-
-            ctx.uia = UiController(config, ctx.desktop)
-        if config.browser.enabled:  # phase 12b : navigateur piloté (CDP)
-            from mikata.browser.controller import BrowserController
-
-            ctx.browser = BrowserController(config, ctx.desktop)
-        if config.files_index.enabled:  # phase 12d : backend Spotlight (mdfind + FSEvents)
-            from mikata.files.index import FileIndex
-
-            ctx.index = FileIndex(config)
-            ctx.index.start()
-    else:
-        logger.warning("Hors Windows : outils du bureau, du volume et des notifications inactifs.")
     return ctx
+
+
+def _load_service(spec: str) -> Any:
+    """Import paresseux d'un service « module:attribut » (coupé sur le dernier « : »)."""
+    module_name, attr = spec.rsplit(":", 1)
+    module = importlib.import_module(module_name)
+    return getattr(module, attr)
 
 
 def _known_folders() -> dict[str, Path]:

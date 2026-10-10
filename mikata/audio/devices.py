@@ -6,11 +6,11 @@ Les index PortAudio changent au redémarrage : on ne les stocke jamais dans la c
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from mikata.config import ConfigError
+from mikata.plat import platform
 
 # Nom PortAudio de l'API native par plateforme (relevé via `query_hostapis`).
 HOST_API_BY_PLATFORM: dict[str, str] = {
@@ -28,7 +28,7 @@ def preferred_host_api() -> str:
     Plateforme inconnue (Linux de test, CI) : WASAPI, pour garder un tri
     déterministe ; `filter_preferred` retombe sur l'autre API native si absente.
     """
-    return HOST_API_BY_PLATFORM.get(sys.platform, HOST_API_BY_PLATFORM["win32"])
+    return HOST_API_BY_PLATFORM.get(platform(), HOST_API_BY_PLATFORM["win32"])
 
 
 def preferred_host_apis() -> list[str]:

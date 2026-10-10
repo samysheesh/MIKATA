@@ -32,6 +32,7 @@ class HotkeyListener:
         self._listener: Any = None
 
     def start(self, on_trigger: Callable[[], None]) -> None:
+        # pynput : déclaré pour win32 et darwin dans pyproject.toml (absent de la CI Linux).
         from pynput import keyboard
 
         try:

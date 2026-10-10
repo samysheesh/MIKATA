@@ -46,6 +46,7 @@ from loguru import logger
 
 from mikata.audio.base import SAMPLE_RATE
 from mikata.config import StartupError, SttConfig
+from mikata.plat import platform, stt_backend_default
 from mikata.stt.base import Transcript
 
 CUDA_PACKAGES = ("cublas", "cudnn")
@@ -58,7 +59,7 @@ def resolve_backend(cfg: SttConfig) -> Literal["whisper", "parakeet", "mlx"]:
     """Backend effectif : « auto » prend Parakeet hors Windows, Whisper sous Windows."""
     backend = getattr(cfg, "backend", "auto")
     if backend == "auto":
-        return "whisper" if sys.platform == "win32" else "parakeet"
+        return stt_backend_default()
     return backend
 
 
@@ -68,7 +69,7 @@ def _parakeet_backend(
     vocabulary: Callable[[], Sequence[str]] | None,
 ) -> Any:
     """Backend Parakeet v3 : `parakeet-mlx` (macOS) ou `sherpa-onnx` (Linux). Import paresseux."""
-    if sys.platform == "darwin":
+    if platform() == "darwin":
         from mikata.stt.parakeet_mlx import ParakeetMlxSTT
 
         # parakeet-mlx récupère ses poids via le cache HuggingFace : download_root ignoré.

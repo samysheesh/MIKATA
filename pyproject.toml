@@ -39,6 +39,9 @@ dependencies = [
     "nvidia-cublas-cu12>=12.4,<13; sys_platform == 'win32'",
     "nvidia-cudnn-cu12==9.10.2.21; sys_platform == 'win32'",
     "pynput>=1.7.7; sys_platform == 'win32'",
+    # macOS : utilisé par ui/hotkeys.py et tools/input.py (PynputInput). L'exclure de la
+    # CI Linux (sherpa uniquement), qui ne l'importe jamais.
+    "pynput>=1.7.7; sys_platform == 'darwin'",
     # Icône de notification : commune à Windows et macOS (backend AppKit via pyobjc).
     "pystray>=0.19.5",
     "rapidfuzz>=3.9",
