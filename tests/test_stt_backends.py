@@ -11,8 +11,10 @@ import types
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 
+from mikata.audio.base import SAMPLE_RATE
 from mikata.config import SttConfig
 from mikata.stt import whisper_local
 from mikata.stt.parakeet_mlx import ParakeetMlxSTT
@@ -157,5 +159,94 @@ def test_mlx_missing_package_raises_install_hint(
             stt.load()
         assert stt.loaded is False
         assert "darwin" in str(info.value)  # extra à installer
+    finally:
+        stt.close()
+
+
+# -- transcription MLX à partir d'un tableau (régression) ----------------------------------
+#
+# `parakeet_mlx.Model.transcribe` n'accepte qu'un chemin de fichier (il passe par ffmpeg) ;
+# passer un np.ndarray levait `TypeError: expected str, bytes or os.PathLike`. On vérifie
+# que notre backend calcule le log-mel et appelle `generate`, sans jamais appeler `transcribe`.
+
+
+class _FakeMxArray:
+    def __init__(self, array: Any) -> None:
+        self._array = np.asarray(array)
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        return self._array.shape
+
+
+def test_mlx_transcribe_accepts_a_numpy_array(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Un tableau (pas un chemin) doit être transcrit : log-mel local + `generate`."""
+    import numpy as np
+
+    gen_calls: list[Any] = []
+    mlx = types.ModuleType("mlx")
+    core = types.ModuleType("mlx.core")
+    core.array = lambda value: _FakeMxArray(value)  # type: ignore[attr-defined]
+    mlx.core = core  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "mlx", mlx)
+    monkeypatch.setitem(sys.modules, "mlx.core", core)
+    audio = types.ModuleType("parakeet_mlx.audio")
+    audio.get_logmel = lambda samples, config: samples  # type: ignore[attr-defined]
+    package = types.ModuleType("parakeet_mlx")
+    package.audio = audio  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "parakeet_mlx", package)
+    monkeypatch.setitem(sys.modules, "parakeet_mlx.audio", audio)
+
+    class FakeModel:
+        class preprocessor_config:
+            hop_length = 160
+
+        def generate(self, mel: Any, **_: Any) -> list[Any]:
+            gen_calls.append(mel)
+            return [types.SimpleNamespace(text="  bonjour  ")]
+
+        def transcribe(self, *_: Any, **__: Any) -> Any:
+            raise AssertionError("transcribe (chemin de fichier) ne doit pas être appelé")
+
+    stt = ParakeetMlxSTT(_cfg(), Path("/tmp"), None)
+    stt._model = FakeModel()
+    try:
+        transcript = stt.transcribe_sync(np.zeros(SAMPLE_RATE, dtype=np.int16))
+        assert transcript.text == "bonjour"  # strip() appliqué
+        assert len(gen_calls) == 1  # generate appelé, pas transcribe
+    finally:
+        stt.close()
+
+
+def test_mlx_transcribe_returns_empty_for_too_short_audio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Audio plus court qu'une trame de hop : texte vide, pas d'exception."""
+    import numpy as np
+
+    mlx = types.ModuleType("mlx")
+    core = types.ModuleType("mlx.core")
+    core.array = lambda value: _FakeMxArray(value)  # type: ignore[attr-defined]
+    mlx.core = core  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "mlx", mlx)
+    monkeypatch.setitem(sys.modules, "mlx.core", core)
+    audio = types.ModuleType("parakeet_mlx.audio")
+    audio.get_logmel = lambda samples, config: samples  # type: ignore[attr-defined]
+    package = types.ModuleType("parakeet_mlx")
+    package.audio = audio  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "parakeet_mlx", package)
+    monkeypatch.setitem(sys.modules, "parakeet_mlx.audio", audio)
+
+    class FakeModel:
+        class preprocessor_config:
+            hop_length = 160
+
+        def generate(self, *_: Any, **__: Any) -> Any:
+            raise AssertionError("trop court : generate ne doit pas être appelé")
+
+    stt = ParakeetMlxSTT(_cfg(), Path("/tmp"), None)
+    stt._model = FakeModel()
+    try:
+        assert stt.transcribe_sync(np.zeros(10, dtype=np.int16)).text == ""
     finally:
         stt.close()

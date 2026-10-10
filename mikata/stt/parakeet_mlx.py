@@ -99,15 +99,24 @@ class ParakeetMlxSTT:
     def transcribe_sync(self, audio: np.ndarray, prompt: str | None = None) -> Transcript:
         """Transcription bloquante (int16 ou float32 mono 16 kHz) ; hors de la boucle
         asyncio. `prompt` est ignoré (Parakeet n'accepte pas de prompt initial) et n'existe
-        que pour respecter la signature de `WhisperSTT`."""
+        que pour respecter la signature de `WhisperSTT`.
+
+        `parakeet_mlx.Model.transcribe` n'accepte qu'un **chemin de fichier** (il passe par
+        ffmpeg) : on calcule donc nous-mêmes le log-mel du tableau et on appelle `generate`,
+        comme le fait la bibliothèque en interne."""
         if self._model is None:
             raise RuntimeError("Parakeet MLX n'est pas chargé")
         import mlx.core as mx
+        from parakeet_mlx.audio import get_logmel
 
         start = time.perf_counter()
         pcm = audio.astype(np.float32) / 32768.0 if audio.dtype == np.int16 else audio
         samples = mx.array(np.ascontiguousarray(pcm, dtype=np.float32))
-        result = self._model.transcribe(samples)  # langue auto-détectée (v3)
+        hop = self._model.preprocessor_config.hop_length
+        if samples.shape[-1] < hop:  # trop court pour un log-mel : rien à transcrire
+            return Transcript(text="", duration_s=len(audio) / SAMPLE_RATE, latency_s=0.0)
+        mel = get_logmel(samples, self._model.preprocessor_config)
+        result = self._model.generate(mel)[0]  # langue auto-détectée (v3)
         text = str(getattr(result, "text", "")).strip()
         return Transcript(
             text=text,
