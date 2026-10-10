@@ -199,12 +199,12 @@ class BrowserController:
             return self._work_pids
         import psutil
 
-        profile = str(self._config.resolve(self._config.browser.profile_dir))
+        profile = str(self._config.resolve(self._config.browser.profile_dir)).casefold()
         pids: set[int] = set()
         try:
             for proc in psutil.process_iter(["pid"]):
                 try:
-                    if profile in proc.cmdline():
+                    if any(profile in arg.casefold() for arg in proc.cmdline()):
                         pids.add(proc.pid)
                 except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
                     continue
@@ -284,6 +284,7 @@ class BrowserController:
                 if cfg.own_profile:
                     # Le port ne répond pas : lancer (ou rejoindre) le profil de travail.
                     await self._launch_brave()
+                    self._minimize_work_window()  # la fenêtre vient d'apparaître
                     targets = await self._wait_targets()
                 elif self._browser_running():
                     raise ToolError(
