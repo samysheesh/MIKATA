@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 import urllib.request
 from collections.abc import Sequence
 from pathlib import Path
@@ -40,14 +41,40 @@ DEFAULT_DIR = PROJECT_ROOT / "models"
 WHISPER_SUBDIR = "whisper"
 
 
+def _print_progress(name: str, done: int, total: int) -> None:
+    """Barre de progression sur une ligne (rien si sortie non interactive)."""
+    if not sys.stdout.isatty():
+        return
+    width = 30
+    if total > 0:
+        frac = min(done / total, 1.0)
+        filled = int(width * frac)
+        bar = "█" * filled + "─" * (width - filled)
+        line = f"\r{name} [{bar}] {100 * frac:5.1f}% {done / 1e6:.1f}/{total / 1e6:.1f} Mo"
+    else:
+        line = f"\r{name} … {done / 1e6:.1f} Mo téléchargés"
+    print(line, end="", flush=True)
+
+
 def download(url: str, dest: Path) -> int:
     """Télécharge vers `dest` via un fichier temporaire ; renvoie la taille en octets."""
     tmp = dest.with_name(dest.name + ".part")
     with urllib.request.urlopen(url, timeout=120) as response, tmp.open("wb") as out:
+        length = response.headers.get("Content-Length")
+        total = int(length) if length and length.isdigit() else 0
         size = 0
+        last = 0.0
+        _print_progress(dest.name, 0, total)
         while chunk := response.read(1 << 16):
             out.write(chunk)
             size += len(chunk)
+            now = time.monotonic()
+            if now - last >= 0.1:  # ~10 Hz, pas de spam stdout
+                _print_progress(dest.name, size, total)
+                last = now
+        _print_progress(dest.name, size, total or size)
+    if sys.stdout.isatty():
+        print()  # termine la ligne de progression
     if size == 0:
         raise OSError(f"fichier vide reçu depuis {url}")
     tmp.replace(dest)
