@@ -43,7 +43,10 @@ def test_downloads_missing_files_and_whisper(
         expected |= set(dm.SHERPA_FILES)
     assert sorted(fetched) == sorted(expected)
     assert (tmp_path / "hey_jarvis.onnx").read_bytes() == b"deja la"  # jamais écrasé
-    assert whisper == [("large-v3-turbo", tmp_path / "whisper")]
+    if dm.sys.platform == "win32":  # Whisper = backend Windows uniquement
+        assert whisper == [("large-v3-turbo", tmp_path / "whisper")]
+    else:
+        assert whisper == []
 
 
 def test_failures_give_exit_code_1(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

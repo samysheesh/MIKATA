@@ -7,8 +7,9 @@ Usage : uv run python scripts/download_models.py [--no-whisper]
 - Silero VAD v5 (§5) : models/silero_vad.onnx
 - Voix (§8) : Piper fr_FR-siwis-medium (.onnx + .onnx.json, ~63 Mo) et Kokoro-82M en ONNX
   fp32 + fichier des voix (~350 Mo) ; les deux, pour pouvoir les comparer (eval_tts.py)
-- Whisper (§5) : le modèle `stt.model` de config.yaml (large-v3-turbo, ~1,6 Go) dans
-  models/whisper/, là où MIKATA le cherche au démarrage
+- Whisper (§5, Windows) : le modèle `stt.model` de config.yaml (large-v3-turbo, ~1,6 Go) dans
+  models/whisper/, là où MIKATA le cherche au démarrage. Backend Windows uniquement : sauté
+  sous Linux/macOS (Parakeet y est utilisé)
 - Parakeet v3 (§5, Linux) : les quatre assets du modèle int8 (`encoder.int8.onnx`,
   `decoder.int8.onnx`, `joiner.int8.onnx`, `tokens.txt`) dans models/parakeet/, là où
   `sherpa-onnx` les cherche (backend STT par défaut sous Linux). Asset Linux uniquement :
@@ -160,15 +161,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"[OK] {dest} ({size / 1e6:.1f} Mo)")
 
     if not args.no_whisper:
-        model = whisper_model_name(args.config)
-        print(f"Whisper {model} : vérification / téléchargement (~1,6 Go la première fois)...")
-        try:
-            path = download_whisper(model, args.dir / WHISPER_SUBDIR)
-        except Exception as exc:  # réseau, disque, nom de modèle inconnu
-            print(f"[!!] Whisper {model} : échec du téléchargement : {exc}", file=sys.stderr)
-            failures += 1
+        if sys.platform != "win32":
+            print(
+                f"[--] Whisper {whisper_model_name(args.config)} : backend Windows, sauté "
+                f"({sys.platform}) ; Parakeet utilisé ici."
+            )
         else:
-            print(f"[OK] Whisper {model} : {path}")
+            model = whisper_model_name(args.config)
+            print(f"Whisper {model} : vérification / téléchargement (~1,6 Go la première fois)...")
+            try:
+                path = download_whisper(model, args.dir / WHISPER_SUBDIR)
+            except Exception as exc:  # réseau, disque, nom de modèle inconnu
+                print(f"[!!] Whisper {model} : échec du téléchargement : {exc}", file=sys.stderr)
+                failures += 1
+            else:
+                print(f"[OK] Whisper {model} : {path}")
     failures += download_sherpa_parakeet(args.dir / SHERPA_DIR)
     return 1 if failures else 0
 
