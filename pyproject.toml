@@ -78,8 +78,15 @@ dependencies = [
     # Corbeille sûre du Finder via l'API native (le send2trash de base reste commun).
     "send2trash[nativeLib]>=1.8; sys_platform == 'darwin'",
     "mlx-whisper>=0.4; sys_platform == 'darwin'",
+    # Parakeet v3 via MLX (macOS, backend STT par défaut) : langue auto-détectée (25
+    # langues européennes, dont le français), import paresseux, mocké dans les tests.
+    "parakeet-mlx>=0.5; sys_platform == 'darwin'",
     "macuiauto>=0.1; sys_platform == 'darwin'",
     "watchdog>=4; sys_platform == 'darwin'",
+    # Linux uniquement (CI, backend STT par défaut) : Parakeet v3 en ONNX int8 sur CPU via
+    # sherpa-onnx. Les poids ne sont pas dans le paquet : scripts/download_models.py les
+    # précharge. Import paresseux, mocké dans les tests.
+    "sherpa-onnx>=1.13; sys_platform == 'linux'",
 ]
 
 [dependency-groups]

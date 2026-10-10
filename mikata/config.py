@@ -95,6 +95,10 @@ class VadConfig(_Section):
 
 class SttConfig(_Section):
     model: str = "large-v3-turbo"
+    # Backend de transcription (port macOS, Option B) : « auto » prend Parakeet v3 sous
+    # macOS (parakeet-mlx) et Linux (sherpa-onnx), et Whisper sous Windows ; « whisper »,
+    # « parakeet » et « mlx » forcent le backend. Le français reste couvert par tous.
+    backend: Literal["auto", "whisper", "parakeet", "mlx"] = "auto"
     # Moteur de transcription : « cuda » (Windows, RTX 3080), « mlx » (macOS, Apple
     # Silicon via mlx-whisper), « cpu » en secours partout.
     device: Literal["cuda", "cpu", "mlx"] = (

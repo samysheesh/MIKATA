@@ -62,10 +62,12 @@ def fake_whisper(monkeypatch: pytest.MonkeyPatch) -> types.SimpleNamespace:
 
 
 def _stt(tmp_path: Path, **overrides: Any) -> WhisperSTT:
-    # Ces tests ciblent le backend faster-whisper/CUDA (modules simulés) : le moteur
-    # est fixé car le défaut dépend de la plateforme depuis F1 (mlx sous macOS).
+    # Ces tests ciblent le backend faster-whisper/CUDA (modules simulés) : le moteur est
+    # fixé sur « whisper » car le défaut dépend de la plateforme depuis F1 (sous macOS et
+    # Linux, « auto » sélectionne Parakeet et n'exercerait pas ce chemin).
     return WhisperSTT(
-        SttConfig().model_copy(update={"device": "cuda", **overrides}), download_root=tmp_path
+        SttConfig().model_copy(update={"device": "cuda", "backend": "whisper", **overrides}),
+        download_root=tmp_path,
     )
 
 
@@ -210,7 +212,7 @@ def test_prompt_ends_with_short_follow_up_primers() -> None:
 
 def test_prompt_follows_installed_apps(fake_whisper: types.SimpleNamespace, tmp_path: Path) -> None:
     apps = ["Discord", "Hades"]  # Discord est déjà dans stt.initial_prompt
-    cuda = SttConfig().model_copy(update={"device": "cuda"})
+    cuda = SttConfig().model_copy(update={"device": "cuda", "backend": "whisper"})
     stt = WhisperSTT(cuda, download_root=tmp_path, vocabulary=lambda: apps)
     assert stt.prompt == f"Applications : Hades. {SttConfig().initial_prompt}"
     apps.append("Balatro")

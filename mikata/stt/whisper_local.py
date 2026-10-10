@@ -20,6 +20,12 @@ Phase 6b : la langue reste forcée (`language="fr"`, jamais de détection automa
 sur deux mots, Whisper lisait « Yeah, Tokyo ». Les noms d'applications passent donc
 **avant** `stt.initial_prompt` : la fin du prompt est ce que Whisper lit juste avant ta
 phrase, et ce qu'il garde si le prompt est trop long (il coupe le début).
+
+Port macOS (Option B) : `stt.backend` sélectionne le moteur STT (voir `build_stt`). En
+« auto », Parakeet v3 (langue auto-détectée) tourne sous macOS (`parakeet-mlx`) et Linux
+(`sherpa-onnx`), Whisper reste le moteur Windows ; « whisper » conserve le chemin
+faster-whisper / MLX ci-dessus (utile pour les 99 langues), « parakeet » et « mlx » forcent
+le backend correspondant. Les backends Parakeet sont importés paresseusement.
 """
 
 from __future__ import annotations
@@ -33,7 +39,7 @@ import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 from loguru import logger
@@ -46,6 +52,53 @@ CUDA_PACKAGES = ("cublas", "cudnn")
 WARMUP_S = 1.0
 APP_NAME_MAX_WORDS = 4  # « Microsoft Flight Simulator 2024 » ; plus long : rarement dit tel quel
 _APP_NAME_SKIP = re.compile(r"[\\/:]|https?|\.exe\b|\(x86\)|\bx64\b", re.IGNORECASE)
+
+
+def resolve_backend(cfg: SttConfig) -> Literal["whisper", "parakeet", "mlx"]:
+    """Backend effectif : « auto » prend Parakeet hors Windows, Whisper sous Windows."""
+    backend = getattr(cfg, "backend", "auto")
+    if backend == "auto":
+        return "whisper" if sys.platform == "win32" else "parakeet"
+    return backend
+
+
+def _parakeet_backend(
+    cfg: SttConfig,
+    download_root: Path,
+    vocabulary: Callable[[], Sequence[str]] | None,
+) -> Any:
+    """Backend Parakeet v3 : `parakeet-mlx` (macOS) ou `sherpa-onnx` (Linux). Import paresseux."""
+    if sys.platform == "darwin":
+        from mikata.stt.parakeet_mlx import ParakeetMlxSTT
+
+        # parakeet-mlx récupère ses poids via le cache HuggingFace : download_root ignoré.
+        return ParakeetMlxSTT(cfg, download_root, vocabulary)
+    from mikata.stt.parakeet_sherpa import ParakeetSherpaSTT
+
+    # `download_root` est le cache Whisper (`<racine>/whisper`) ; sherpa cherche ses assets
+    # sous `<racine>/parakeet` (scripts/download_models.py) : on remonte donc d'un cran.
+    return ParakeetSherpaSTT(cfg, download_root.parent, vocabulary)
+
+
+def build_stt(
+    cfg: SttConfig,
+    download_root: Path,
+    vocabulary: Callable[[], Sequence[str]] | None = None,
+) -> Any:
+    """Construit le backend STT choisi par `stt.backend` (même sélection que `WhisperSTT`).
+
+    « whisper » -> `WhisperSTT` (faster-whisper / MLX), « mlx » -> MLX Whisper, « parakeet »
+    (et « auto » hors Windows) -> Parakeet v3 (`parakeet-mlx` ou `sherpa-onnx`). Les imports
+    des backends spécifiques restent paresseux.
+    """
+    backend = resolve_backend(cfg)
+    if backend == "parakeet":
+        return _parakeet_backend(cfg, download_root, vocabulary)
+    if backend == "mlx":
+        from mikata.stt.mlx_whisper import MlxWhisperSTT
+
+        return MlxWhisperSTT(cfg, download_root, vocabulary)
+    return WhisperSTT(cfg, download_root, vocabulary)
 
 
 def build_prompt(base: str, app_names: Sequence[str] = (), max_chars: int = 500) -> str:
@@ -238,7 +291,13 @@ class WhisperSTT:
         """Charge le modèle et le préchauffe (bloquant, plusieurs secondes)."""
         cfg = self.cfg
         device = getattr(cfg, "device", "cuda")
-        if device == "mlx":
+        backend = resolve_backend(cfg)
+        if backend == "parakeet":
+            delegate = _parakeet_backend(cfg, self.download_root, self.vocabulary)
+            delegate.load()
+            self._delegate = delegate
+            return
+        if backend == "mlx" or device == "mlx":
             self._load_mlx()
             return
         if device == "cuda" and sys.platform == "win32":

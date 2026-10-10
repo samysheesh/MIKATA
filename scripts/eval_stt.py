@@ -30,6 +30,15 @@
    `--initial-prompt` remplace `stt.initial_prompt` le temps de la mesure. `--noise DOSSIER`
    transcrit aussi des extraits sans commande (data/negatives, data/wake_logs) et compte
    ceux où Whisper recopie un morceau du prompt (« Et demain ? » inventé sur du bruit).
+
+5. Comparer les backends STT (port macOS, Option B) :
+
+       uv run python scripts/eval_stt.py run --backend whisper parakeet
+
+   « auto » suit `stt.backend` ; « parakeet » (Parakeet v3, langue auto-détectée),
+   « mlx » (MLX Whisper) et « whisper » (faster-whisper / MLX) forcent le backend. La
+   sélection est celle de `mikata.stt.whisper_local.build_stt`. Parakeet ne prend ni prompt
+   ni `compute_type`/`beam_size` : ces réglages n'ont d'effet que sur Whisper.
 """
 
 from __future__ import annotations
@@ -356,7 +365,7 @@ def load_noise(directory: Path, max_files: int = NOISE_MAX_FILES) -> list[tuple[
 def _run(args: argparse.Namespace) -> int:
     from mikata.audio.wavfile import float_to_int16, read_wav
     from mikata.config import load_config
-    from mikata.stt.whisper_local import WhisperSTT
+    from mikata.stt.whisper_local import build_stt, resolve_backend
 
     items = load_dataset(args.dir)
     if not items:
@@ -372,6 +381,8 @@ def _run(args: argparse.Namespace) -> int:
 
     config = load_config(args.config)
     stt_base = config.stt
+    if args.backend is not None:
+        stt_base = stt_base.model_copy(update={"backend": args.backend})
     if args.initial_prompt is not None:
         stt_base = stt_base.model_copy(update={"initial_prompt": args.initial_prompt})
     noise = load_noise(args.noise, args.noise_max) if args.noise else []
@@ -381,19 +392,24 @@ def _run(args: argparse.Namespace) -> int:
     shown = {mode: stt_base.initial_prompt if p is None else p for mode, p in prompts.items()}
     for mode, text in shown.items():
         print(f"Prompt {mode} ({len(text)} caractères) : « {text} »")
+    parakeet = resolve_backend(stt_base) == "parakeet"
+    if parakeet:
+        # Parakeet ignore compute_type et beam_size : un seul passage suffit.
+        combos = [("-", 0, mode) for mode in args.prompt]
+    else:
+        combos = list(itertools.product(args.compute_type, args.beam_size, args.prompt))
     results = []
-    for compute_type, beam_size, mode in itertools.product(
-        args.compute_type, args.beam_size, args.prompt
-    ):
-        stt_cfg = stt_base.model_copy(
-            update={
-                "model": args.model or config.stt.model,
-                "compute_type": compute_type,
-                "beam_size": beam_size,
-            }
+    for compute_type, beam_size, mode in combos:
+        update: dict[str, Any] = {"model": args.model or config.stt.model}
+        if not parakeet:  # Parakeet ne lit ni compute_type ni beam_size
+            update["compute_type"] = compute_type
+            update["beam_size"] = beam_size
+        stt_cfg = stt_base.model_copy(update=update)
+        print(
+            f"{resolve_backend(stt_cfg)} {stt_cfg.model} {compute_type} beam {beam_size} "
+            f"prompt {mode}..."
         )
-        print(f"{stt_cfg.model} {compute_type} beam {beam_size} prompt {mode}...")
-        stt = WhisperSTT(stt_cfg, download_root=config.resolve("models/whisper"))
+        stt = build_stt(stt_cfg, download_root=config.resolve("models/whisper"))
         results.append(
             evaluate(stt, dataset, compute_type, beam_size, prompts[mode], mode, noise, shown[mode])
         )
@@ -410,6 +426,12 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     record.add_argument("--phrases", type=Path, default=DEFAULT_PHRASES)
     run = sub.add_parser("run", help="mesurer WER et latence")
     run.add_argument("--model", default=None, help="modèle Whisper (défaut : config.yaml)")
+    run.add_argument(
+        "--backend",
+        choices=("auto", "whisper", "parakeet", "mlx"),
+        default=None,
+        help="backend STT : auto (stt.backend), whisper, parakeet, mlx",
+    )
     run.add_argument("--compute-type", nargs="+", default=["float16"])
     run.add_argument("--beam-size", nargs="+", type=int, default=[1])
     run.add_argument(

@@ -29,6 +29,9 @@ vad:
   threshold: 0.5                   # probabilité de voix (0 à 1)
 stt:
   model: large-v3-turbo
+  # Backend STT : « auto » = Parakeet v3 (parakeet-mlx sous macOS, sherpa-onnx sous Linux),
+  # Whisper sous Windows ; « whisper », « parakeet » et « mlx » forcent le moteur.
+  backend: auto
   device: cuda
   compute_type: int8_float16
   beam_size: 1

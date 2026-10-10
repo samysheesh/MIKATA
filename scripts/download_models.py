@@ -9,6 +9,11 @@ Usage : uv run python scripts/download_models.py [--no-whisper]
   fp32 + fichier des voix (~350 Mo) ; les deux, pour pouvoir les comparer (eval_tts.py)
 - Whisper (§5) : le modèle `stt.model` de config.yaml (large-v3-turbo, ~1,6 Go) dans
   models/whisper/, là où MIKATA le cherche au démarrage
+- Parakeet v3 (§5, Linux) : les quatre assets du modèle int8 (`encoder.int8.onnx`,
+  `decoder.int8.onnx`, `joiner.int8.onnx`, `tokens.txt`) dans models/parakeet/, là où
+  `sherpa-onnx` les cherche (backend STT par défaut sous Linux). Asset Linux uniquement :
+  sauté sous Windows et macOS. Les poids Parakeet MLX (macOS) sont récupérés au premier
+  usage par `parakeet-mlx` depuis le HuggingFace Hub : rien à précharger ici.
 
 Les fichiers déjà présents sont conservés (jamais écrasés).
 """
@@ -26,6 +31,12 @@ OWW_URL = "https://github.com/dscripka/openWakeWord/releases/download/v0.5.1"
 SILERO_URL = "https://raw.githubusercontent.com/snakers4/silero-vad/v5.1.2/src/silero_vad/data"
 PIPER_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/fr/fr_FR/siwis/medium"
 KOKORO_URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0"
+# sherpa-onnx nemo-parakeet-tdt-0.6b-v3-int8 (25 langues européennes). Révision figée pour
+# un téléchargement reproductible (les poids font ~670 Mo au total).
+SHERPA_URL = (
+    "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"
+    "/resolve/2bda32ec70b097a55adaa07d9a7173915b43cc78"
+)
 MODELS = {
     "hey_jarvis.onnx": f"{OWW_URL}/hey_jarvis_v0.1.onnx",
     "melspectrogram.onnx": f"{OWW_URL}/melspectrogram.onnx",
@@ -36,6 +47,9 @@ MODELS = {
     "kokoro-v1.0.onnx": f"{KOKORO_URL}/kokoro-v1.0.onnx",
     "voices-v1.0.bin": f"{KOKORO_URL}/voices-v1.0.bin",
 }
+# Assets Parakeet sherpa-onnx (Linux), sous models/parakeet/ (voir parakeet_sherpa.py).
+SHERPA_DIR = "parakeet"
+SHERPA_FILES = ("encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt")
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DIR = PROJECT_ROOT / "models"
 WHISPER_SUBDIR = "whisper"
@@ -88,6 +102,29 @@ def download_whisper(model: str, cache_dir: Path) -> Path:
     return Path(download_model(model, cache_dir=str(cache_dir)))
 
 
+def download_sherpa_parakeet(directory: Path) -> int:
+    """Précharge les quatre assets Parakeet v3 (sherpa-onnx) sous `directory` ; renvoie le
+    nombre d'échecs. Asset Linux uniquement : sous Windows/macOS rien n'est téléchargé."""
+    if sys.platform != "linux":
+        print(f"[--] Parakeet sherpa-onnx : asset Linux, sauté ({sys.platform}).")
+        return 0
+    directory.mkdir(parents=True, exist_ok=True)
+    failures = 0
+    for name in SHERPA_FILES:
+        dest = directory / name
+        if dest.is_file() and dest.stat().st_size > 0:
+            print(f"[OK] {dest} (déjà présent)")
+            continue
+        try:
+            size = download(f"{SHERPA_URL}/{name}", dest)
+        except OSError as exc:
+            print(f"[!!] parakeet/{name} : échec du téléchargement : {exc}", file=sys.stderr)
+            failures += 1
+            continue
+        print(f"[OK] {dest} ({size / 1e6:.1f} Mo)")
+    return failures
+
+
 def whisper_model_name(config_path: Path | None) -> str:
     try:
         from mikata.config import ConfigError, load_config
@@ -132,6 +169,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             failures += 1
         else:
             print(f"[OK] Whisper {model} : {path}")
+    failures += download_sherpa_parakeet(args.dir / SHERPA_DIR)
     return 1 if failures else 0
 
 
