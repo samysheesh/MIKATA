@@ -101,7 +101,7 @@ class MlxWhisperSTT:
                 "(macOS Apple Silicon uniquement)."
             ) from exc
         start = time.perf_counter()
-        self.transcribe_sync(np.zeros(round(WARMUP_S * SAMPLE_RATE), dtype=np.int16))
+        self._transcribe_impl(np.zeros(round(WARMUP_S * SAMPLE_RATE), dtype=np.int16))
         self._ready = True
         logger.info(
             "Whisper {} prêt via MLX ({}) en {:.1f} s.",
@@ -111,8 +111,14 @@ class MlxWhisperSTT:
         )
 
     def transcribe_sync(self, audio: np.ndarray, prompt: str | None = None) -> Transcript:
-        """Transcription bloquante (int16 ou float32 mono 16 kHz) ; hors de la boucle asyncio.
+        """Transcription bloquante, quel que soit le thread appelant : le travail est
+        sérialisé sur l'unique thread de `_executor` (MLX attache ses flux au thread
+        courant ; `load()` y crée les poids, donc tout `generate` doit y tourner aussi).
         `prompt` : prompt initial (défaut : `stt.initial_prompt`)."""
+        return self._executor.submit(self._transcribe_impl, audio, prompt).result()
+
+    def _transcribe_impl(self, audio: np.ndarray, prompt: str | None = None) -> Transcript:
+        """Corps de la transcription ; doit tourner sur le thread MLX du modèle."""
         import mlx_whisper
 
         start = time.perf_counter()
@@ -136,7 +142,7 @@ class MlxWhisperSTT:
     async def transcribe(self, audio: np.ndarray) -> Transcript:
         loop = asyncio.get_running_loop()
         prompt = self.prompt  # lu dans la boucle asyncio, pas dans le thread STT
-        return await loop.run_in_executor(self._executor, self.transcribe_sync, audio, prompt)
+        return await loop.run_in_executor(self._executor, self._transcribe_impl, audio, prompt)
 
     def close(self) -> None:
         self._executor.shutdown(wait=True, cancel_futures=True)

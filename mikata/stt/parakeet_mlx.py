@@ -96,7 +96,7 @@ class ParakeetMlxSTT:
         parakeet_mlx = _import_parakeet()
         start = time.perf_counter()
         self._model = parakeet_mlx.from_pretrained(DEFAULT_MODEL)
-        self.transcribe_sync(np.zeros(round(WARMUP_S * SAMPLE_RATE), dtype=np.int16))
+        self._transcribe_impl(np.zeros(round(WARMUP_S * SAMPLE_RATE), dtype=np.int16))
         self._ready = True
         logger.info(
             "Parakeet v3 prêt via MLX ({}) en {:.1f} s.",
@@ -105,13 +105,15 @@ class ParakeetMlxSTT:
         )
 
     def transcribe_sync(self, audio: np.ndarray, prompt: str | None = None) -> Transcript:
-        """Transcription bloquante (int16 ou float32 mono 16 kHz) ; hors de la boucle
-        asyncio. `prompt` est ignoré (Parakeet n'accepte pas de prompt initial) et n'existe
-        que pour respecter la signature de `WhisperSTT`.
+        """Transcription bloquante, quel que soit le thread appelant : le travail est
+        sérialisé sur l'unique thread de `_executor`. MLX attache ses flux (`mx.Stream`) au
+        thread courant ; comme `load()` crée le modèle sur ce même thread, `generate()` doit
+        y tourner aussi (sinon « There is no Stream(cpu, 1) in current thread »). `prompt`
+        est ignoré (Parakeet n'accepte pas de prompt initial)."""
+        return self._executor.submit(self._transcribe_impl, audio, prompt).result()
 
-        `parakeet_mlx.Model.transcribe` n'accepte qu'un **chemin de fichier** (il passe par
-        ffmpeg) : on calcule donc nous-mêmes le log-mel du tableau et on appelle `generate`,
-        comme le fait la bibliothèque en interne."""
+    def _transcribe_impl(self, audio: np.ndarray, prompt: str | None = None) -> Transcript:
+        """Corps de la transcription ; doit tourner sur le thread MLX du modèle."""
         if self._model is None:
             raise RuntimeError("Parakeet MLX n'est pas chargé")
         import mlx.core as mx
@@ -135,7 +137,7 @@ class ParakeetMlxSTT:
     async def transcribe(self, audio: np.ndarray) -> Transcript:
         loop = asyncio.get_running_loop()
         prompt = self.prompt  # lu dans la boucle asyncio, pas dans le thread STT
-        return await loop.run_in_executor(self._executor, self.transcribe_sync, audio, prompt)
+        return await loop.run_in_executor(self._executor, self._transcribe_impl, audio, prompt)
 
     def close(self) -> None:
         self._executor.shutdown(wait=True, cancel_futures=True)
