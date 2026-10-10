@@ -66,9 +66,7 @@ def parse_event_line(line: str) -> dict[str, Any] | None:
         data = json.loads(line)
     except json.JSONDecodeError:
         return None
-    if not all(
-        k in data for k in ("volume", "frn", "parent", "name", "reason", "mtime", "is_dir")
-    ):
+    if not all(k in data for k in ("volume", "frn", "parent", "name", "reason", "mtime", "is_dir")):
         return None
     return data
 
