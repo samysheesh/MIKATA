@@ -155,14 +155,32 @@ class BrowserController:
         exe = self._brave_exe()
         if exe is None:
             raise ToolError("Brave introuvable : installe-le ou lance-le une fois")
-        port = self._config.browser.cdp_port
+        cfg = self._config.browser
+        argv = [exe, f"--remote-debugging-port={cfg.cdp_port}", "--remote-allow-origins=*"]
+        startupinfo = None
+        if cfg.own_profile:
+            # Phase 12f : profil de travail dédié, fenêtre minimisée en arrière-plan —
+            # le navigateur de l'utilisateur n'est jamais touché. Si ce profil tourne
+            # déjà, le lancement est un no-op (verrou singleton de Chromium) et le port
+            # répond déjà.
+            profile = self._config.resolve(cfg.profile_dir)
+            profile.mkdir(parents=True, exist_ok=True)
+            argv.append(f"--user-data-dir={profile}")
+            if sys.platform == "win32":
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 6  # SW_MINIMIZE
         subprocess.Popen(
-            [exe, f"--remote-debugging-port={port}", "--remote-allow-origins=*"],
+            argv,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            startupinfo=startupinfo,
             creationflags=0x08000000 if sys.platform == "win32" else 0,  # sans console
         )
-        logger.info("Brave lancé avec le port de contrôle {} (profil normal).", port)
+        label = (
+            "profil de travail dédié (fenêtre minimisée)" if cfg.own_profile else "profil normal"
+        )
+        logger.info("Brave lancé avec le port de contrôle {} ({}).", cfg.cdp_port, label)
 
     async def _list_targets(self) -> list[Target]:
         try:
@@ -193,13 +211,18 @@ class BrowserController:
         for _attempt in range(2):
             targets = await self._list_targets()
             if not targets:
-                if self._browser_running():
+                if cfg.own_profile:
+                    # Le port ne répond pas : lancer (ou rejoindre) le profil de travail.
+                    await self._launch_brave()
+                    targets = await self._wait_targets()
+                elif self._browser_running():
                     raise ToolError(
                         f"Brave est ouvert sans son port de contrôle ({cfg.cdp_port}) : "
                         + self._unattached_hint()
                     )
-                await self._launch_brave()
-                targets = await self._wait_targets()
+                else:
+                    await self._launch_brave()
+                    targets = await self._wait_targets()
             if not targets:
                 raise ToolError(
                     f"le port de contrôle ({cfg.cdp_port}) ne répond pas : "

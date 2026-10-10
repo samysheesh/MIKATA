@@ -2295,15 +2295,17 @@ Comment ça marche :
   (bibliothèque `websockets`, pas de Playwright ni de moteur téléchargé). Le JavaScript
   envoyé au navigateur est fixe et écrit par nous, jamais fourni par le LLM.
 - **Attache** (`mikata/browser/controller.py`) : le port DevTools répond → on s'y attache ;
-  Brave fermé → MIKATA le lance elle-même avec `--remote-debugging-port` (profil normal,
-  identifiants conservés) ; Brave déjà ouvert **sans** le port → refus poli avec la marche
-  à suivre (jamais de fermeture automatique de ton navigateur).
+  sinon, MIKATA lance **son propre profil Brave** (phase 12f : `--user-data-dir` sous
+  `data/brave_profile`, fenêtre séparée **minimisée en arrière-plan**) — ton Brave, tes
+  onglets et ton profil ne sont jamais touchés ni fermés. Mode legacy (`browser.own_profile:
+  false`) : Brave fermé → lancé avec le port (profil normal, identifiants conservés) ;
+  Brave déjà ouvert **sans** le port → refus poli avec la marche à suivre.
 - **Garde-fou** (`check_navigation`, `check_download`) : seuls http/https s'ouvrent
   (`file:`, `javascript:`, `data:`... refusés) ; un clic qui ressemble à un téléchargement
   demande « Tu confirmes ? » ; le texte d'un champ passe le filtre de `type_text` ; une
   page lue marque le tour (`confirm_after_web` s'applique).
 - **Config** : section `browser` (`enabled`, `cdp_port`, `fallback_uia`,
-  `page_text_max_chars`, `click_timeout_s`).
+  `page_text_max_chars`, `click_timeout_s`, `own_profile`, `profile_dir`).
 
 ### 1. Récupérer la branche, installer
 
@@ -2346,18 +2348,21 @@ puis :
 uv run python -m mikata
 ```
 
-Dis « MIKATA, lance le dernier opening de black clover ». Attendu : MIKATA lance Brave
-(avec le port de contrôle), va sur YouTube, tape la recherche, lit les résultats, clique le
-bon, et la vidéo se lance — en quelques étapes, chaque outil dans `data\actions.log`.
+Dis « MIKATA, lance le dernier opening de black clover ». Attendu : MIKATA lance **sa**
+fenêtre Brave (profil `data\brave_profile`, minimisée en arrière-plan), va sur YouTube,
+tape la recherche, lit les résultats, clique le bon, et la vidéo se lance — en quelques
+étapes, chaque outil dans `data\actions.log`.
 
 Même chose avec « MIKATA, quelle est la météo à Paris sur google ? » (navigation, lecture
 de page) et « MIKATA, reviens à la page précédente » (`browser_back`).
 
-### 4. Brave déjà ouvert
+### 4. Brave déjà ouvert (phase 12f)
 
-Rouvre Brave à la main (sans le port), puis « MIKATA, lis la page du navigateur ».
-Attendu : refus poli — « Brave est ouvert sans son port de contrôle : ferme complètement
-Brave et redemande ». Rien n'est jamais fermé tout seul.
+Ouvre **ton** Brave à la main avec tes onglets, puis « MIKATA, lance le dernier opening de
+one piece ». Attendu : ça marche quand même — MIKATA travaille dans sa propre fenêtre
+Brave (séparée, minimisée), tes onglets et ton profil ne bougent pas d'un iota, rien n'est
+jamais fermé tout seul. (Mode legacy : `browser.own_profile: false` → refus poli « Brave
+est ouvert sans son port de contrôle ».)
 
 ### 5. Non-régression
 
