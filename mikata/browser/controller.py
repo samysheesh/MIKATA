@@ -18,6 +18,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -122,6 +123,8 @@ class BrowserController:
         self._config = config
         self._desktop = desktop
         self._client: CdpClient | None = None
+        self._work_pids: set[int] | None = None  # cache des PID du profil de travail
+        self._work_pids_at = 0.0
 
     async def aclose(self) -> None:
         if self._client is not None:
@@ -180,26 +183,51 @@ class BrowserController:
             startupinfo=startupinfo,
             creationflags=0x08000000 if sys.platform == "win32" else 0,  # sans console
         )
+        self._work_pids = None  # la liste des fenêtres change au prochain appel
         label = (
             "profil de travail dédié (fenêtre minimisée)" if cfg.own_profile else "profil normal"
         )
         logger.info("Brave lancé avec le port de contrôle {} ({}).", cfg.cdp_port, label)
 
+    def _work_window_pids(self) -> set[int]:
+        """PID des processus du profil de travail (cache court : la liste bouge peu).
+
+        Seule la ligne de commande distingue le Brave de MIKATA de celui de l'utilisateur :
+        le profil de travail porte `--user-data-dir=<profile_dir>`.
+        """
+        if self._work_pids is not None and time.monotonic() - self._work_pids_at < 30.0:
+            return self._work_pids
+        import psutil
+
+        profile = str(self._config.resolve(self._config.browser.profile_dir))
+        pids: set[int] = set()
+        try:
+            for proc in psutil.process_iter(["pid"]):
+                try:
+                    if profile in proc.cmdline():
+                        pids.add(proc.pid)
+                except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+                    continue
+        except OSError:
+            return self._work_pids or pids
+        self._work_pids, self._work_pids_at = pids, time.monotonic()
+        return pids
+
     def _minimize_work_window(self) -> None:
         """Re-minimise la fenêtre du profil de travail (best effort, Windows).
 
         Le drapeau SW_MINIMIZE n'agit qu'au lancement : si la fenêtre a été restaurée à
-        la main (connexion à un compte...), on la re-minimise à chaque attache. La fenêtre
-        est repérée par la ligne de commande de son processus (`--user-data-dir`) : celle
-        du Brave de l'utilisateur n'est jamais touchée.
+        la main (connexion à un compte...), on la re-minimise à chaque commande navigateur.
+        Seules les fenêtres des processus du profil de travail sont touchées : celles du
+        Brave de l'utilisateur ne le sont jamais.
         """
         if sys.platform != "win32":
             return
         import ctypes
 
-        import psutil
-
-        profile = str(self._config.resolve(self._config.browser.profile_dir))
+        pids = self._work_window_pids()
+        if not pids:
+            return
         user32 = ctypes.windll.user32  # type: ignore[attr-defined]
         hwnds: list[int] = []
 
@@ -215,11 +243,8 @@ class BrowserController:
                     continue
                 pid = ctypes.c_ulong()
                 user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-                try:
-                    if profile in psutil.Process(pid.value).cmdline():
-                        user32.ShowWindow(hwnd, 6)  # SW_MINIMIZE
-                except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
-                    continue
+                if pid.value in pids:
+                    user32.ShowWindow(hwnd, 6)  # SW_MINIMIZE
         except OSError:
             return  # l'état de la fenêtre est un plus, jamais une erreur
 
@@ -245,6 +270,10 @@ class BrowserController:
         return []
 
     async def _ensure(self) -> CdpClient:
+        if self._config.browser.own_profile:
+            # À chaque commande : la fenêtre de travail reste en arrière-plan, même si
+            # elle a été restaurée à la main entre deux commandes.
+            self._minimize_work_window()
         if self._client is not None:
             return self._client
         cfg = self._config.browser

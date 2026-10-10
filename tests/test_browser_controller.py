@@ -234,7 +234,7 @@ def test_own_profile_launches_a_minimized_dedicated_profile(
         for arg in launches[0]["argv"]
     )
     assert "--autoplay-policy=no-user-gesture-required" in launches[0]["argv"]
-    assert minimized["n"] == 1  # la fenêtre de travail est re-minimisée à l'attache
+    assert minimized["n"] >= 2  # re-minimisée à chaque commande (entrée + après attache)
     if _sys.platform == "win32":
         startupinfo = launches[0]["startupinfo"]
         assert startupinfo is not None
