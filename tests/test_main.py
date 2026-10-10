@@ -119,7 +119,7 @@ def test_missing_models_exit_with_hint(
 ) -> None:
     assert entry.main(["--config", str(config_file), "--no-tray", "--no-llm"]) == entry.EXIT_CONFIG
     log = _log(config_file)
-    assert "hey_jarvis.onnx" in log
+    assert "mikata.onnx" in log
     assert "download_models.py" in log
 
 
@@ -158,7 +158,7 @@ def test_build_app_wires_real_components(
     assert app._agent is None and app._speaker is None
     assert app._audio.device.name == "Microphone (RØDE NT-USB+)"  # type: ignore[union-attr]
     assert app._player.device.name == "Casque (HyperX Cloud)"  # type: ignore[union-attr]
-    assert app._detector.model == config_file.parent / "models" / "hey_jarvis.onnx"  # type: ignore[union-attr]
+    assert app._detector.model == config_file.parent / "models" / "mikata.onnx"  # type: ignore[union-attr]
     assert app._detector.thresholds == {"threshold": 0.5, "verifier_threshold": 0.5}  # type: ignore[union-attr]
     assert app._earcons["wake"].dtype.name == "float32"
     assert app._hotkeys is not None and app._cpu is not None

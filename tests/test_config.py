@@ -34,7 +34,7 @@ def test_defaults_match_section_10(config_file: Path) -> None:
     config = load_config(config_file)
     assert config.audio.input_device == "default"
     assert config.audio.output_device == "default"
-    assert config.wake.model == Path("models/hey_jarvis.onnx")
+    assert config.wake.model == Path("models/mikata.onnx")
     assert config.wake.verifier is None
     assert config.wake.threshold == 0.5
     assert config.wake.consecutive_frames == 1
@@ -131,7 +131,7 @@ def test_empty_file_uses_defaults(tmp_path: Path) -> None:
 def test_base_dir_and_resolve(config_file: Path) -> None:
     config = load_config(config_file)
     assert config.base_dir == config_file.parent
-    assert config.resolve(config.wake.model) == config_file.parent / "models" / "hey_jarvis.onnx"
+    assert config.resolve(config.wake.model) == config_file.parent / "models" / "mikata.onnx"
     assert config.resolve("~") == Path.home()
     absolute = config_file.parent / "x.onnx"
     assert config.resolve(absolute) == absolute

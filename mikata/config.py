@@ -56,7 +56,7 @@ class AudioConfig(_Section):
 
 
 class WakeConfig(_Section):
-    model: Path = Path("models/hey_jarvis.onnx")
+    model: Path = Path("models/mikata.onnx")
     verifier: Path | None = None
     threshold: float = Field(default=0.5, ge=0, le=1)
     consecutive_frames: int = Field(default=1, ge=1)
