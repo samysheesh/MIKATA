@@ -107,10 +107,39 @@ class FixtureRegistry(DryRunRegistry):
                     terminal=False,
                     duration_s=0.0,
                 )
-        elif name in ("browser_open", "open_url", "fetch_page"):
+        elif name in ("browser_open", "open_url"):
             url = str(args.get("url", ""))
             texts = "\n".join(self.fixtures.web.values())
             self.page = f"Titre : Navigateur simulé\nURL : {url}\nTexte :\n{texts}"
+            self.windows.insert(0, "Browser")  # le navigateur devient la fenêtre active
+        elif name == "fetch_page":
+            url = str(args.get("url", ""))
+            texts = "\n".join(self.fixtures.web.values())
+            self.page = f"Titre : Navigateur simulé\nURL : {url}\nTexte :\n{texts}"
+        elif name == "set_volume":
+            self._note(call, f"Volume réglé à {args.get('level')} %.")
+        elif name == "set_timer":
+            self._note(call, f"Minuteur lancé ({args.get('seconds')} s).")
+        elif name == "set_reminder":
+            self._note(call, f"Rappel programmé : {args.get('text')}.")
+        elif name == "media_control":
+            action = args.get("action", "play")
+            state = "en cours" if action == "play" else f"« {action} » appliqué"
+            self._note(call, f"Lecture : {state}.")
+        elif name == "browser_click":
+            self._note(call, f"Cliqué : {args.get('text')}. Lecture en cours.")
+        elif name == "browser_type":
+            self._note(call, f"Champ « {args.get('field')} » rempli : {args.get('text')}.")
+        elif name == "uia_set_text":
+            self._note(call, f"Texte écrit : {args.get('text')}.")
+        elif name == "uia_click":
+            self._note(call, f"Contrôle cliqué : {args.get('control')}.")
+        elif name == "write_file":
+            self._note(call, f"Fichier écrit : {args.get('path')}.")
+        elif name == "move_file":
+            self._note(call, f"Déplacé : {args.get('source')} -> {args.get('destination')}.")
+        elif name == "remember":
+            self._note(call, f"Mémorisé : {args.get('fact')}.")
         elif name == "web_search":
             query = str(args.get("query", "")).casefold()
             for needle, text in self.fixtures.web.items():
@@ -132,6 +161,12 @@ class FixtureRegistry(DryRunRegistry):
                 call.id, name, ok=True, content=self.page, terminal=False, duration_s=0.0
             )
         return await super().execute(call)
+
+    def _note(self, call: ToolCallReq, text: str) -> ToolResult:
+        """Une action qui laisse une trace visible : la lecture suivante la verra."""
+        self.page = f"{self.page}\n{text}"
+        self.calls.append((call.name, dict(call.arguments)))
+        return ToolResult(call.id, call.name, ok=True, content=text, terminal=False, duration_s=0.0)
 
 
 class _EvalLegacy:

@@ -48,12 +48,11 @@ async def main() -> int:
         return 2
 
     print(f"{len(cases)} cas, vrai LLM {config.llm.model} (rien ne touche le PC).")
-    results = await run_bench(
-        cases,
-        llm,
-        usage=usage,
-        root=config.resolve("data/agent2/eval/traces"),
-    )
+    # Chaque passe écrit ses traces dans un dossier horodaté : l'analyse reste propre.
+    from datetime import datetime
+
+    root = config.resolve("data/agent2/eval/traces") / datetime.now().strftime("%Y-%m-%d-%H%M%S")
+    results = await run_bench(cases, llm, usage=usage, root=root)
     passed = sum(result.passed for result in results)
     total_cost = sum(result.cost_usd for result in results)
     for result in results:

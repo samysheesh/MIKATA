@@ -20,6 +20,10 @@ from mikata.agent2.llm_json import ask_json
 from mikata.agent2.prompts import JUDGE_SYSTEM, judge_user
 from mikata.agent2.schema import ActionRecord, Observation, Predicate, ToolSucceeded
 from mikata.llm.base import LLMClient
+from mikata.tools.registry import load_builtin_tools, registered_tools
+
+load_builtin_tools()
+_KNOWN_TOOLS = frozenset(registered_tools())
 
 
 class _JudgeAnswer(BaseModel):
@@ -75,6 +79,11 @@ async def check(
             text = "\n".join((obs.summary, obs.page, obs.title))
             return _search(pred.pattern, text), True
         case "tool_ok":
+            if pred.tool not in _KNOWN_TOOLS:
+                # Le modèle rapide écrit parfois un nom de canal ou de capacité
+                # (« control.system », « schedule.timer ») : on vérifie alors que la
+                # dernière action du sous-but a réussi.
+                return bool(actions) and actions[-1].ok, True
             return _action_reached(pred, actions), True
         case "judge":
             answer, _, _ = await ask_json(

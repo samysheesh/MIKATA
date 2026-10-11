@@ -1,6 +1,6 @@
 {
   "id": "create_shopping_list",
-  "request": "crée une note avec \"pain, lait, œufs\"",
+  "request": "crée le fichier liste_courses.txt contenant \"pain, lait, œufs\"",
   "fixtures": {
     "installed": [],
     "web": {}

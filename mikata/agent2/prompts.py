@@ -20,8 +20,10 @@ Réponds UNIQUEMENT par un objet JSON avec ces clés :
 - "entities" : les éléments nommés utiles, en dictionnaire court ;
 - "constraints" : les contraintes dites (« sur Spotify », « sans le son ») ;
 - "target" : destinataire ou cible (personne, écran, appareil), ou null ;
-- "channel_hint" : l'application ou le site imposé par l'utilisateur, en minuscules
-  (ex. "spotify", "youtube", "discord"), ou null s'il n'en impose pas ;
+- "channel_hint" : l'application ou le site IMPOSÉ par l'utilisateur, en minuscules
+  (ex. "spotify", "youtube", "discord"), ou null s'il n'en impose pas. N'en mets un que si
+  l'utilisateur nomme explicitement l'application (« sur Spotify ») ; l'objet de la demande
+  (un jeu à lancer, un site à visiter, un dossier) n'est jamais un canal ;
 - "unknowns" : ce qu'il faut découvrir AVANT d'agir, chacun {{"name", "question", "kind"}}
   avec kind parmi web, file, contact, memory, screen, app, user. Exemple : « le dernier
   opening » -> le titre exact est inconnu (kind web). Ne mets pas ce qui est déjà clair.
