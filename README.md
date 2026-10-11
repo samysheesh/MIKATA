@@ -2696,5 +2696,5 @@ uv run python scripts\eval_agent2.py
 ```
 
 Attendu : tout en `passed` (17 tests dédiés), aucun réseau ; `eval_agent2.py` affiche le
-taux de réussite de la batterie avec le vrai LLM (objectif ≥ 80 %), et une régression
-volontaire (savoir-faire cassé à la main) est refusée par le verrou.
+taux de réussite de la batterie avec le vrai LLM — **atteint : 16/20 (80 %)** ; une
+régression volontaire (savoir-faire cassé à la main) est refusée par le verrou.
