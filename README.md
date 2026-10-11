@@ -2620,3 +2620,29 @@ uv run ruff check . && uv run pytest tests\test_agent2_understand.py tests\test_
 ```
 
 Attendu : tout en `passed` (36 tests dédiés), aucun réseau, aucun test existant modifié.
+
+## Phase 13c — planifier, exécuter, vérifier, brancher
+
+À la fin de cette phase, `agent2.enabled: true` fait fonctionner MIKATA de bout en bout
+avec l'agent v2 (sans apprentissage) ; `false` (défaut) ne change rien.
+
+Contenu : `planner.py` (intention -> sous-buts + prédicats, repli « judge » si plan
+invalide), `verify.py` (7 prédicats vérifiés sur l'observation, jamais d'exception),
+`executor.py` (code écrit par le LLM, filtré par le bac à sable, essais bornés, un refus
+du garde-fou arrête tout sans réessayer), `orchestrator.py` (Agent2 : même interface que
+Agent, délègue les réponses parlées, comprend -> résout -> canal -> plan -> exécute ->
+vérifie -> trace). Branchement dans `build_agent` ; deux méthodes rendues publiques dans
+`agent/loop.py` (comportement inchangé).
+
+```powershell
+git fetch origin
+git checkout phase-13c-executer
+git pull
+uv sync
+uv run ruff check . && uv run pytest tests\test_agent2_verify.py tests\test_agent2_planner.py tests\test_agent2_executor.py tests\test_agent2_orchestrator.py -v
+```
+
+Attendu : tout en `passed` (23 tests dédiés), aucun réseau, aucun test existant modifié.
+Sur le PC : avec `agent2.enabled: true`, les trois demandes de `docs/AGENT_V2.md` §5
+aboutissent ou échouent proprement, et chaque demande laisse une trace JSON sous
+`data/agent2/traces/`.

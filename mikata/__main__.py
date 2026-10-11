@@ -249,7 +249,7 @@ def build_agent(config: Config, phrases: Any = None, *, tools: bool = True) -> A
         assert desktop is not None
         return open_apps(await ctx.run_blocking(desktop.windows))
 
-    return Agent(
+    agent = Agent(
         llm,
         config,
         phrases=phrases,
@@ -262,6 +262,18 @@ def build_agent(config: Config, phrases: Any = None, *, tools: bool = True) -> A
             (lambda: installed_app_names(desktop.cached_apps())) if desktop is not None else None
         ),
     )
+    # Phase 13c : agent2.enabled enveloppe l'agent actuel, sans rien changer d'autre.
+    if config.agent2.enabled:
+        from mikata.agent2.orchestrator import Agent2
+        from mikata.agent2.preferences import PREFS_FILE, PreferenceStore
+        from mikata.agent2.trace import TRACES_DIR, TraceStore
+
+        agent = Agent2(
+            agent,
+            traces=TraceStore(config.resolve(TRACES_DIR)),
+            prefs=PreferenceStore(config.resolve(PREFS_FILE)),
+        )
+    return agent
 
 
 def app_vocabulary(agent: Agent | None) -> Callable[[], list[str]] | None:

@@ -14,6 +14,8 @@ _CONFIRM_STEP = 0.1  # une confirmation sans correction monte doucement
 _CORRECT_PENALTY = 0.5  # une correction fait chuter l'ancien canal
 _CORRECT_SCORE = 0.95  # et impose le nouveau
 
+PREFS_FILE = "data/agent2/preferences.json"
+
 
 class PreferenceStore:
     def __init__(self, path: Path) -> None:
