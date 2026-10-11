@@ -2646,3 +2646,29 @@ Attendu : tout en `passed` (23 tests dédiés), aucun réseau, aucun test exista
 Sur le PC : avec `agent2.enabled: true`, les trois demandes de `docs/AGENT_V2.md` §5
 aboutissent ou échouent proprement, et chaque demande laisse une trace JSON sous
 `data/agent2/traces/`.
+
+## Phase 13d — apprendre (savoir-faire en code, recettes, corrections)
+
+Rien n'est appris sans vérification, rien n'est gardé sans passer les validations, et
+toute correction rétrograde aussitôt ce qui s'est trompé.
+
+Contenu : `learn/store.py` (bibliothèque `data/agent2/skills/`, cycle proposed -> trial ->
+active par succès répétés, demoted après échecs consécutifs, approbation exigée pour les
+codes sensibles), `learn/compiler.py` (compilation en arrière-plan d'une trace vérifiée :
+bac à sable, nom unique, test à blanc sur un registre simulé, anti-recopie des valeurs),
+`learn/dryrun.py`, `learn/recipes.py` (le raccourci des demandes voisines, sans
+planificateur) et `learn/feedback.py` (« non, sur YouTube », « pas celle-là »... entendus
+dans les 60 s -> le mauvais canal est puni et la dernière demande est rejouée corrigée).
+
+```powershell
+git fetch origin
+git checkout phase-13d-apprendre
+git pull
+uv sync
+uv run ruff check . && uv run pytest tests\test_agent2_store.py tests\test_agent2_compiler.py tests\test_agent2_recipes.py tests\test_agent2_feedback.py tests\test_agent2_orchestrator.py -v
+```
+
+Attendu : tout en `passed` (25 tests dédiés), aucun réseau, aucun test existant modifié
+(hors liste blanche send2trash étendue d'un fichier légitime). Sur le PC : « lance le
+dernier opening de One Piece » puis « lance le dernier ending de Naruto » — la 2e passe
+par la recette et coûte au moins 2 fois moins d'appels LLM (visible dans la trace).

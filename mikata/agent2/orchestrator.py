@@ -13,15 +13,19 @@ from datetime import datetime
 from typing import Any
 
 from loguru import logger
+from pydantic import TypeAdapter
 
 from mikata.agent.loop import TurnResult
 from mikata.agent.memory import is_reset_command
-from mikata.agent2.channels import BUILTIN_CHANNELS, choose, display_name
+from mikata.agent2.channels import BUILTIN_CHANNELS, capability_for, choose, display_name
 from mikata.agent2.executor import run_subgoal
+from mikata.agent2.learn.compiler import Learner
+from mikata.agent2.learn.feedback import Correction, detect
+from mikata.agent2.learn.recipes import Recipe
 from mikata.agent2.planner import make_plan
 from mikata.agent2.preferences import PreferenceStore
 from mikata.agent2.resolve import resolve_unknowns
-from mikata.agent2.schema import Intent, Judge, Resolved, Trace, Verb
+from mikata.agent2.schema import Intent, Judge, Predicate, Resolved, SubGoal, Trace, Verb
 from mikata.agent2.sdk import Recorder, Sdk
 from mikata.agent2.trace import TraceStore
 from mikata.agent2.understand import understand
@@ -30,6 +34,8 @@ from mikata.llm.base import Done, LLMClient, LLMEvent, Usage
 from mikata.plat import platform
 from mikata.tools.base import TurnIO, turn_context
 from mikata.tts.cache import PHRASES
+
+_PRED_ADAPTER = TypeAdapter(Predicate)
 
 # Raison d'échec réécrite sans détail technique (table de motifs, pas de LLM).
 _FAILURE_REASONS: list[tuple[str, str]] = [
@@ -65,7 +71,8 @@ class _CountingLLM:
 
 class Agent2:
     """L'agent v2 : comprend, exécute en code vérifié, vérifie, et laisse l'ancien agent
-    parler. `skills`/`recipes` arrivent en 13d/13e (None ici)."""
+    parler. Apprend en arrière-plan (13d) : savoir-faire, recettes, préférences,
+    corrections entendues."""
 
     def __init__(
         self,
@@ -83,6 +90,12 @@ class Agent2:
         self.skills = skills
         self.recipes = recipes
         self._clock = clock
+        self._last_trace: Trace | None = None
+        self.learner: Learner | None = None
+        if skills is not None and recipes is not None:
+            self.learner = Learner(
+                legacy.llm, skills, recipes, prefs, traces, legacy.config.agent2, platform()
+            )
 
     def __getattr__(self, name: str) -> Any:
         # config, memory, tools, phrases, long_memory, usage, llm, prewarm, aclose... -> legacy
@@ -118,15 +131,24 @@ class Agent2:
         result = TurnResult(command=command)
         answer = ""
         try:
-            context = await self.legacy.context()
-            intent, _, _ = await understand(
-                counted,
-                command,
-                context=context,
-                preferences=self.prefs.describe(),
-                os_name=platform(),
-                effort=cfg.fast_effort,
-            )
+            # Une correction entendue dans les 60 s ? On rejoue la dernière demande,
+            # on n'interprète pas « non, sur Spotify » comme une demande neuve.
+            intent: Intent | None = None
+            correction = detect(command, self._last_trace, self._clock())
+            if correction is not None and self._last_trace is not None:
+                last = self._last_trace
+                intent = self._apply_correction(last, correction, command)
+                trace = self.traces.new(last.request)
+            if intent is None:
+                context = await self.legacy.context()
+                intent, _, _ = await understand(
+                    counted,
+                    command,
+                    context=context,
+                    preferences=self.prefs.describe(),
+                    os_name=platform(),
+                    effort=cfg.fast_effort,
+                )
             trace.intent = intent
             if intent is None or intent.verb in (Verb.CHAT, Verb.ASK):
                 trace.outcome = "chat"
@@ -145,15 +167,18 @@ class Agent2:
                 verified = self._all_verified(trace)
                 trace.verified = verified
                 trace.outcome = "ok"
+                self._last_trace = trace
                 self.legacy.say_phrase(speech, "done")
                 answer = PHRASES["done"]
             else:
                 trace.outcome = "failed"
+                self._last_trace = None
                 answer = f"Je n'y arrive pas : {failure}"
                 speech.say(answer)
         except Exception as exc:
             logger.exception("Agent v2 : erreur inattendue pendant la demande.")
             trace.outcome = "error"
+            self._last_trace = None
             answer = f"Je n'y arrive pas : {_reason_for(str(exc))}"
             with contextlib.suppress(Exception):
                 speech.say(answer)
@@ -209,18 +234,6 @@ class Agent2:
             if announce:
                 speech.say(f"Je passe par {display_name(channel.name)}.")
                 trace.channel_announced = True
-            plan, _, _ = await make_plan(
-                counted,
-                intent,
-                resolved,
-                channel,
-                channels_text=self._channels_text(),
-                skills_text=self._skills_text(),
-                os_name=os_name,
-                max_subgoals=cfg.max_subgoals,
-                effort=cfg.strong_effort,
-            )
-            trace.plan.extend(plan)
 
             def sdk_factory(recorder: Recorder) -> Sdk:
                 return Sdk(
@@ -230,8 +243,43 @@ class Agent2:
                     recorder=recorder,
                 )
 
-            for offset, subgoal in enumerate(plan):
-                index = len(trace.plan) - len(plan) + offset
+            # Raccourci recette (13d) : une demande voisine déjà réussie saute le
+            # planificateur ; si la recette échoue, elle est punie puis on revient
+            # une fois au chemin normal.
+            recipe = self.recipes.match(intent) if self.recipes is not None else None
+            if recipe is not None:
+                failure = await self._run_recipe(
+                    recipe,
+                    intent,
+                    resolved,
+                    trace,
+                    cfg,
+                    on_phase,
+                    counted,
+                    os_name,
+                    sdk_factory,
+                )
+                if failure is None:
+                    return None
+                self.recipes.record(self.recipes.key(intent), False)
+                self.skills.record(recipe.skill, False)
+                logger.info("Recette {} en échec : retour au planificateur.", recipe.skill)
+
+            plan, _, _ = await make_plan(
+                counted,
+                intent,
+                resolved,
+                channel,
+                channels_text=self._channels_text(),
+                skills_text=self._skills_text(intent, os_name),
+                os_name=os_name,
+                max_subgoals=cfg.max_subgoals,
+                effort=cfg.strong_effort,
+            )
+            trace.plan.extend(plan)
+
+            for subgoal in plan:
+                index = len(trace.plan) - len(plan) + plan.index(subgoal)
                 if on_phase is not None:
                     on_phase("acting")
                 steps = await run_subgoal(
@@ -249,6 +297,79 @@ class Agent2:
                     return _reason_for(steps[-1].error or "condition non atteinte")
             return None
 
+    async def _run_recipe(
+        self,
+        recipe: Recipe,
+        intent: Intent,
+        resolved: list[Resolved],
+        trace: Trace,
+        cfg: Agent2Config,
+        on_phase: Callable[[str], None] | None,
+        counted: _CountingLLM,
+        os_name: str,
+        sdk_factory: Callable[[Recorder], Sdk],
+    ) -> str | None:
+        """Le sous-but unique de la recette ; None = réussite."""
+        found = self.skills.get(recipe.skill)
+        if found is None:
+            return "savoir-faire introuvable"
+        meta, _code = found
+        values = {item.name: item.value for item in resolved}
+        args = {param: _fill(template, values) for param, template in recipe.skill_args.items()}
+        raw_pred = _PRED_ADAPTER.dump_json(meta.done_when).decode()
+        for param, value in args.items():
+            raw_pred = raw_pred.replace("{" + param + "}", value)
+        try:
+            done_when = _PRED_ADAPTER.validate_json(raw_pred)
+        except ValueError as exc:
+            logger.warning("Recette {} : prédicat invalide : {}", recipe.skill, exc)
+            return "condition du savoir-faire invalide"
+        subgoal = SubGoal(
+            goal=intent.object,
+            channel=meta.channel,
+            done_when=done_when,
+            skill=recipe.skill,
+            skill_args=args,
+        )
+        trace.plan.append(subgoal)
+        index = len(trace.plan) - 1
+        if on_phase is not None:
+            on_phase("acting")
+        steps = await run_subgoal(
+            index,
+            subgoal,
+            sdk_factory=sdk_factory,
+            llm=counted,
+            resolved=resolved,
+            cfg=cfg,
+            os_name=os_name,
+            skills=self.skills,
+        )
+        trace.steps.extend(steps)
+        if steps[-1].goal_reached:
+            trace.recipe = self.recipes.key(intent)
+            trace.skills_used.append(recipe.skill)
+            return None
+        return _reason_for(steps[-1].error or "condition non atteinte")
+
+    def _apply_correction(self, last: Trace, correction: Correction, command: str) -> Intent | None:
+        """Punit ce qui s'est trompé et prépare le rejeu de la dernière demande."""
+        assert last.intent is not None
+        last.feedback = command
+        self.traces.save(last)
+        for name in last.skills_used:
+            self.skills.record(name, False)  # type: ignore[union-attr]
+        if last.recipe and self.recipes is not None:
+            self.recipes.record(last.recipe, False)
+        intent = last.intent.model_copy(deep=True)
+        if correction.kind == "channel" and correction.value:
+            wanted = correction.value.strip().casefold()  # le nom d'un canal est en minuscules
+            self.prefs.correct(intent.verb.value, intent.object_kind, last.channel or "", wanted)
+            intent.channel_hint = wanted
+        else:
+            intent.constraints = [*intent.constraints, "pas le même résultat que la dernière fois"]
+        return intent
+
     def _finish(
         self,
         trace: Trace,
@@ -256,7 +377,7 @@ class Agent2:
         counted: _CountingLLM,
         label: str,
     ) -> None:
-        """Sauvegarde la trace et remplit les mesures du tour, comme l'ancien agent."""
+        """Sauvegarde la trace, remplit les mesures du tour et soumet l'apprentissage."""
         trace.llm_calls = counted.calls
         result.llm_calls = counted.calls
         result.usage = counted.usage
@@ -264,6 +385,8 @@ class Agent2:
             result.cost_usd = self.legacy.usage.record(label, counted.usage, counted.calls)
             trace.cost_usd = result.cost_usd
         self.traces.save(trace)
+        if self.learner is not None and self.legacy.config.agent2.learn:
+            self.learner.submit(trace)
 
     @staticmethod
     def _all_verified(trace: Trace) -> bool:
@@ -282,8 +405,18 @@ class Agent2:
             f"- {channel.name} : {', '.join(channel.capabilities)}" for channel in BUILTIN_CHANNELS
         )
 
-    def _skills_text(self) -> str:
-        return "(aucun)" if self.skills is None else self.skills.describe()
+    def _skills_text(self, intent: Intent, os_name: str) -> str:
+        if self.skills is None:
+            return "(aucun)"
+        return self.skills.describe(capability_for(intent), os_name)
+
+
+def _fill(template: str, values: dict[str, str]) -> str:
+    """Remplace {nom} dans un gabarit de recette par la valeur résolue."""
+    filled = template
+    for name, value in values.items():
+        filled = filled.replace("{" + name + "}", value)
+    return filled
 
 
 def _reason_for(error: str) -> str:

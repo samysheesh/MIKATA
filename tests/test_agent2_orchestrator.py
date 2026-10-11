@@ -1,5 +1,5 @@
-"""Agent v2 (phase 13c) : l'orchestrateur mène une demande de bout en bout et délègue
-le bavardage à l'ancien agent."""
+"""Agent v2 (phases 13c/13d) : l'orchestrateur mène une demande de bout en bout, délègue
+le bavardage, rejoue les recettes et entend les corrections."""
 
 from __future__ import annotations
 
@@ -14,10 +14,22 @@ from conftest import write_test_config
 from tool_fakes import FakeBrowser, FakeDesktop
 
 from mikata.agent.loop import PHRASES, TurnResult
+from mikata.agent2.learn.store import SkillMeta
 from mikata.agent2.orchestrator import Agent2
 from mikata.agent2.preferences import PreferenceStore
+from mikata.agent2.schema import Intent, PageShows, Unknown, Verb
 from mikata.agent2.trace import TraceStore
 from mikata.config import Agent2Config, load_config
+
+
+def _intent_play() -> Intent:
+    return Intent(
+        verb=Verb.PLAY,
+        object="x",
+        object_kind="opening d'anime",
+        unknowns=[Unknown(name="titre", question="titre ?", kind="web")],
+    )
+
 
 _UNDERSTAND = (
     '{"verb": "play", "object": "dernier opening de One Piece",'
@@ -128,6 +140,59 @@ def _agent2(
     return Agent2(legacy, traces=traces, prefs=prefs), speech, legacy
 
 
+def _agent2_with_learning(
+    tmp_path: Path, llm: ScriptedLLM, browser: Any = None
+) -> tuple[Agent2, FakeSpeech]:
+    """Agent2 branché sur une bibliothèque de savoir-faire et des recettes (learner
+    neutralisé : les tests de la 13d appellent learn() directement)."""
+    from mikata.agent2.learn.recipes import RecipeStore
+    from mikata.agent2.learn.store import SkillStore
+
+    cfg = Agent2Config()
+    agent2, speech, _legacy = _agent2(
+        tmp_path, llm, config=SimpleNamespace(agent2=cfg), browser=browser
+    )
+    skills = SkillStore(tmp_path / "data" / "agent2" / "skills", cfg)
+    recipes = RecipeStore(tmp_path / "data" / "agent2" / "recipes.json", skills, "win32")
+    agent2.skills = skills
+    agent2.recipes = recipes
+    agent2.learner = None  # le learner est testé dans test_agent2_compiler.py
+    return agent2, speech
+
+
+def _seed_recipe(tmp_path: Path) -> tuple[Any, Any]:
+    from mikata.agent2.learn.recipes import Recipe, RecipeStore
+    from mikata.agent2.learn.store import SkillMeta, SkillStore
+
+    cfg = Agent2Config()
+    skills = SkillStore(tmp_path / "data" / "agent2" / "skills", cfg)
+    skills.add(
+        "play_youtube_video",
+        SkillMeta(
+            description="Jouer une vidéo YouTube",
+            capability="play.video",
+            channel="youtube",
+            params={"query": "titre"},
+            done_when=PageShows(pattern="{query}"),
+            status="trial",
+            os=["win32"],
+        ),
+        "await sdk.browser_open('https://www.youtube.com')\nreturn 'ok'",
+    )
+    recipes = RecipeStore(tmp_path / "data" / "agent2" / "recipes.json", skills, "win32")
+    recipes.recipes["play|opening d'anime|web"] = Recipe(
+        verb="play",
+        object_kind="opening d'anime",
+        resolve=[{"name": "titre", "kind": "web"}],
+        capability="play.video",
+        skill="play_youtube_video",
+        skill_args={"query": "{titre}"},
+        successes=1,
+    )
+    recipes._save()
+    return skills, recipes
+
+
 def test_full_request_reaches_done_and_saves_a_verified_trace(tmp_path: Path) -> None:
     llm = ScriptedLLM([_UNDERSTAND, _RESOLVE, _PLAN, _STEP1, _STEP2])
     browser = FakeBrowser(page="Titre : YouTube\nTexte :\nOne Piece Opening 27 en lecture")
@@ -210,3 +275,88 @@ def test_build_agent_wraps_only_when_enabled(
     )
     wrapped = main.build_agent(config)
     assert isinstance(wrapped, Agent2)
+
+
+def test_a_neighbor_request_uses_the_recipe_without_a_planner(tmp_path: Path) -> None:
+    skills, recipes = _seed_recipe(tmp_path)
+    llm = ScriptedLLM([_UNDERSTAND, _RESOLVE.replace("One Piece Opening 27", "Naruto Ending 15")])
+    browser = FakeBrowser(page="Titre : YouTube\nTexte :\nNaruto Ending 15 en lecture")
+    agent2, speech = _agent2_with_learning(tmp_path, llm, browser=browser)
+    agent2.skills = skills
+    agent2.recipes = recipes
+
+    result = asyncio.run(agent2.respond("lance le dernier ending de Naruto", speech))
+    assert result.outcome == "ok"
+    # understand + résolution, et rien d'autre : pas de planificateur, pas d'étape LLM.
+    assert len(llm.calls) == 2
+    traces = list((tmp_path / "data" / "agent2" / "traces").rglob("*.json"))
+    from mikata.agent2.schema import Trace
+
+    trace = Trace.model_validate_json(traces[0].read_text(encoding="utf-8"))
+    assert trace.recipe == "play|opening d'anime|web"
+    assert trace.skills_used == ["play_youtube_video"]
+    assert len(trace.plan) == 1 and trace.plan[0].skill == "play_youtube_video"
+
+
+def test_a_failed_recipe_falls_back_to_the_normal_path(tmp_path: Path) -> None:
+    skills, recipes = _seed_recipe(tmp_path)
+    skills.add(
+        "play_youtube_video",
+        SkillMeta(
+            description="Jouer une vidéo YouTube",
+            capability="play.video",
+            channel="youtube",
+            params={"query": "titre"},
+            done_when=PageShows(pattern="{query}"),
+            status="trial",
+            os=["win32"],
+        ),
+        "await sdk.open_app('Introuvable')\nreturn 'ok'",
+    )
+    llm = ScriptedLLM(
+        [
+            _UNDERSTAND,
+            _RESOLVE.replace("One Piece Opening 27", "Naruto Ending 15"),
+            '{"subgoals": [{"goal": "YouTube affiche la vidéo", "channel": "youtube",'
+            ' "done_when": {"type": "tool_ok", "tool": "browser_open"},'
+            ' "skill": null, "skill_args": {}}]}',
+            _STEP1,
+        ]
+    )
+    agent2, speech = _agent2_with_learning(tmp_path, llm)
+    agent2.skills = skills
+    agent2.recipes = recipes
+
+    result = asyncio.run(agent2.respond("lance le dernier ending de Naruto", speech))
+    assert result.outcome == "ok"  # le chemin normal a réussi
+    assert recipes.match(_intent_play()) is None  # la recette est punie, plus proposée
+    assert skills.skills["play_youtube_video"].consecutive_failures == 1
+
+
+def test_a_channel_correction_updates_prefs_and_replays(tmp_path: Path) -> None:
+    llm = ScriptedLLM(
+        [
+            _UNDERSTAND,
+            _RESOLVE,
+            '{"subgoals": [{"goal": "YouTube affiche la vidéo", "channel": "youtube",'
+            ' "done_when": {"type": "tool_ok", "tool": "browser_open"},'
+            ' "skill": null, "skill_args": {}}]}',
+            _STEP1,
+            # rejeu : résolution, plan, étape
+            _RESOLVE,
+            '{"subgoals": [{"goal": "Spotify affiche la musique", "channel": "spotify",'
+            ' "done_when": {"type": "tool_ok", "tool": "browser_open"},'
+            ' "skill": null, "skill_args": {}}]}',
+            _STEP1,
+        ]
+    )
+    agent2, speech, _legacy = _agent2(tmp_path, llm)
+    asyncio.run(agent2.respond("lance le dernier opening de One Piece", speech))
+    asyncio.run(agent2.respond("non, sur Spotify", speech))
+    assert agent2.prefs.scores("play", "opening d'anime")["spotify"] == 0.95
+    traces = list((tmp_path / "data" / "agent2" / "traces").rglob("*.json"))
+    from mikata.agent2.schema import Trace
+
+    last = Trace.model_validate_json(traces[-1].read_text(encoding="utf-8"))
+    assert last.channel == "spotify"
+    assert any("C'est fait" in phrase for phrase in speech.said)
