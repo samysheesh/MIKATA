@@ -160,3 +160,19 @@ uia:                               # ajout phase 12a : pilotage fin des applicat
   max_controls: 200                # contrôles listés par uia_window (au plus)
   max_text_chars: 2000             # texte lu par uia_read, tronqué
   accessibility_client: true       # client UIA à l'écoute : Discord, VS Code... se lisent sans drapeau
+agent2:                            # ajout phase 13 : agent v2 (comprend, exécute, vérifie, apprend)
+  enabled: false                   # true : Agent2 remplace Agent pour les actions
+  code_timeout_s: 60               # durée max d'un script généré
+  max_actions_per_script: 25       # actions d'un script généré (au plus)
+  max_attempts_per_goal: 3         # essais par sous-but
+  max_subgoals: 8                  # sous-buts d'un plan (au plus)
+  traces_days: 30                  # purge des traces (corbeille)
+  observe_max_lines: 40            # résumé d'observation (lignes)
+  fast_effort: none                # réflexion des appels rapides (understand, step)
+  strong_effort: high              # réflexion des appels forts (plan, compilation)
+  learn: true                      # apprentissage en arrière-plan
+  trial_successes: 1               # proposé -> essai après N succès
+  active_successes: 3              # essai -> actif après N succès
+  max_failures: 2                  # échecs consécutifs -> rétrogradé
+  dream: true                      # passe de nuit
+  dream_hour: 3                    # heure de la passe

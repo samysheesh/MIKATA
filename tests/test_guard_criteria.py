@@ -418,6 +418,7 @@ def test_send2trash_is_the_only_deletion_path() -> None:
         if imports.search(path.read_text(encoding="utf-8"))
     )
     assert users == [
+        os.path.join("mikata", "agent2", "trace.py"),  # phase 13 : purge des traces (corbeille)
         os.path.join("mikata", "agent", "guard.py"),
         os.path.join("mikata", "logging_setup.py"),
         os.path.join("mikata", "maintenance.py"),

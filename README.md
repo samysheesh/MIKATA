@@ -2575,3 +2575,26 @@ uv run python scripts\eval_prompt.py
 Attendu : tout en `passed`, config valide, banc de phrases 28/28 (dont « où est cyberpunk
 2077 »), latence et CPU inchangés (l'index tourne sur son thread dédié, la base est en
 WAL).
+
+## Phase 13a — fondations de l'agent v2
+
+Première brique de l'agent v2 (conception : `docs/AGENT_V2.md`, implémentation :
+`docs/AGENT_V2_IMPLEMENTATION.md`). Rien n'est branché : `agent2.enabled: false` (défaut)
+ne change pas le comportement de MIKATA.
+
+Contenu : les modèles de données (`mikata/agent2/schema.py` : Intention, Inconnues,
+Prédicats, Sous-buts, Trace), l'appel LLM -> JSON validé (`llm_json.py`), le SDK
+(`sdk.py`, façade sur les outils existants, garde-fou compris), le bac à sable du code
+généré (`sandbox.py` : pas d'import, seul le SDK est exposé, durée et actions bornées) et
+le magasin de traces (`trace.py`, purgées à la corbeille).
+
+```powershell
+git fetch origin
+git checkout phase-13a-fondations
+git pull
+uv sync
+uv run ruff check . && uv run pytest tests\test_agent2_schema.py tests\test_agent2_llm_json.py tests\test_agent2_sdk.py tests\test_agent2_sandbox.py tests\test_agent2_trace.py -v
+```
+
+Attendu : tout en `passed`, aucun test existant modifié (hors `test_config.py` et la liste
+blanche des importateurs de `send2trash` dans `test_guard_criteria.py`).
