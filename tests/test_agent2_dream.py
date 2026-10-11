@@ -176,9 +176,7 @@ def test_dream_loop_runs_on_a_calm_slot(tmp_path: Path, monkeypatch: Any) -> Non
                 agent2,
                 now_fn=lambda: now,
                 busy=lambda: False,
-                last_command_at=lambda: 0.0,
                 retry_s=0.01,
-                idle_s=1200,
                 cooldown_s=60,
             )
         )
@@ -189,7 +187,7 @@ def test_dream_loop_runs_on_a_calm_slot(tmp_path: Path, monkeypatch: Any) -> Non
             await task
 
     asyncio.run(scenario())
-    assert ran  # la passe a eu lieu au créneau calme, sans attendre la nuit
+    assert ran  # la passe a eu lieu dès que le PC était calme, sans délai d'inactivité
 
 
 def test_dream_loop_waits_when_busy(tmp_path: Path, monkeypatch: Any) -> None:
@@ -210,9 +208,7 @@ def test_dream_loop_waits_when_busy(tmp_path: Path, monkeypatch: Any) -> None:
                 agent2,
                 now_fn=lambda: datetime(2026, 10, 12, 14, 30),
                 busy=lambda: True,  # commande en cours ou CPU chargé
-                last_command_at=lambda: 0.0,
                 retry_s=0.01,
-                idle_s=1200,
             )
         )
         await asyncio.sleep(0.1)

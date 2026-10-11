@@ -299,7 +299,6 @@ class App:
         self.restart_requested = False  # « Redémarrer » dans l'interface : __main__ relance
         self._mic_status = "ok"
         self._last_frame_at = 0.0
-        self._last_command_at = 0.0  # phase 13e : dernière commande (passe de nuit)
         self.state = State.IDLE
         self._wake_pattern = wake_word_pattern(config.stt.wake_words)
         self._listening: _Request | None = None  # la commande qui a le micro
@@ -1099,7 +1098,6 @@ class App:
         if self._ui is not None:
             stream.on_say = functools.partial(self._on_say, request)
         gated = request.source == FOLLOW_UP_SOURCE and self.config.agent.follow_up_use_llm_gate
-        self._last_command_at = time.monotonic()  # phase 13e : créneau de la passe de nuit
         if not gated:  # suivi jugé par le LLM : pas de son tant qu'on ne sait pas si on répond
             self._spawn(self._thinking_sound(request), f"réflexion #{request.id}")
         result = await self._agent.respond(
@@ -1303,15 +1301,14 @@ class App:
                     self._agent,
                     now_fn=datetime.now,
                     busy=self._dream_busy,
-                    last_command_at=lambda: self._last_command_at,
                 ),
                 name="passe d'arrière-plan agent v2",
             )
         )
 
     def _dream_busy(self) -> bool:
-        """La passe d'arrière-plan attend un créneau calme : aucune commande en cours et
-        une charge CPU raisonnable (pas de compétition avec le travail de l'utilisateur)."""
+        """La seule limite de la passe d'arrière-plan : une commande en cours, ou une
+        charge CPU élevée (pas de compétition avec le travail de l'utilisateur)."""
         if self._request_tasks:
             return True
         if self._cpu is not None:

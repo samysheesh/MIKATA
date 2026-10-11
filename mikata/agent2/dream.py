@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -21,8 +20,7 @@ from pydantic import BaseModel
 from mikata.config import Agent2Config
 
 DREAM_BUDGET_USD = 0.05
-IDLE_S = 1200  # 20 minutes sans commande
-RETRY_S = 1800  # 30 minutes entre deux vérifications
+RETRY_S = 600  # 10 minutes entre deux vérifications de créneau calme
 DREAM_DIR = "data/agent2/dream"
 
 
@@ -97,22 +95,20 @@ async def dream_loop(
     *,
     now_fn: Callable[[], datetime],
     busy: Callable[[], bool],
-    last_command_at: Callable[[], float],
     retry_s: float = RETRY_S,
-    idle_s: float = IDLE_S,
     cooldown_s: float = 24 * 3600,
-    clock: Any = time,
 ) -> None:
-    """La tâche d'arrière-plan : tourne à créneau libre, pas seulement la nuit.
+    """La tâche d'arrière-plan : dès que le PC est calme, la passe s'exécute.
 
-    Ajustement demandé (post-13e) : la passe ne dépend plus de `dream_hour`. Elle attend
-    qu'aucune commande ne soit en cours (`busy` : commandes + charge CPU), que la dernière
-    commande date d'au moins 20 min, puis lance la passe — au plus une fois par 24 h.
-    La tâche est annulée à l'arrêt de MIKATA comme les autres tâches de fond.
+    Ajustements demandés (post-13e) : ni `dream_hour` ni délai d'inactivité — la seule
+    limite est le PC déjà sollicité (`busy` : une commande en cours, ou une charge CPU
+    élevée). La passe elle-même est surtout des appels réseau (LLM) : elle ne concurrence
+    pas les grosses tâches locales, et on ne la lance pas quand le CPU est chargé.
+    Au plus une passe par 24 h. La tâche est annulée à l'arrêt de MIKATA comme les
+    autres tâches de fond.
     """
     while True:
-        idle_for = clock.monotonic() - last_command_at()
-        if busy() or idle_for < idle_s:
+        if busy():
             await asyncio.sleep(retry_s)  # re-vérifie plus tard, sans bloquer
             continue
         try:
