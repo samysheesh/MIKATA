@@ -161,6 +161,12 @@ class TrayIcon:
                 pystray.MenuItem("Réglages…", lambda *_: on_action("settings"), default=True),
                 pystray.MenuItem("Afficher la mascotte", lambda *_: on_action("mascot")),
                 pystray.MenuItem("Pause / reprise de l'écoute", lambda *_: on_action("pause")),
+                # Phase 12f : le navigateur de travail tourne caché (la lecture y est
+                # fiable) — ce menu le ferme sans gestionnaire des tâches.
+                pystray.MenuItem(
+                    "Fermer le navigateur de MIKATA",
+                    lambda *_: on_action("browser_close"),
+                ),
                 pystray.Menu.SEPARATOR,
             ]
         menu = pystray.Menu(*items, pystray.MenuItem("Quitter", self._quit_clicked))

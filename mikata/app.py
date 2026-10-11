@@ -388,9 +388,12 @@ class App:
 
     def ui_action(self, action: str) -> None:
         """« settings » / « mascot » : demandé à l'interface si elle tourne, sinon lancée ;
-        « pause » : bascule le micro."""
+        « pause » : bascule le micro ; « browser_close » : ferme le navigateur de travail."""
         if action == "pause":
             self.set_paused(not self.paused)
+            return
+        if action == "browser_close":
+            self._close_work_browser()
             return
         message = {"settings": "open_settings", "mascot": "show_mascot"}.get(action)
         if message is None:
@@ -399,6 +402,15 @@ class App:
             self._publish_ui(message)
         elif self._ui_launcher is not None:
             self._ui_launcher(["--settings"] if action == "settings" else [])
+
+    def _close_work_browser(self) -> None:
+        """Menu de l'icône : ferme le navigateur de travail (lecture comprise), jamais
+        celui de l'utilisateur."""
+        registry = self._agent.tools if self._agent is not None else None
+        browser = getattr(registry.ctx, "browser", None) if registry is not None else None
+        quit_fn = getattr(browser, "quit", None)
+        if quit_fn is not None:
+            self._spawn(quit_fn(), "fermeture du navigateur de MIKATA")
 
     def set_paused(self, paused: bool) -> None:
         """Micro coupé côté logiciel : plus de mot d'activation, d'écoute ni de collecte."""
