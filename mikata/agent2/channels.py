@@ -89,7 +89,7 @@ def capability_for(intent: Intent) -> str:
     if verb is Verb.ORGANIZE:
         return "organize.file"
     if verb is Verb.OPEN:
-        if "application" in kind:
+        if any(word in kind for word in ("application", "appli", "logiciel", "jeu")):
             return "open.app"
         return "open.site"
     if verb is Verb.ASK:

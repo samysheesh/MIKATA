@@ -80,7 +80,9 @@ Prédicats possibles (choisis le plus précis, "judge" en dernier recours) :
 Pour chaque sous-but, préfère un prédicat déterministe : si un outil fait le travail
 (ouvrir, régler, programmer, écrire...), utilise tool_ok avec son nom exact. « judge » est
 un pis-aller qui coûte un appel et peut se tromper : ne l'utilise que si aucun prédicat
-déterministe ne convient.
+déterministe ne convient. file_exists seulement pour un chemin déjà connu (une valeur
+résolue) : jamais pour vérifier un fichier que le sous-but vient de créer (tool_ok
+write_file suffit).
 
 Canaux disponibles : {channels}
 Canal choisi pour cette tâche : {channel}

@@ -214,6 +214,9 @@ class Sdk:
     async def list_folder(self, path: str) -> str:
         return await self.tool("list_folder", path=path)
 
+    async def open_in_explorer(self, path: str) -> str:
+        return await self.tool("open_in_explorer", path=path)
+
     async def read_file(self, path: str) -> str:
         return await self.tool("read_file", path=path)
 
@@ -275,6 +278,7 @@ ui_type(window, control, text) — écrire dans un champ d'application.
 find_files(query) — chercher un fichier (parcours, jokers).
 find_path(query) — chercher dans l'index de tous les fichiers (rapide).
 list_folder(path) — contenu d'un dossier.
+open_in_explorer(path) — montrer un fichier ou dossier dans l'Explorateur.
 read_file(path) — contenu d'un fichier texte (tronqué).
 write_file(path, text) — créer ou modifier un fichier.
 move(src, dst) — déplacer ou renommer un fichier/dossier.

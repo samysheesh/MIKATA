@@ -68,6 +68,7 @@ class FixtureRegistry(DryRunRegistry):
         super().__init__()
         self.fixtures = fixtures
         self.windows = list(fixtures.installed)  # la première = fenêtre active
+        self.titles: dict[str, str] = {}
         self.page = "\n".join(fixtures.web.values()) or "(simulé)"
 
     async def execute(self, call: ToolCallReq) -> ToolResult:
@@ -111,7 +112,15 @@ class FixtureRegistry(DryRunRegistry):
             url = str(args.get("url", ""))
             texts = "\n".join(self.fixtures.web.values())
             self.page = f"Titre : Navigateur simulé\nURL : {url}\nTexte :\n{texts}"
+            # Une recherche dans l'URL affiche ses résultats : les prédicats de page
+            # peuvent vérifier ce qui a été cherché.
+            import urllib.parse as _up
+
+            query = _up.parse_qs(_up.urlparse(url).query).get("q", [""])[0]
+            if query:
+                self.page += f"\nRésultats pour : {query}"
             self.windows.insert(0, "Browser")  # le navigateur devient la fenêtre active
+            self.titles["Browser"] = "YouTube" if "youtube" in url.casefold() else "Navigateur"
         elif name == "fetch_page":
             url = str(args.get("url", ""))
             texts = "\n".join(self.fixtures.web.values())
@@ -126,16 +135,28 @@ class FixtureRegistry(DryRunRegistry):
             action = args.get("action", "play")
             state = "en cours" if action == "play" else f"« {action} » appliqué"
             self._note(call, f"Lecture : {state}.")
+        elif name == "press_keys":
+            keys = str(args.get("keys", "")).casefold()
+            note = "Touches pressées."
+            if "enter" in keys:
+                note = "Validation (Entrée). Lecture en cours."
+            self._note(call, note)
         elif name == "browser_click":
             self._note(call, f"Cliqué : {args.get('text')}. Lecture en cours.")
         elif name == "browser_type":
             self._note(call, f"Champ « {args.get('field')} » rempli : {args.get('text')}.")
         elif name == "uia_set_text":
-            self._note(call, f"Texte écrit : {args.get('text')}.")
+            text = str(args.get("text", ""))
+            if text and len(text) <= 30 and self.windows:
+                # une saisie courte (une recherche) se voit dans le titre de la fenêtre
+                window = self.windows[0]
+                self.titles[window] = f"Fenêtre {window} — {text}"
+            self._note(call, f"Texte écrit : {text}.")
         elif name == "uia_click":
             self._note(call, f"Contrôle cliqué : {args.get('control')}.")
         elif name == "write_file":
-            self._note(call, f"Fichier écrit : {args.get('path')}.")
+            content = str(args.get("content", ""))
+            self._note(call, f"Fichier écrit : {args.get('path')}\n{content[:200]}")
         elif name == "move_file":
             self._note(call, f"Déplacé : {args.get('source')} -> {args.get('destination')}.")
         elif name == "remember":
@@ -149,7 +170,10 @@ class FixtureRegistry(DryRunRegistry):
                         call.id, name, ok=True, content=text, terminal=False, duration_s=0.0
                     )
         elif name == "list_windows":
-            lines = [f"- {window} : Fenêtre {window}" for window in self.windows[:5]]
+            lines = [
+                f"- {window} : {self.titles.get(window, 'Fenêtre ' + window)}"
+                for window in self.windows[:5]
+            ]
             text = "Fenêtres ouvertes :\n" + "\n".join(lines) if lines else "(simulé)"
             self.calls.append((name, dict(args)))
             return ToolResult(call.id, name, ok=True, content=text, terminal=False, duration_s=0.0)
