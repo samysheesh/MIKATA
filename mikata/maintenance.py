@@ -56,9 +56,6 @@ def run_maintenance(config: Config, trash: Callable[[str], None] | None = None) 
     """Purge tout ce qui a dépassé sa durée de conservation ; renvoie le nombre par dossier."""
     from mikata.agent2.trace import TRACES_DIR, TraceStore
 
-    # Phase 13 : traces de l'agent v2 (même corbeille, jamais de suppression définitive).
-    # Hors du dict de retour pour préserver son contrat (tests de la phase 7).
-    TraceStore(config.resolve(TRACES_DIR)).purge(config.agent2.traces_days)
     return {
         WAKE_LOGS_DIR: purge_older_than(
             config.resolve(WAKE_LOGS_DIR), config.wake.log_days, trash=trash
@@ -69,4 +66,6 @@ def run_maintenance(config: Config, trash: Callable[[str], None] | None = None) 
         BACKUPS_DIR: trash_entries_older_than(
             config.resolve(BACKUPS_DIR), config.guard.backup_days, trash=trash
         ),
+        # Phase 13 : traces de l'agent v2 (dossiers de jour -> corbeille).
+        TRACES_DIR: TraceStore(config.resolve(TRACES_DIR)).purge(config.agent2.traces_days),
     }

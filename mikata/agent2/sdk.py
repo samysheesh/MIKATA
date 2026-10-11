@@ -61,12 +61,16 @@ class Sdk:
 
     # -- action générique ---------------------------------------------------------------
 
-    async def tool(self, tool_name: str, **args: Any) -> str:
-        """Appelle l'outil `tool_name` (registre existant). Lève SdkError si l'outil
-        échoue ou n'existe pas. Compte l'action, l'enregistre dans le Recorder."""
-        tool = self._registry.tools.get(tool_name)
+    async def tool(self, name: str, /, **args: Any) -> str:
+        """Appelle l'outil `name` (registre existant). Lève SdkError si l'outil échoue ou
+        n'existe pas. Compte l'action, l'enregistre dans le Recorder.
+
+        `name` est positional-only : les outils qui ont un argument `name` (open_app,
+        find_files, find_path...) restent appelables via `self.tool("open_app", name=...)`.
+        """
+        tool = self._registry.tools.get(name)
         if tool is None:
-            raise SdkError(f"outil inconnu : {tool_name}")
+            raise SdkError(f"outil inconnu : {name}")
         counting = self._counting
         if counting:
             if self._actions >= self._max_actions:
@@ -75,12 +79,12 @@ class Sdk:
                 )
             self._actions += 1
         result = await self._registry.execute(
-            ToolCallReq(id=uuid.uuid4().hex[:8], name=tool_name, arguments=args)
+            ToolCallReq(id=uuid.uuid4().hex[:8], name=name, arguments=args)
         )
         if counting:
             self._recorder.actions.append(
                 ActionRecord(
-                    tool=tool_name,
+                    tool=name,
                     args=args,
                     ok=result.ok,
                     result=result.content[:500],
