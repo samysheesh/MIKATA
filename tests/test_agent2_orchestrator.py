@@ -354,7 +354,10 @@ def test_a_channel_correction_updates_prefs_and_replays(tmp_path: Path) -> None:
     asyncio.run(agent2.respond("lance le dernier opening de One Piece", speech))
     asyncio.run(agent2.respond("non, sur Spotify", speech))
     assert agent2.prefs.scores("play", "opening d'anime")["spotify"] == 0.95
-    traces = list((tmp_path / "data" / "agent2" / "traces").rglob("*.json"))
+    traces = sorted(
+        (tmp_path / "data" / "agent2" / "traces").rglob("*.json"),
+        key=lambda path: path.stat().st_mtime,  # noms UUID : l'ordre n'est pas chronologique
+    )
     from mikata.agent2.schema import Trace
 
     last = Trace.model_validate_json(traces[-1].read_text(encoding="utf-8"))

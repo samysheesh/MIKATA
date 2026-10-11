@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from mikata.agent2.channels import BUILTIN_CHANNELS, Channel
 from mikata.agent2.llm_json import ask_json
 from mikata.agent2.prompts import PLAN_SYSTEM, PLAN_USER
-from mikata.agent2.schema import Intent, Judge, Resolved, SubGoal
+from mikata.agent2.schema import Intent, Judge, Resolved, SubGoal, ToolSucceeded
 from mikata.llm.base import LLMClient, Usage
 
 _KNOWN_CHANNELS = {channel.name for channel in BUILTIN_CHANNELS}
@@ -58,4 +58,12 @@ async def make_plan(
     for subgoal in subgoals:
         if subgoal.channel not in _KNOWN_CHANNELS:
             subgoal.channel = channel.name
+        # Le canal youtube se joue dans le navigateur de travail de MIKATA : le plan ne
+        # doit jamais exiger open_url (celui de l'utilisateur).
+        if (
+            subgoal.channel == "youtube"
+            and isinstance(subgoal.done_when, ToolSucceeded)
+            and subgoal.done_when.tool == "open_url"
+        ):
+            subgoal.done_when = ToolSucceeded(tool="browser_open")
     return subgoals, usage, calls

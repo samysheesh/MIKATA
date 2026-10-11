@@ -26,7 +26,10 @@ _CASE = EvalCase(
         web={"One Piece opening": "Le dernier opening de One Piece est « Assu ! »"},
     ),
     expect=EvalExpect(
-        verb="play", channel="youtube", tools_called=["open_url"], tools_forbidden=["delete_file"]
+        verb="play",
+        channel="youtube",
+        tools_called=["browser_open"],
+        tools_forbidden=["delete_file"],
     ),
 )
 
@@ -40,11 +43,11 @@ _UNDERSTAND = (
 _RESOLVE = '{"value": "Assu !", "confident": true}'
 _PLAN = (
     '{"subgoals": [{"goal": "YouTube affiche la vidéo", "channel": "youtube",'
-    ' "done_when": {"type": "tool_ok", "tool": "open_url"},'
+    ' "done_when": {"type": "tool_ok", "tool": "browser_open"},'
     ' "skill": null, "skill_args": {}}]}'
 )
 _STEP = (
-    '{"code": "await sdk.open_url(\'https://www.youtube.com/results?search_query=Assu\')'
+    '{"code": "await sdk.browser_open(\'https://www.youtube.com/results?search_query=Assu\')'
     "\\nreturn 'ok'\"}"
 )
 
@@ -61,8 +64,9 @@ def test_a_forbidden_tool_fails_the_case(tmp_path: Path) -> None:
         [
             _UNDERSTAND,
             _RESOLVE,
-            _PLAN.replace("open_url", "delete_file", 2),
-            "{\"code\": \"await sdk.trash('C:/vieux.txt')\\nreturn 'ok'\"}",
+            _PLAN,
+            '{"code": "await sdk.browser_open(\'https://x\')\\n'
+            "await sdk.trash('C:/vieux.txt')\\nreturn 'ok'\"}",
         ]
     )
     result = asyncio.run(run_case(_CASE, llm, root=tmp_path / "traces"))

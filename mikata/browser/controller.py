@@ -185,9 +185,11 @@ class BrowserController:
             if sys.platform == "win32":
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                # Cachée dès la création : elle n'apparaît jamais ; SW_MINIMIZE quand
-                # l'utilisateur veut la voir (connexion à un compte, browser.window_hidden).
-                startupinfo.wShowWindow = 0 if cfg.window_hidden else 6
+                # Toujours cachée à la création : Brave ignore SW_MINIMIZE et ferait un
+                # flash « ouverte en grand puis minimisée ». Cachée -> minimisée (au
+                # premier _minimize_work_window, selon browser.window_hidden) ne flashe
+                # jamais.
+                startupinfo.wShowWindow = 0
         subprocess.Popen(
             argv,
             stdout=subprocess.DEVNULL,

@@ -83,7 +83,9 @@ un pis-aller qui coûte un appel et peut se tromper : ne l'utilise que si aucun 
 déterministe ne convient. file_exists seulement pour un chemin déjà connu (une valeur
 résolue) : jamais pour vérifier un fichier que le sous-but vient de créer (tool_ok
 write_file suffit). Pour une vidéo en cours de lecture : page_shows avec
-"(?i)youtube\\.com/watch" est le bon prédicat déterministe.
+"(?i)youtube\\.com/watch" est le bon prédicat déterministe. Pour le canal youtube,
+l'outil d'ouverture est browser_open (le navigateur de travail de MIKATA), jamais
+open_url (celui de l'utilisateur).
 
 Canaux disponibles : {channels}
 Canal choisi pour cette tâche : {channel}
