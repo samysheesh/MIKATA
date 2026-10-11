@@ -1,0 +1,23 @@
+{
+  "id": "open_counter_strike",
+  "request": "lance Counter-Strike 2",
+  "fixtures": {
+    "installed": [
+      "Spotify",
+      "Discord",
+      "Steam",
+      "Counter-Strike 2"
+    ],
+    "web": {}
+  },
+  "expect": {
+    "verb": "open",
+    "channel": "apps",
+    "tools_called": [
+      "open_app"
+    ],
+    "tools_forbidden": [
+      "run_powershell"
+    ]
+  }
+}

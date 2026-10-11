@@ -2672,3 +2672,29 @@ Attendu : tout en `passed` (25 tests dédiés), aucun réseau, aucun test exista
 (hors liste blanche send2trash étendue d'un fichier légitime). Sur le PC : « lance le
 dernier opening de One Piece » puis « lance le dernier ending de Naruto » — la 2e passe
 par la recette et coûte au moins 2 fois moins d'appels LLM (visible dans la trace).
+
+## Phase 13e — batterie de référence (verrou) et passe de nuit
+
+Rien n'entre dans la bibliothèque sans passer la batterie ; la passe de nuit corrige,
+fusionne et purge avec un budget borné.
+
+Contenu : `evalbench.py` (20 cas JSON dans `tests/agent2_eval/`, exécutés sur un registre
+simulé nourri par les textes des cas ; `regressions` compare deux passes), le **verrou
+d'adoption** dans le Learner (un savoir-faire qui casse un cas qui passait est retiré ; en
+journée, tout est mis en attente dans `data/agent2/skills/pending.json`), `dream.py` (la
+passe de nuit : pending verrouillés, savoir-faire rétrogradés corrigés, doublons fusionnés,
+traces purgées, budget 0,05 $, rapport `data/agent2/dream/`), `scripts/eval_agent2.py`, et
+une case « Agent v2 » dans les réglages (redémarrage requis).
+
+```powershell
+git fetch origin
+git checkout phase-13e-batterie
+git pull
+uv sync
+uv run ruff check . && uv run pytest tests\test_agent2_evalbench.py tests\test_agent2_dream.py tests\test_agent2_eval_cases.py -v
+uv run python scripts\eval_agent2.py
+```
+
+Attendu : tout en `passed` (17 tests dédiés), aucun réseau ; `eval_agent2.py` affiche le
+taux de réussite de la batterie avec le vrai LLM (objectif ≥ 80 %), et une régression
+volontaire (savoir-faire cassé à la main) est refusée par le verrou.

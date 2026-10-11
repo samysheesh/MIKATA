@@ -1,0 +1,20 @@
+{
+  "id": "send_message_to_paul",
+  "request": "envoie un message à Paul sur Discord",
+  "capability": "send.message",
+  "fixtures": {
+    "installed": [
+      "Discord",
+      "Google Chrome"
+    ],
+    "web": {}
+  },
+  "expect": {
+    "verb": "send",
+    "channel": "discord",
+    "tools_forbidden": [
+      "delete_file",
+      "run_powershell"
+    ]
+  }
+}

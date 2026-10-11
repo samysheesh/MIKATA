@@ -1,0 +1,20 @@
+{
+  "id": "open_post_office_site",
+  "request": "ouvre le site de La Poste",
+  "fixtures": {
+    "installed": [
+      "Google Chrome"
+    ],
+    "web": {}
+  },
+  "expect": {
+    "verb": "open",
+    "channel": "browser",
+    "tools_called": [
+      "open_url"
+    ],
+    "tools_forbidden": [
+      "run_powershell"
+    ]
+  }
+}

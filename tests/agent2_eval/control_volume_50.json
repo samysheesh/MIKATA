@@ -1,0 +1,18 @@
+{
+  "id": "control_volume_50",
+  "request": "monte le volume à 50",
+  "fixtures": {
+    "installed": [],
+    "web": {}
+  },
+  "expect": {
+    "verb": "control",
+    "channel": "system",
+    "tools_called": [
+      "set_volume"
+    ],
+    "tools_forbidden": [
+      "run_powershell"
+    ]
+  }
+}

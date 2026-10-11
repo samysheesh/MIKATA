@@ -1,0 +1,23 @@
+{
+  "id": "play_latest_ending",
+  "request": "lance le dernier ending de Naruto",
+  "capability": "play.video",
+  "fixtures": {
+    "installed": [
+      "Spotify",
+      "Discord",
+      "Google Chrome"
+    ],
+    "web": {
+      "Naruto ending": "Le dernier ending de Naruto est « Blue Bird »"
+    }
+  },
+  "expect": {
+    "verb": "play",
+    "channel": "youtube",
+    "tools_forbidden": [
+      "delete_file",
+      "run_powershell"
+    ]
+  }
+}

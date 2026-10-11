@@ -1,0 +1,18 @@
+{
+  "id": "monitor_gpu_price",
+  "request": "surveille le prix d'une carte graphique",
+  "fixtures": {
+    "installed": [
+      "Google Chrome"
+    ],
+    "web": {}
+  },
+  "expect": {
+    "verb": "monitor",
+    "channel": "browser",
+    "tools_forbidden": [
+      "delete_file",
+      "run_powershell"
+    ]
+  }
+}

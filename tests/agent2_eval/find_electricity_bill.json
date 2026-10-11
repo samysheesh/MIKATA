@@ -1,0 +1,16 @@
+{
+  "id": "find_electricity_bill",
+  "request": "trouve la facture d'électricité",
+  "fixtures": {
+    "installed": [],
+    "web": {}
+  },
+  "expect": {
+    "verb": "find",
+    "channel": "files",
+    "tools_forbidden": [
+      "delete_file",
+      "run_powershell"
+    ]
+  }
+}

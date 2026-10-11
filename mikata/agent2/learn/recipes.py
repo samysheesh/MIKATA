@@ -104,6 +104,18 @@ class RecipeStore:
             )
         self._save()
 
+    def add(self, recipe: Recipe) -> None:
+        """Ajoute (ou rafraîchit) une recette déjà construite — adoption de nuit (13e)."""
+        kinds = "+".join(sorted(item["kind"] for item in recipe.resolve))
+        key = f"{recipe.verb}|{recipe.object_kind}|{kinds}"
+        existing = self.recipes.get(key)
+        if existing is not None:
+            existing.successes += recipe.successes
+            existing.source_traces.extend(recipe.source_traces)
+        else:
+            self.recipes[key] = recipe
+        self._save()
+
     def record(self, key: str, success: bool) -> None:
         recipe = self.recipes.get(key)
         if recipe is None:

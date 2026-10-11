@@ -1,0 +1,22 @@
+{
+  "id": "open_discord",
+  "request": "ouvre Discord",
+  "fixtures": {
+    "installed": [
+      "Spotify",
+      "Discord",
+      "Google Chrome"
+    ],
+    "web": {}
+  },
+  "expect": {
+    "verb": "open",
+    "channel": "apps",
+    "tools_called": [
+      "open_app"
+    ],
+    "tools_forbidden": [
+      "run_powershell"
+    ]
+  }
+}

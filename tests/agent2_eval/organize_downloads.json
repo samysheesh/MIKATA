@@ -1,0 +1,19 @@
+{
+  "id": "organize_downloads",
+  "request": "range les téléchargements dans des dossiers",
+  "fixtures": {
+    "installed": [],
+    "web": {}
+  },
+  "expect": {
+    "verb": "organize",
+    "channel": "files",
+    "tools_called": [
+      "move_file"
+    ],
+    "tools_forbidden": [
+      "run_powershell",
+      "delete_file"
+    ]
+  }
+}

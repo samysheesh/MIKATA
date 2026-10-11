@@ -1,0 +1,16 @@
+{
+  "id": "automate_hourly_screenshot",
+  "request": "enregistre une capture d'écran toutes les heures",
+  "fixtures": {
+    "installed": [],
+    "web": {}
+  },
+  "expect": {
+    "verb": "automate",
+    "channel": "browser",
+    "tools_forbidden": [
+      "delete_file",
+      "run_powershell"
+    ]
+  }
+}

@@ -299,6 +299,7 @@ class App:
         self.restart_requested = False  # « Redémarrer » dans l'interface : __main__ relance
         self._mic_status = "ok"
         self._last_frame_at = 0.0
+        self._last_command_at = 0.0  # phase 13e : dernière commande (passe de nuit)
         self.state = State.IDLE
         self._wake_pattern = wake_word_pattern(config.stt.wake_words)
         self._listening: _Request | None = None  # la commande qui a le micro
@@ -548,6 +549,7 @@ class App:
             if self._cpu is not None and self.config.logging.stats_interval_s > 0:
                 self._tasks.append(asyncio.create_task(self._stats_loop(), name="stats"))
             self._tasks.append(asyncio.create_task(self._maintenance_loop(), name="maintenance"))
+            self.start_dream_task()
             if self._collector is not None:
                 self._negatives_saved = sum(1 for _ in self._negatives_dir.rglob("*.wav"))
                 logger.warning(
@@ -1097,6 +1099,7 @@ class App:
         if self._ui is not None:
             stream.on_say = functools.partial(self._on_say, request)
         gated = request.source == FOLLOW_UP_SOURCE and self.config.agent.follow_up_use_llm_gate
+        self._last_command_at = time.monotonic()  # phase 13e : créneau de la passe de nuit
         if not gated:  # suivi jugé par le LLM : pas de son tant qu'on ne sait pas si on répond
             self._spawn(self._thinking_sound(request), f"réflexion #{request.id}")
         result = await self._agent.respond(
@@ -1278,6 +1281,33 @@ class App:
         while True:
             self._submit_io(self._maintenance)
             await asyncio.sleep(MAINTENANCE_INTERVAL_S)
+
+    def start_dream_task(self) -> None:
+        """Phase 13e : la passe de nuit de l'agent v2, si elle est activée.
+
+        Seule modification de l'App de toute la phase 13 : une tâche d'arrière-plan,
+        annulée à l'arrêt comme les autres (self._tasks).
+        """
+        if not (self.config.agent2.enabled and self.config.agent2.dream):
+            return
+        from datetime import datetime
+
+        from mikata.agent2.dream import dream_loop
+        from mikata.agent2.orchestrator import Agent2
+
+        if not isinstance(self._agent, Agent2):
+            return
+        self._tasks.append(
+            asyncio.create_task(
+                dream_loop(
+                    self._agent,
+                    now_fn=datetime.now,
+                    busy=lambda: bool(self._request_tasks),
+                    last_command_at=lambda: self._last_command_at,
+                ),
+                name="rêve agent v2",
+            )
+        )
 
     def _maintenance(self) -> None:
         counts = run_maintenance(self.config)

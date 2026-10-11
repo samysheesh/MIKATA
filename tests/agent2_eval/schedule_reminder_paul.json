@@ -1,0 +1,18 @@
+{
+  "id": "schedule_reminder_paul",
+  "request": "rappelle-moi d'appeler Paul dans une heure",
+  "fixtures": {
+    "installed": [],
+    "web": {}
+  },
+  "expect": {
+    "verb": "schedule",
+    "channel": "system",
+    "tools_called": [
+      "set_reminder"
+    ],
+    "tools_forbidden": [
+      "run_powershell"
+    ]
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "id": "create_shopping_list",
+  "request": "crée une note avec la liste de courses",
+  "fixtures": {
+    "installed": [],
+    "web": {}
+  },
+  "expect": {
+    "verb": "create",
+    "channel": "browser",
+    "tools_called": [
+      "write_file"
+    ],
+    "tools_forbidden": [
+      "run_powershell",
+      "delete_file"
+    ]
+  }
+}

@@ -57,14 +57,20 @@ def _learner(tmp_path: Path, llm: ScriptedLLM) -> Learner:
     return Learner(llm, store, recipes, prefs, TraceStore(tmp_path / "traces"), cfg, "win32")
 
 
-def test_verified_trace_produces_a_proposed_skill(tmp_path: Path) -> None:
+def test_verified_trace_produces_a_pending_skill(tmp_path: Path) -> None:
+    """13e : rien n'entre directement dans la bibliothèque — le savoir-faire est mis en
+    attente (pending.json) et adopté (verrouillé) par la passe de nuit."""
     trace = _trace(tmp_path)
     learner = _learner(tmp_path, ScriptedLLM([_COMPILED]))
     asyncio.run(learner.learn(trace))
-    assert "play_youtube_video" in learner.store.skills
-    meta = learner.store.skills["play_youtube_video"]
+    assert learner.store.skills == {}
+    pending = learner.pending()
+    assert len(pending) == 1
+    name, meta, _code, recipe = pending[0]
+    assert name == "play_youtube_video"
     assert meta.status == "proposed" and meta.source_traces == [trace.id]
     assert meta.needs_approval is False
+    assert recipe is not None and recipe.skill == "play_youtube_video"
 
 
 def test_unverified_trace_learns_nothing(tmp_path: Path) -> None:
@@ -98,5 +104,5 @@ def test_duplicate_name_is_suffixed(tmp_path: Path) -> None:
     learner = _learner(tmp_path, ScriptedLLM([_COMPILED, _COMPILED]))
     asyncio.run(learner.learn(trace))
     asyncio.run(learner.learn(trace))
-    assert "play_youtube_video" in learner.store.skills
-    assert "play_youtube_video_2" in learner.store.skills
+    names = [entry[0] for entry in learner.pending()]
+    assert names == ["play_youtube_video", "play_youtube_video_2"]

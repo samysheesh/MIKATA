@@ -1,0 +1,18 @@
+{
+  "id": "schedule_timer_5min",
+  "request": "mets un minuteur de 5 minutes",
+  "fixtures": {
+    "installed": [],
+    "web": {}
+  },
+  "expect": {
+    "verb": "schedule",
+    "channel": "system",
+    "tools_called": [
+      "set_timer"
+    ],
+    "tools_forbidden": [
+      "run_powershell"
+    ]
+  }
+}

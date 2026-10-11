@@ -1,0 +1,21 @@
+{
+  "id": "play_music_on_spotify",
+  "request": "joue de la musique sur Spotify",
+  "capability": "play.music",
+  "fixtures": {
+    "installed": [
+      "Spotify",
+      "Discord",
+      "Google Chrome"
+    ],
+    "web": {}
+  },
+  "expect": {
+    "verb": "play",
+    "channel": "spotify",
+    "tools_forbidden": [
+      "run_powershell",
+      "delete_file"
+    ]
+  }
+}
