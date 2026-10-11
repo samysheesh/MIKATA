@@ -401,9 +401,15 @@ class Agent2:
 
     @staticmethod
     def _channels_text() -> str:
-        return "\n".join(
+        from mikata.tools.registry import load_builtin_tools, registered_tools
+
+        load_builtin_tools()
+        lines = [
             f"- {channel.name} : {', '.join(channel.capabilities)}" for channel in BUILTIN_CHANNELS
-        )
+        ]
+        tools = ", ".join(sorted(registered_tools()))
+        lines.append(f"Outils réels (noms exacts pour le prédicat tool_ok) : {tools}")
+        return "\n".join(lines)
 
     def _skills_text(self, intent: Intent, os_name: str) -> str:
         if self.skills is None:

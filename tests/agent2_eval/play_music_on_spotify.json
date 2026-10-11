@@ -1,6 +1,6 @@
 {
   "id": "play_music_on_spotify",
-  "request": "joue de la musique sur Spotify",
+  "request": "joue la playlist découverte de la semaine sur Spotify",
   "capability": "play.music",
   "fixtures": {
     "installed": [

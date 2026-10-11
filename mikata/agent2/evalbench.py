@@ -73,15 +73,40 @@ class FixtureRegistry(DryRunRegistry):
     async def execute(self, call: ToolCallReq) -> ToolResult:
         name = call.name
         args = call.arguments
-        if name in ("open_app", "focus_window"):
+        if name == "open_app":
             wanted = str(args.get("name", "")).casefold()
-            for window in list(self.windows):
+            for window in self.windows:
+                if wanted and (wanted in window.casefold() or window.casefold() in wanted):
+                    self.windows.remove(window)
+                    self.windows.insert(0, window)
+                    break
+            else:  # comme le vrai bureau : une appli inconnue ne s'ouvre pas
+                self.calls.append((name, dict(args)))
+                return ToolResult(
+                    call.id,
+                    name,
+                    ok=False,
+                    content=f"application introuvable : {wanted}",
+                    terminal=False,
+                    duration_s=0.0,
+                )
+        elif name == "focus_window":
+            wanted = str(args.get("name", "")).casefold()
+            for window in self.windows:
                 if wanted and (wanted in window.casefold() or window.casefold() in wanted):
                     self.windows.remove(window)
                     self.windows.insert(0, window)
                     break
             else:
-                self.windows.insert(0, str(args.get("name", "")))
+                self.calls.append((name, dict(args)))
+                return ToolResult(
+                    call.id,
+                    name,
+                    ok=False,
+                    content=f"fenêtre introuvable : {wanted}",
+                    terminal=False,
+                    duration_s=0.0,
+                )
         elif name in ("browser_open", "open_url", "fetch_page"):
             url = str(args.get("url", ""))
             texts = "\n".join(self.fixtures.web.values())
@@ -98,9 +123,7 @@ class FixtureRegistry(DryRunRegistry):
             lines = [f"- {window} : Fenêtre {window}" for window in self.windows[:5]]
             text = "Fenêtres ouvertes :\n" + "\n".join(lines) if lines else "(simulé)"
             self.calls.append((name, dict(args)))
-            return ToolResult(
-                call.id, name, ok=True, content=text, terminal=False, duration_s=0.0
-            )
+            return ToolResult(call.id, name, ok=True, content=text, terminal=False, duration_s=0.0)
         elif name in ("browser_read", "uia_read"):
             # Les outils de lecture renvoient l'état simulé : les prédicats de vérification
             # (page_shows, text_visible...) restent significatifs.

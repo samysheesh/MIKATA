@@ -24,7 +24,11 @@ Réponds UNIQUEMENT par un objet JSON avec ces clés :
   (ex. "spotify", "youtube", "discord"), ou null s'il n'en impose pas ;
 - "unknowns" : ce qu'il faut découvrir AVANT d'agir, chacun {{"name", "question", "kind"}}
   avec kind parmi web, file, contact, memory, screen, app, user. Exemple : « le dernier
-  opening » -> le titre exact est inconnu (kind web). Ne mets pas ce qui est déjà clair ;
+  opening » -> le titre exact est inconnu (kind web). Ne mets pas ce qui est déjà clair.
+  Ne mets une inconnue que si elle bloque vraiment l'action ; kind "user" seulement si la
+  demande est impossible sans la réponse (jamais pour une simple recherche de fichier,
+  une ouverture d'application ou une action dont les détails peuvent être choisis
+  raisonnablement) ;
 - "sub_intents" : si la demande enchaîne plusieurs actions (« et ensuite »), la liste des
   intentions simples, chacune avec les mêmes clés ; sinon [].
 
@@ -68,8 +72,13 @@ Prédicats possibles (choisis le plus précis, "judge" en dernier recours) :
 {{"type": "page_shows", "pattern": "<regex>"}}
 {{"type": "file_exists", "path": "..."}}
 {{"type": "text_visible", "pattern": "<regex>"}}
-{{"type": "tool_ok", "tool": "<nom d'outil>"}}
+{{"type": "tool_ok", "tool": "<nom exact d'un outil réel ci-dessous, jamais un canal>"}}
 {{"type": "judge", "question": "..."}}
+
+Pour chaque sous-but, préfère un prédicat déterministe : si un outil fait le travail
+(ouvrir, régler, programmer, écrire...), utilise tool_ok avec son nom exact. « judge » est
+un pis-aller qui coûte un appel et peut se tromper : ne l'utilise que si aucun prédicat
+déterministe ne convient.
 
 Canaux disponibles : {channels}
 Canal choisi pour cette tâche : {channel}
