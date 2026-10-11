@@ -22,8 +22,7 @@ from mikata.config import Agent2Config
 
 DREAM_BUDGET_USD = 0.05
 IDLE_S = 1200  # 20 minutes sans commande
-RETRY_S = 1800  # 30 minutes entre deux tentatives
-MAX_TRIES = 3
+RETRY_S = 1800  # 30 minutes entre deux vérifications
 DREAM_DIR = "data/agent2/dream"
 
 
@@ -101,26 +100,23 @@ async def dream_loop(
     last_command_at: Callable[[], float],
     retry_s: float = RETRY_S,
     idle_s: float = IDLE_S,
-    tries: int = MAX_TRIES,
+    cooldown_s: float = 24 * 3600,
     clock: Any = time,
 ) -> None:
-    """La tâche d'arrière-plan : attend l'heure, exige 20 min d'inactivité, tente 3 fois."""
-    cfg: Agent2Config = agent2.legacy.config.agent2
-    now = now_fn()
-    target = now.replace(hour=cfg.dream_hour, minute=0, second=0, microsecond=0)
-    if target <= now:
-        target = target.replace(day=now.day + 1)
-    await asyncio.sleep(max(0.0, (target - now).total_seconds()))
-    for attempt in range(1, tries + 1):
+    """La tâche d'arrière-plan : tourne à créneau libre, pas seulement la nuit.
+
+    Ajustement demandé (post-13e) : la passe ne dépend plus de `dream_hour`. Elle attend
+    qu'aucune commande ne soit en cours (`busy` : commandes + charge CPU), que la dernière
+    commande date d'au moins 20 min, puis lance la passe — au plus une fois par 24 h.
+    La tâche est annulée à l'arrêt de MIKATA comme les autres tâches de fond.
+    """
+    while True:
         idle_for = clock.monotonic() - last_command_at()
         if busy() or idle_for < idle_s:
-            logger.info("Passe de nuit reportée ({}e essai) : activité récente.", attempt)
-            if attempt < tries:
-                await asyncio.sleep(retry_s)
+            await asyncio.sleep(retry_s)  # re-vérifie plus tard, sans bloquer
             continue
         try:
             await dream(agent2, now=now_fn())
         except Exception:
-            logger.exception("Passe de nuit impossible.")
-        return
-    logger.info("Passe de nuit abandonnée : 3 essais sans créneau calme.")
+            logger.exception("Passe d'arrière-plan impossible.")
+        await asyncio.sleep(cooldown_s)  # une seule passe par jour

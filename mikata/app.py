@@ -1302,12 +1302,25 @@ class App:
                 dream_loop(
                     self._agent,
                     now_fn=datetime.now,
-                    busy=lambda: bool(self._request_tasks),
+                    busy=self._dream_busy,
                     last_command_at=lambda: self._last_command_at,
                 ),
-                name="rêve agent v2",
+                name="passe d'arrière-plan agent v2",
             )
         )
+
+    def _dream_busy(self) -> bool:
+        """La passe d'arrière-plan attend un créneau calme : aucune commande en cours et
+        une charge CPU raisonnable (pas de compétition avec le travail de l'utilisateur)."""
+        if self._request_tasks:
+            return True
+        if self._cpu is not None:
+            try:
+                cpu, _ = self._cpu.sample()
+                return cpu > 25.0
+            except Exception:
+                pass
+        return False
 
     def _maintenance(self) -> None:
         counts = run_maintenance(self.config)

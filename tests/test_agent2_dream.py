@@ -4,6 +4,7 @@ budget ; l'ordonnanceur exige un créneau calme."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -156,7 +157,7 @@ def test_budget_is_enforced(tmp_path: Path) -> None:
     assert report.cost_usd >= DREAM_BUDGET_USD
 
 
-def test_dream_loop_waits_for_a_calm_slot(tmp_path: Path, monkeypatch: Any) -> None:
+def test_dream_loop_runs_on_a_calm_slot(tmp_path: Path, monkeypatch: Any) -> None:
     llm = ScriptedLLM([])
     agent2 = _agent2(tmp_path, llm)
     import mikata.agent2.dream as dream_module
@@ -166,21 +167,58 @@ def test_dream_loop_waits_for_a_calm_slot(tmp_path: Path, monkeypatch: Any) -> N
     async def fake_dream(a2: Any, *, now: datetime) -> None:
         ran.append(now)
 
-    async def no_sleep(seconds: float) -> None:
-        return None
+    monkeypatch.setattr(dream_module, "dream", fake_dream)
+    now = datetime(2026, 10, 12, 14, 30)  # n'importe quelle heure : plus de dream_hour
+
+    async def scenario() -> None:
+        task = asyncio.create_task(
+            dream_loop(
+                agent2,
+                now_fn=lambda: now,
+                busy=lambda: False,
+                last_command_at=lambda: 0.0,
+                retry_s=0.01,
+                idle_s=1200,
+                cooldown_s=60,
+            )
+        )
+        while not ran:
+            await asyncio.sleep(0.01)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+    assert ran  # la passe a eu lieu au créneau calme, sans attendre la nuit
+
+
+def test_dream_loop_waits_when_busy(tmp_path: Path, monkeypatch: Any) -> None:
+    llm = ScriptedLLM([])
+    agent2 = _agent2(tmp_path, llm)
+    import mikata.agent2.dream as dream_module
+
+    ran: list[datetime] = []
+
+    async def fake_dream(a2: Any, *, now: datetime) -> None:
+        ran.append(now)
 
     monkeypatch.setattr(dream_module, "dream", fake_dream)
-    monkeypatch.setattr(dream_module.asyncio, "sleep", no_sleep)
-    now = datetime(2026, 10, 12, 2, 59, 50)  # 10 s avant l'heure
 
-    asyncio.run(
-        dream_loop(
-            agent2,
-            now_fn=lambda: now,
-            busy=lambda: False,
-            last_command_at=lambda: 0.0,
-            retry_s=0.01,
-            idle_s=1200,
+    async def scenario() -> None:
+        task = asyncio.create_task(
+            dream_loop(
+                agent2,
+                now_fn=lambda: datetime(2026, 10, 12, 14, 30),
+                busy=lambda: True,  # commande en cours ou CPU chargé
+                last_command_at=lambda: 0.0,
+                retry_s=0.01,
+                idle_s=1200,
+            )
         )
-    )
-    assert ran  # la passe a eu lieu au créneau calme
+        await asyncio.sleep(0.1)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+    assert ran == []  # jamais de passe tant que c'est occupé
