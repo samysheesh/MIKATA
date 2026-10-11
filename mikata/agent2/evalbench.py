@@ -170,6 +170,9 @@ class FixtureRegistry(DryRunRegistry):
         elif name == "find_path":
             query = str(args.get("name", ""))
             self._note(call, f"Trouvé :\n- C:\\Utilisateur\\Documents\\{query}")
+        elif name == "find_files":
+            query = str(args.get("name", ""))
+            self._note(call, f"Trouvé :\n- C:\\Utilisateur\\Documents\\{query} (modifié récemment)")
         elif name in ("run_powershell", "run_shell"):
             command = str(args.get("command", ""))[:100]
             self._note(call, f"Commande exécutée (simulée) : {command}")

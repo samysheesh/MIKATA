@@ -1,6 +1,6 @@
 {
   "id": "schedule_timer_5min",
-  "request": "mets un minuteur de 5 minutes",
+  "request": "programme un minuteur de 5 minutes",
   "fixtures": {
     "installed": [],
     "web": {}
