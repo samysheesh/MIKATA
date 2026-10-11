@@ -163,8 +163,16 @@ class FixtureRegistry(DryRunRegistry):
             self._note(call, f"Mémorisé : {args.get('fact')}.")
         elif name == "show_text":
             self._note(call, f"Affiché : {args.get('text')}.")
+        elif name == "open_in_explorer":
+            self._note(call, f"Explorateur ouvert : {args.get('path')}.")
+        elif name == "type_text":
+            self._note(call, f"Texte tapé : {args.get('text')}.")
+        elif name == "find_path":
+            query = str(args.get("name", ""))
+            self._note(call, f"Trouvé :\n- C:\\Utilisateur\\Documents\\{query}")
         elif name in ("run_powershell", "run_shell"):
-            self._note(call, "Commande exécutée (simulée).")
+            command = str(args.get("command", ""))[:100]
+            self._note(call, f"Commande exécutée (simulée) : {command}")
         elif name == "web_search":
             query = str(args.get("query", "")).casefold()
             for needle, text in self.fixtures.web.items():

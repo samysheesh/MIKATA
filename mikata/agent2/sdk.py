@@ -73,7 +73,8 @@ class Sdk:
         """
         if positional:
             tool = self._registry.tools.get(name)
-            fields = list(tool.params.model_fields) if tool is not None else []
+            params = getattr(tool, "params", None)
+            fields = list(params.model_fields) if params is not None else []
             # strict=False : les arguments en trop sont simplement ignorés.
             for field, value in zip(fields, positional, strict=False):
                 args[field] = value

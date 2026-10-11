@@ -5,7 +5,9 @@
     "installed": [
       "Google Chrome"
     ],
-    "web": {}
+    "web": {
+      "RTX 5070 prix": "La RTX 5070 est à 549 € chez le marchand le moins cher, 619 € ailleurs."
+    }
   },
   "expect": {
     "verb": "monitor",

@@ -12,7 +12,6 @@
       "move_file"
     ],
     "tools_forbidden": [
-      "run_powershell",
       "delete_file"
     ]
   }
