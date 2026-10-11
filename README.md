@@ -2598,3 +2598,25 @@ uv run ruff check . && uv run pytest tests\test_agent2_schema.py tests\test_agen
 
 Attendu : tout en `passed`, aucun test existant modifié (hors `test_config.py` et la liste
 blanche des importateurs de `send2trash` dans `test_guard_criteria.py`).
+
+## Phase 13b — comprendre, résoudre, choisir le canal
+
+Deuxième brique de l'agent v2, toujours rien de branché (`agent2.enabled: false`).
+
+Contenu : `prompts.py` (compréhension et extraction, avec la phrase anti-injection et les
+marqueurs `<<<DONNÉES>>>`), `understand.py` (demande -> Intention, normalisée en Python),
+`preferences.py` (préférences de canal apprises, `data/agent2/preferences.json`),
+`channels.py` (registre des 8 canaux, capacités, disponibilité, choix par score
+2·préférence + réussite − ½·coût, repli navigateur) et `resolve.py` (inconnues résolues du
+moins cher au plus cher : mémoire -> fichiers -> écran/applis -> web ; jamais
+l'utilisateur, c'est l'orchestrateur qui décide).
+
+```powershell
+git fetch origin
+git checkout phase-13b-comprendre
+git pull
+uv sync
+uv run ruff check . && uv run pytest tests\test_agent2_understand.py tests\test_agent2_channels.py tests\test_agent2_preferences.py tests\test_agent2_resolve.py -v
+```
+
+Attendu : tout en `passed` (36 tests dédiés), aucun réseau, aucun test existant modifié.
