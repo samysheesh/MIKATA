@@ -96,11 +96,17 @@ def test_defaults_match_section_10(config_file: Path) -> None:
     assert config.browser.enabled is True and config.browser.cdp_port == 9222
     assert config.browser.fallback_uia is True and config.browser.page_text_max_chars == 4000
     assert config.browser.click_timeout_s == 5
+    # ajouts phase 12f
+    assert config.browser.own_profile is True
+    assert config.browser.profile_dir == Path("data/brave_profile")
+    assert config.browser.window_hidden is True
     # ajouts phase 12c
     assert config.skills.enabled is True and config.skills.max_skills == 30
     assert config.skills.confidence == 70 and config.skills.auto_learn is True
     assert config.skills.auto_learn_min_rounds == 2 and config.skills.max_failures == 3
     assert config.skills.max_steps == 10
+    # ajout phase 12e
+    assert config.skills.local_replay is True
     # ajouts phase 12d
     assert config.files_index.enabled is True
     assert config.files_index.db == Path("data/files_index.db")
@@ -189,6 +195,10 @@ def test_not_a_mapping(tmp_path: Path) -> None:
         ("files_index", "poll_s", 0, "files_index.poll_s"),
         ("files_index", "max_results", 0, "files_index.max_results"),
         ("files_index", "max_results", 101, "files_index.max_results"),
+        ("skills", "local_replay", "peut-etre", "skills.local_replay"),
+        ("browser", "cdp_port", 80, "browser.cdp_port"),
+        ("browser", "click_timeout_s", 0, "browser.click_timeout_s"),
+        ("browser", "own_profile", "peut-etre", "browser.own_profile"),
     ],
 )
 def test_invalid_values(tmp_path: Path, section: str, key: str, value: object, loc: str) -> None:

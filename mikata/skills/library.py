@@ -54,6 +54,65 @@ def _keywords(text: str) -> set[str]:
     return {word for word in _fold(text).split() if len(word) >= 4 and word not in _STOP_WORDS}
 
 
+# -- rejeu local (phase 12e) ------------------------------------------------------------
+
+
+def compile_pattern(slots: str | None, params: list[str]) -> re.Pattern[str] | None:
+    """Compile la phrase généralisée en regex, ou None si elle est invalide.
+
+    « où est {query} » -> `^ où est (?P<query>.+?) $` sur du texte plié (accents ignorés).
+    Un `{param}` inconnu de `params`, un nom répété, un pattern vide, ou un pattern sans
+    mot littéral (il matcherait n'importe quoi) donnent None (repli sur le plan LLM).
+    """
+    if not slots:
+        return None
+    pieces: list[str] = []
+    has_literal = False
+    for part in re.split(r"(\{[a-z_]+\})", slots):
+        if not part:
+            continue
+        match = re.fullmatch(r"\{([a-z_]+)\}", part)
+        if match:
+            name = match.group(1)
+            if name not in params:
+                return None
+            pieces.append(f"(?P<{name}>.+?)")
+        else:
+            folded = _fold(part)
+            if folded:
+                pieces.append(re.escape(folded))
+                has_literal = has_literal or any(
+                    len(word) >= 3 and word not in _STOP_WORDS for word in folded.split()
+                )
+    if not pieces or not has_literal:
+        return None
+    try:
+        return re.compile(r"^\s*" + "".join(pieces) + r"\s*$")
+    except re.error:
+        return None
+
+
+def bind_slots(pattern: re.Pattern[str], phrase: str) -> dict[str, str] | None:
+    """Les valeurs des paramètres extraites de la phrase parlée, ou None si elle ne
+    correspond pas au pattern. Les captures sont des données, jamais des instructions."""
+    match = pattern.match(_fold(phrase))
+    if match is None:
+        return None
+    bindings = {name: value.strip() for name, value in match.groupdict().items()}
+    if not bindings:
+        return None
+    return bindings
+
+
+def _clean_step(step: dict[str, Any]) -> dict[str, Any]:
+    """La forme canonique d'une étape : outil + args, et les liaisons `outputs` (12e)."""
+    clean: dict[str, Any] = {"tool": str(step["tool"]), "args": dict(step.get("args") or {})}
+    outputs = step.get("outputs")
+    if isinstance(outputs, dict) and outputs:
+        clean["outputs"] = {str(key): str(value) for key, value in outputs.items()}
+    return clean
+
+
 @dataclass
 class Skill:
     """Une procédure apprise, rejouable."""
@@ -63,6 +122,7 @@ class Skill:
     trigger: str  # exemple de commande qui l'a créée (correspondance floue dessus)
     steps: list[dict[str, Any]]  # [{"tool": ..., "args": {...}}] avec trous {param}
     params: list[str] = field(default_factory=list)  # noms des trous (variables)
+    slots: str | None = None  # phrase généralisée, ex. « où est {query} » (phase 12e)
     verify: dict[str, Any] | None = None  # {"tool": ..., "args": {...}} ou None
     failures: int = 0
     enabled: bool = True
@@ -76,6 +136,7 @@ class Skill:
             "trigger": self.trigger,
             "steps": self.steps,
             "params": self.params,
+            "slots": self.slots,
             "verify": self.verify,
             "failures": self.failures,
             "enabled": self.enabled,
@@ -86,22 +147,20 @@ class Skill:
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Skill | None:
         try:
-            steps = [
-                {"tool": str(step["tool"]), "args": dict(step.get("args") or {})}
-                for step in raw["steps"]
-                if isinstance(step, dict)
-            ]
+            steps = [_clean_step(step) for step in raw["steps"] if isinstance(step, dict)]
             if not steps:
                 return None
             verify = raw.get("verify")
             if verify is not None and not isinstance(verify, dict):
                 verify = None
+            slots = raw.get("slots")
             return cls(
                 name=str(raw["name"]),
                 description=str(raw["description"]),
                 trigger=str(raw["trigger"]),
                 steps=steps,
                 params=[str(p) for p in raw.get("params") or []],
+                slots=str(slots) if slots else None,
                 verify=verify if isinstance(verify, dict) else None,
                 failures=int(raw.get("failures") or 0),
                 enabled=bool(raw.get("enabled", True)),
@@ -177,17 +236,25 @@ class SkillLibrary:
         return None
 
     def match(self, command: str, cutoff: float) -> Skill | None:
-        """Le savoir-faire dont la description ou l'exemple ressemble le plus à la commande.
+        """Le savoir-faire qui correspond à la commande.
 
-        En plus du score flou, il faut un mot significatif commun (≥ 4 lettres) : sans
-        cela, deux phrases courtes sans rapport se ressemblent trop, et on rejouerait une
-        procédure qui n'a rien à voir.
+        D'abord les patterns de slots (phase 12e) : si la phrase colle exactement au
+        pattern généralisé d'un savoir-faire, c'est lui — déterministe, même sans mot
+        commun avec la phrase d'origine. Sinon, correspondance floue sur l'exemple et la
+        description, avec un mot significatif commun (≥ 4 lettres) : sans cela, deux
+        phrases courtes sans rapport se ressemblent trop, et on rejouerait une procédure
+        qui n'a rien à voir.
         """
         from rapidfuzz import fuzz
 
         if not self._skills:
             return None
         wanted = _fold(command)
+        for skill in self._skills:
+            if skill.enabled and skill.slots:
+                pattern = compile_pattern(skill.slots, skill.params)
+                if pattern is not None and bind_slots(pattern, wanted) is not None:
+                    return skill
         best_score = cutoff
         best: Skill | None = None
         for skill in self._skills:
@@ -207,6 +274,7 @@ class SkillLibrary:
         steps: list[dict[str, Any]],
         params: list[str] | None = None,
         verify: dict[str, Any] | None = None,
+        slots: str | None = None,
     ) -> Skill | None:
         """Mémorise une procédure (validée), ou None si elle est déjà connue / invalide."""
         from mikata.tools.registry import registered_tools
@@ -215,9 +283,7 @@ class SkillLibrary:
         description = " ".join(description.split())[:_DESC_MAX]
         trigger = " ".join(trigger.split())[:_TRIGGER_MAX]
         known = registered_tools()
-        clean_steps = [
-            {"tool": str(step["tool"]), "args": dict(step.get("args") or {})} for step in steps
-        ]
+        clean_steps = [_clean_step(step) for step in steps]
         if not NAME_RE.match(name):
             logger.warning("Savoir-faire refusé : nom invalide « {} ».", name)
             return None
@@ -230,13 +296,17 @@ class SkillLibrary:
             return None
         if any(_fold(skill.description) == _fold(description) for skill in self._skills):
             return None  # déjà connu
-        params = params or []
+        params = list(params or [])
+        slots = " ".join(slots.split()) if slots else None
+        if slots is not None and compile_pattern(slots, params) is None:
+            slots = None  # pattern invalide : plan LLM seulement (dégradation propre)
         skill = Skill(
             name=name,
             description=description,
             trigger=trigger,
             steps=clean_steps,
-            params=list(params),
+            params=params,
+            slots=slots,
             verify=verify if isinstance(verify, dict) else None,
             added=self._clock().isoformat(timespec="seconds"),
         )

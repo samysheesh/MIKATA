@@ -77,9 +77,7 @@ def test_tool_ok_uses_the_last_action_of_that_tool() -> None:
 def test_tool_ok_with_a_channel_name_falls_back_to_the_last_action() -> None:
     """13e : le modèle rapide écrit parfois un nom de canal (« control.system ») ; on
     vérifie alors que la dernière action du sous-but a réussi."""
-    actions = (
-        ActionRecord(tool="set_volume", args={}, ok=True, result="x", duration_s=0.1),
-    )
+    actions = (ActionRecord(tool="set_volume", args={}, ok=True, result="x", duration_s=0.1),)
     assert _check(ToolSucceeded(tool="control.system"), actions=actions) == (True, True)
     failed = (ActionRecord(tool="set_volume", args={}, ok=False, result="x", duration_s=0.1),)
     assert _check(ToolSucceeded(tool="schedule.timer"), actions=failed) == (False, True)

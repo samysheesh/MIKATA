@@ -84,6 +84,7 @@ PHASE_12B_TOOLS = {  # navigateur piloté (protocole DevTools)
     "browser_click",
     "browser_type",
     "browser_back",
+    "browser_close",  # phase 12f : ferme le navigateur de travail
 }
 PHASE_12C_TOOLS = {  # savoir-faire appris (mémoire procédurale)
     "list_skills",
@@ -123,6 +124,7 @@ TERMINAL = {
     "browser_click",
     "browser_type",
     "browser_back",
+    "browser_close",
     "remember_skill",
     "forget_skill",
     "open_in_explorer",

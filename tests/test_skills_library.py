@@ -133,6 +133,56 @@ def test_plan_text_describes_steps_and_params(tmp_path: Path) -> None:
     assert "browser_open" in plan and "{query}" in plan and "Remplis les trous" in plan
 
 
+# -- phase 12e : pattern de slots et extraction locale ---------------------------------
+
+
+def test_compile_and_bind_slots(tmp_path: Path) -> None:
+    from mikata.skills.library import bind_slots, compile_pattern
+
+    pattern = compile_pattern("où est {query}", ["query"])
+    assert pattern is not None
+    bindings = bind_slots(pattern, "Où est League of Legends ?")
+    assert bindings == {"query": "league of legends"}
+    # Insensible aux accents et à la ponctuation.
+    assert bind_slots(pattern, "ou est electricite") == {"query": "electricite"}
+    # Phrase qui ne colle pas au pattern.
+    assert bind_slots(pattern, "ouvre league of legends dans l'explorateur") is None
+
+
+def test_compile_pattern_rejects_unknown_or_empty(tmp_path: Path) -> None:
+    from mikata.skills.library import compile_pattern
+
+    assert compile_pattern(None, ["query"]) is None
+    assert compile_pattern("où est {query}", []) is None  # paramètre non déclaré
+    assert compile_pattern("où est {x} et {x}", ["x"]) is None  # nom répété
+    assert compile_pattern("{query}", ["query"]) is None  # sans mot littéral : trop générique
+
+
+def test_slots_roundtrip_and_invalid_slots_degrade(tmp_path: Path) -> None:
+    library = _library(tmp_path)
+    skill = library.learn(
+        "trouver_dossier",
+        "trouver un dossier et l'ouvrir",
+        "où est cyberpunk 2077",
+        [{"tool": "find_path", "args": {"name": "{query}"}}],
+        params=["query"],
+        slots="où est {query}",
+    )
+    assert skill is not None and skill.slots == "où est {query}"
+    # Un pattern invalide est jeté silencieusement : plan LLM seulement.
+    bad = library.learn(
+        "trouver_dossier_2",
+        "trouver un fichier et l'ouvrir",
+        "où est x",
+        [{"tool": "find_path", "args": {"name": "{query}"}}],
+        params=["query"],
+        slots="où est {inconnu}",
+    )
+    assert bad is not None and bad.slots is None
+    reloaded = SkillLibrary(tmp_path / "skills.json", 30, 3)
+    assert reloaded.all()[0].slots == "où est {query}"
+
+
 def test_file_roundtrip_keeps_unknown_fields_out(tmp_path: Path) -> None:
     library = _library(tmp_path)
     _learn(library)
@@ -143,6 +193,7 @@ def test_file_roundtrip_keeps_unknown_fields_out(tmp_path: Path) -> None:
         "trigger",
         "steps",
         "params",
+        "slots",
         "verify",
         "failures",
         "enabled",

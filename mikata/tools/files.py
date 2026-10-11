@@ -316,7 +316,10 @@ class FindPath(BaseTool[FindPathParams]):
             folder = _absolute(args.folder).replace("\\", "/").rstrip("/") + "/"
             results = [r for r in results if r["path"].replace("\\", "/").startswith(folder)]
         if not results:
+            self.ctx.publish_data({"paths": [], "best": None, "count": 0})
             return f"Aucun fichier ne correspond à « {args.name} » dans l'index."
+        paths = [entry["path"] for entry in results]
+        self.ctx.publish_data({"paths": paths, "best": paths[0], "count": len(paths)})
         lines = [f"Trouvé dans l'index ({min(len(results), limit)} premiers) :"]
         lines.extend(f"- {_format_entry(entry)}" for entry in results[:limit])
         return "\n".join(lines)
@@ -340,7 +343,15 @@ class ListFolder(BaseTool[ListFolderParams]):
         folder = _absolute(args.path)
         entries = index.list_folder(folder, 50)
         if not entries:
+            self.ctx.publish_data({"paths": [], "best": None, "count": 0})
             return f"Dossier vide ou introuvable : {folder}"
+        self.ctx.publish_data(
+            {
+                "paths": [f"{folder}{entry['name']}" for entry in entries],
+                "best": folder,
+                "count": len(entries),
+            }
+        )
         lines = [f"{folder} ({len(entries)} entrées) :"]
         lines.extend(
             f"- {entry['name']}"
@@ -367,4 +378,5 @@ class OpenInExplorer(BaseTool[OpenInExplorerParams]):
         is_dir = await self.ctx.run_blocking(os.path.isdir, path)
         # open_folder : explorer.exe /select sous Windows, open -R (Finder) sous macOS.
         await self.ctx.run_blocking(self.ctx.require_desktop().open_folder, path, not is_dir)
+        self.ctx.publish_data({"path": path, "is_dir": is_dir})
         return f"Explorateur ouvert sur « {path} »."

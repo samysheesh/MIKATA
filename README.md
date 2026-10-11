@@ -2296,15 +2296,17 @@ Comment ça marche :
   (bibliothèque `websockets`, pas de Playwright ni de moteur téléchargé). Le JavaScript
   envoyé au navigateur est fixe et écrit par nous, jamais fourni par le LLM.
 - **Attache** (`mikata/browser/controller.py`) : le port DevTools répond → on s'y attache ;
-  Brave fermé → MIKATA le lance elle-même avec `--remote-debugging-port` (profil normal,
-  identifiants conservés) ; Brave déjà ouvert **sans** le port → refus poli avec la marche
-  à suivre (jamais de fermeture automatique de ton navigateur).
+  sinon, MIKATA lance **son propre profil Brave** (phase 12f : `--user-data-dir` sous
+  `data/brave_profile`, fenêtre séparée **minimisée en arrière-plan**) — ton Brave, tes
+  onglets et ton profil ne sont jamais touchés ni fermés. Mode legacy (`browser.own_profile:
+  false`) : Brave fermé → lancé avec le port (profil normal, identifiants conservés) ;
+  Brave déjà ouvert **sans** le port → refus poli avec la marche à suivre.
 - **Garde-fou** (`check_navigation`, `check_download`) : seuls http/https s'ouvrent
   (`file:`, `javascript:`, `data:`... refusés) ; un clic qui ressemble à un téléchargement
   demande « Tu confirmes ? » ; le texte d'un champ passe le filtre de `type_text` ; une
   page lue marque le tour (`confirm_after_web` s'applique).
 - **Config** : section `browser` (`enabled`, `cdp_port`, `fallback_uia`,
-  `page_text_max_chars`, `click_timeout_s`).
+  `page_text_max_chars`, `click_timeout_s`, `own_profile`, `profile_dir`).
 
 ### 1. Récupérer la branche, installer
 
@@ -2347,18 +2349,21 @@ puis :
 uv run python -m mikata
 ```
 
-Dis « MIKATA, lance le dernier opening de black clover ». Attendu : MIKATA lance Brave
-(avec le port de contrôle), va sur YouTube, tape la recherche, lit les résultats, clique le
-bon, et la vidéo se lance — en quelques étapes, chaque outil dans `data\actions.log`.
+Dis « MIKATA, lance le dernier opening de black clover ». Attendu : MIKATA lance **sa**
+fenêtre Brave (profil `data\brave_profile`, minimisée en arrière-plan), va sur YouTube,
+tape la recherche, lit les résultats, clique le bon, et la vidéo se lance — en quelques
+étapes, chaque outil dans `data\actions.log`.
 
 Même chose avec « MIKATA, quelle est la météo à Paris sur google ? » (navigation, lecture
 de page) et « MIKATA, reviens à la page précédente » (`browser_back`).
 
-### 4. Brave déjà ouvert
+### 4. Brave déjà ouvert (phase 12f)
 
-Rouvre Brave à la main (sans le port), puis « MIKATA, lis la page du navigateur ».
-Attendu : refus poli — « Brave est ouvert sans son port de contrôle : ferme complètement
-Brave et redemande ». Rien n'est jamais fermé tout seul.
+Ouvre **ton** Brave à la main avec tes onglets, puis « MIKATA, lance le dernier opening de
+one piece ». Attendu : ça marche quand même — MIKATA travaille dans sa propre fenêtre
+Brave (séparée, minimisée), tes onglets et ton profil ne bougent pas d'un iota, rien n'est
+jamais fermé tout seul. (Mode legacy : `browser.own_profile: false` → refus poli « Brave
+est ouvert sans son port de contrôle ».)
 
 ### 5. Non-régression
 
@@ -2576,6 +2581,72 @@ Attendu : tout en `passed`, config valide, banc de phrases 28/28 (dont « où es
 2077 »), latence et CPU inchangés (l'index tourne sur son thread dédié, la base est en
 WAL).
 
+## Phase 12e — vérification sur le PC Windows
+
+Rejeu local des savoir-faire paramétrés : la première commande apprend, les suivantes
+sont **instantanées**.
+
+Comment ça marche :
+
+- **Slots** : à l'apprentissage, la commande est généralisée (« où est cyberpunk 2077 »
+  → pattern `où est {query}`). À la commande suivante, si la phrase colle au pattern, les
+  mots prononcés remplissent les trous **localement** (regex sur la phrase sans accents) —
+  zéro appel LLM.
+- **Liaisons entre étapes** (`outputs`) : `find_path` publie un résultat structuré
+  (`ToolResult.data`, jamais envoyé au LLM) ; l'étape suivante reçoit `{folder_path}` lié
+  à « best ». « Où est league of legends » → `find_path("league of legends")` (~100 ms) →
+  `open_in_explorer` (~200 ms) → « C'est fait », **< 1 s**.
+- **Filets** : le nom d'outil et les arguments viennent des étapes stockées, jamais des
+  mots prononcés (les captures sont des données) ; chaque étape passe par le registre
+  (garde-fous, journal, délais identiques) ; un paramètre non lié ou une liaison
+  impossible → repli sur le plan LLM **sans pénaliser** la procédure ; un outil en échec
+  → repli LLM + compteur d'échecs (12c) ; phrase hors pattern → plan LLM (12c) ;
+  `skills.local_replay: false` coupe le rejeu local.
+
+### 1. Récupérer la branche, installer
+
+```powershell
+git fetch origin
+git checkout phase-12e-replay
+git pull
+uv sync
+```
+
+Si tu as modifié `config.yaml` en local, garde tes réglages (une ligne `local_replay`
+s'ajoute dans la section `skills:`) :
+
+```powershell
+git stash
+git pull
+git stash pop
+Select-String -Path config.yaml -Pattern "local_replay"
+```
+
+### 2. Lint et tests
+
+```powershell
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
+uv run pytest tests\test_skills_library.py tests\test_skills_agent.py -v
+```
+
+### 3. Vérification à la voix
+
+1. « MIKATA, où est cyberpunk 2077 » (1re fois : LLM, ~3-5 s ; le savoir-faire est
+   appris en arrière-plan).
+2. Regarde `data\skills\skills.json` : `"slots": "où est {query}"` et l'étape 1 avec
+   `"outputs": {"folder_path": "best"}`.
+3. « MIKATA, où est league of legends » → log `Savoir-faire « … » : rejoué en local
+   (…, 0 appel LLM)`, réponse < 1 s, la bonne fenêtre s'ouvre.
+4. « MIKATA, où est elden ring » (jamais demandé) → rejeu local aussi.
+
+### 4. Non-régression
+
+```powershell
+uv run pytest tests\test_guard_criteria.py tests\test_voice_stop.py -v
+uv run python -m mikata --check-config
+```
 ## Phase 13a — fondations de l'agent v2
 
 Première brique de l'agent v2 (conception : `docs/AGENT_V2.md`, implémentation :

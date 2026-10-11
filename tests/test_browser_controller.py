@@ -175,3 +175,139 @@ def test_controller_retries_when_the_first_target_dies(monkeypatch: Any, tmp_pat
                 await controller.aclose()
 
     asyncio.run(run())
+
+
+# -- phase 12f : profil de travail dédié, en arrière-plan --------------------------------
+
+
+class BraveOpen:
+    """Un Brave déjà ouvert (sans port de contrôle)."""
+
+    def windows(self) -> list[Any]:
+        return [type("W", (), {"process": "chrome", "title": "Brave"})()]
+
+
+def test_own_profile_launches_a_minimized_dedicated_profile(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    """Port muet : MIKATA lance SON profil (user-data-dir sous data/), fenêtre minimisée —
+    jamais le Brave de l'utilisateur."""
+    import sys as _sys
+
+    from mikata.browser import controller as controller_module
+
+    port = _free_port()
+    server = FakeCdpServer()
+    launches: list[dict[str, Any]] = []
+    calls = {"n": 0}
+
+    def fake_targets(port_arg: int, timeout_s: float = 3) -> list[Target]:
+        calls["n"] += 1
+        return [] if calls["n"] == 1 else [_target(port)]
+
+    async def async_fake_targets(port_arg: int, timeout_s: float = 3) -> list[Target]:
+        return fake_targets(port_arg, timeout_s)
+
+    def fake_popen(argv: list[str], **kwargs: Any) -> None:
+        launches.append({"argv": argv, **kwargs})
+
+    minimized = {"n": 0}
+    monkeypatch.setattr(
+        "mikata.browser.controller.BrowserController._minimize_work_window",
+        lambda self: minimized.__setitem__("n", minimized["n"] + 1),
+    )
+    monkeypatch.setattr("mikata.browser.controller.list_targets", async_fake_targets)
+    monkeypatch.setattr("mikata.browser.controller.subprocess.Popen", fake_popen)
+
+    async def run() -> None:
+        async with ws_serve(server.handler, "127.0.0.1", port):
+            controller = BrowserController(_config(tmp_path), NoWindows())
+            try:
+                assert "Page ouverte" in await controller.open_url("https://x")
+            finally:
+                await controller.aclose()
+
+    asyncio.run(run())
+    assert len(launches) == 1
+    assert any(
+        arg.startswith("--user-data-dir=") and "brave_profile" in arg for arg in launches[0]["argv"]
+    )
+    assert "--autoplay-policy=no-user-gesture-required" in launches[0]["argv"]
+    assert "--disable-backgrounding-occluded-windows" in launches[0]["argv"]
+    assert minimized["n"] >= 2  # re-cachée à chaque commande (entrée + après attache)
+    if _sys.platform == "win32":
+        startupinfo = launches[0]["startupinfo"]
+        assert startupinfo is not None
+        assert startupinfo.dwFlags & controller_module.subprocess.STARTF_USESHOWWINDOW
+        assert startupinfo.wShowWindow == 0  # SW_HIDE : jamais visible
+
+
+def test_own_profile_attaches_without_relaunching(monkeypatch: Any, tmp_path: Path) -> None:
+    """Le port répond déjà (profil de travail vivant) : on s'attache, zéro lancement."""
+    port = _free_port()
+    server = FakeCdpServer()
+    launched = {"n": 0}
+
+    def fake_targets(port_arg: int, timeout_s: float = 3) -> list[Target]:
+        return [_target(port)]
+
+    async def async_fake_targets(port_arg: int, timeout_s: float = 3) -> list[Target]:
+        return fake_targets(port_arg, timeout_s)
+
+    def fake_popen(argv: list[str], **kwargs: Any) -> None:
+        launched["n"] += 1
+
+    monkeypatch.setattr(
+        "mikata.browser.controller.BrowserController._minimize_work_window",
+        lambda self: None,
+    )
+    monkeypatch.setattr("mikata.browser.controller.list_targets", async_fake_targets)
+    monkeypatch.setattr("mikata.browser.controller.subprocess.Popen", fake_popen)
+
+    async def run() -> None:
+        async with ws_serve(server.handler, "127.0.0.1", port):
+            controller = BrowserController(_config(tmp_path), NoWindows())
+            try:
+                assert "Page ouverte" in await controller.open_url("https://x")
+            finally:
+                await controller.aclose()
+
+    asyncio.run(run())
+    assert launched["n"] == 0
+
+
+def test_legacy_mode_still_refuses_politely(monkeypatch: Any, tmp_path: Path) -> None:
+    """own_profile: false garde l'ancien comportement : refus poli, jamais de fermeture."""
+    from mikata.tools.base import ToolError
+
+    config = _config(tmp_path)
+    config = config.model_copy(
+        update={"browser": config.browser.model_copy(update={"own_profile": False})}
+    )
+    launched = {"n": 0}
+
+    def fake_targets(port_arg: int, timeout_s: float = 3) -> list[Target]:
+        return []
+
+    async def async_fake_targets(port_arg: int, timeout_s: float = 3) -> list[Target]:
+        return fake_targets(port_arg, timeout_s)
+
+    def fake_popen(argv: list[str], **kwargs: Any) -> None:
+        launched["n"] += 1
+
+    monkeypatch.setattr("mikata.browser.controller.list_targets", async_fake_targets)
+    monkeypatch.setattr("mikata.browser.controller.subprocess.Popen", fake_popen)
+
+    async def run() -> None:
+        controller = BrowserController(config, BraveOpen())
+        try:
+            try:
+                await controller.open_url("https://x")
+                raise AssertionError("un refus était attendu")
+            except ToolError as exc:
+                assert "Brave est ouvert sans son port de contrôle" in str(exc)
+        finally:
+            await controller.aclose()
+
+    asyncio.run(run())
+    assert launched["n"] == 0  # jamais de lancement ni de fermeture forcée

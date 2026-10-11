@@ -41,6 +41,7 @@ from mikata.llm.base import Done, LLMClient, TextDelta, ToolCallReq, Usage
 from mikata.llm.prompts import active_window_title, build_messages, dynamic_context
 from mikata.llm.reasoning import at_least, detect_reasoning
 from mikata.skills.distill import distill
+from mikata.skills.library import bind_slots, compile_pattern
 from mikata.tools.base import ToolError, TurnIO, turn_context
 from mikata.tts.cache import PHRASES
 from mikata.tts.normalize import FragmentSplitter
@@ -156,6 +157,40 @@ def _with_reasoning(messages: list[dict[str, Any]], effort: str | None) -> list[
             message = {k: v for k, v in message.items() if k != "reasoning_content"}
         out.append(message)
     return out
+
+
+# -- rejeu local des savoir-faire (phase 12e) ------------------------------------------
+
+
+def _fill_args(args: dict[str, Any], bindings: dict[str, Any]) -> dict[str, Any] | None:
+    """Remplace les `{param}` des arguments ; None si un paramètre reste non lié."""
+    filled: dict[str, Any] = {}
+    for key, value in args.items():
+        if isinstance(value, str):
+            for name in re.findall(r"\{([a-z_]+)\}", value):
+                if name not in bindings:
+                    return None
+                value = value.replace("{" + name + "}", str(bindings[name]))
+        filled[key] = value
+    return filled
+
+
+def _pick(data: dict[str, Any] | None, path: str) -> Any:
+    """Lit un scalaire dans le payload structuré d'un résultat (« best », « paths.0 »)."""
+    if data is None:
+        return None
+    value: Any = data
+    for part in path.split("."):
+        if isinstance(value, dict):
+            value = value.get(part)
+        elif isinstance(value, list) and part.isdigit():
+            index = int(part)
+            value = value[index] if index < len(value) else None
+        else:
+            return None
+        if value is None:
+            return None
+    return value
 
 
 HISTORY_FILE = "data/history.json"
@@ -407,28 +442,51 @@ class Agent:
         steps: list[dict[str, Any]] = []  # appels d'outils gardés dans l'historique
         # Savoir-faire (phase 12c) : procédure déjà apprise.
         if matched is not None and matched.enabled and self.tools is not None:
+
+            async def finish(replayed: bool, local: bool = False) -> bool:
+                """Conclut un rejeu réussi ; False si le rejeu a échoué (les étapes déjà
+                exécutées restent dans messages/steps : la boucle LLM reprend de là)."""
+                spoken.extend(turn.spoken)
+                turn.spoken.clear()
+                if not replayed:
+                    return False
+                result.answer = " ".join(spoken).strip()
+                if not result.answer:
+                    self._say_phrase(speech, "done")
+                    result.answer = PHRASES["done"]
+                self.memory.add(command, result.answer, steps)
+                self._schedule_summary()
+                logger.info(
+                    "Savoir-faire « {} » : rejoué{} ({} étape(s), 0 appel LLM).",
+                    matched.name,
+                    " en local" if local else "",
+                    len(matched.steps),
+                )
+                return True
+
             if not matched.params:
                 replayed = await self._replay_skill(
                     matched, result, turn, messages, steps, on_phase
                 )
-                spoken.extend(turn.spoken)
-                turn.spoken.clear()
-                if replayed:
-                    result.answer = " ".join(spoken).strip()
-                    if not result.answer:
-                        self._say_phrase(speech, "done")
-                        result.answer = PHRASES["done"]
-                    self.memory.add(command, result.answer, steps)
-                    self._schedule_summary()
-                    logger.info(
-                        "Savoir-faire « {} » : rejoué ({} étape(s), 0 appel LLM).",
-                        matched.name,
-                        len(matched.steps),
-                    )
+                if await finish(replayed):
                     return
                 # Échec au rejeu : les étapes exécutées sont déjà dans messages/steps,
                 # la boucle LLM reprend de là (auto-guérison).
             else:
+                # Phase 12e : les paramètres se remplissent-ils sans LLM (mots prononcés +
+                # résultats structurés des étapes) ? Sinon, plan donné au LLM (12c).
+                bindings = None
+                if self.config.skills.local_replay:
+                    pattern = compile_pattern(matched.slots, matched.params)
+                    if pattern is not None:
+                        bindings = bind_slots(pattern, command)
+                if bindings is not None:
+                    replayed = await self._replay_skill(
+                        matched, result, turn, messages, steps, on_phase, bindings
+                    )
+                    if await finish(replayed, local=True):
+                        return
+                    # Rejeu local en échec : auto-guérison par le plan + la boucle LLM.
                 messages.insert(
                     -1,
                     {
@@ -505,23 +563,28 @@ class Agent:
         messages: list[dict[str, Any]],
         steps: list[dict[str, Any]],
         on_phase: Callable[[str], None] | None,
+        bindings: dict[str, Any] | None = None,
     ) -> bool:
         """Rejoue les étapes d'un savoir-faire sans appel LLM ; True si tout a réussi.
 
-        Chaque étape passe par le registre (validation, délai, garde-fou, journal). En cas
-        d'échec, les étapes déjà exécutées restent dans `messages` et `steps` : la boucle
-        LLM reprend de là, et l'échec est compté sur le savoir-faire.
+        Chaque étape passe par le registre (validation, délai, garde-fou, journal). Les
+        `{param}` sont remplis depuis `bindings` (phase 12e : mots prononcés + `outputs`
+        des étapes précédentes). Un paramètre non lié, ou une liaison impossible, rend
+        False **sans pénaliser** le savoir-faire : ce n'est pas un échec de la procédure.
+        Un outil qui échoue, lui, est compté. En cas d'échec, les étapes déjà exécutées
+        restent dans `messages` et `steps` : la boucle LLM reprend de là.
         """
         assert self.tools is not None
         cfg = self.config.skills
         if len(skill.steps) > cfg.max_steps:
             self.skills.record_failure(skill.name)  # type: ignore[union-attr]
             return False
-        calls = [
-            ToolCallReq(f"skill_{i}", step["tool"], step["args"])
-            for i, step in enumerate(skill.steps)
-        ]
-        for call in calls:
+        bindings = dict(bindings or {})
+        for index, step in enumerate(skill.steps):
+            args = _fill_args(step["args"], bindings)
+            if args is None:
+                return False  # paramètre non lié : repli LLM, sans pénalité
+            call = ToolCallReq(f"skill_{index}", step["tool"], args)
             result.rounds += 1
             result.tool_calls.append(call)
             if on_phase is not None:
@@ -556,15 +619,27 @@ class Agent:
             if not res.ok:
                 self.skills.record_failure(skill.name)  # type: ignore[union-attr]
                 return False
+            for param, path in (step.get("outputs") or {}).items():
+                value = _pick(res.data, path)
+                if value is None:
+                    return False  # liaison impossible : repli LLM, sans pénalité
+                bindings[param] = value
         if skill.verify is not None:
-            vcall = ToolCallReq("skill_verify", skill.verify["tool"], skill.verify.get("args", {}))
-            with turn_context(turn):
-                vres = await self.tools.execute(vcall)
-            result.tool_results.append(vres)
-            result.tool_calls.append(vcall)
-            if not vres.ok:
-                self.skills.record_failure(skill.name)  # type: ignore[union-attr]
-                return False
+            vargs = _fill_args(skill.verify.get("args", {}), bindings)
+            if vargs is None:
+                logger.debug(
+                    "Savoir-faire « {} » : vérification sautée (paramètre non lié).",
+                    skill.name,
+                )
+            else:
+                vcall = ToolCallReq("skill_verify", skill.verify["tool"], vargs)
+                with turn_context(turn):
+                    vres = await self.tools.execute(vcall)
+                result.tool_results.append(vres)
+                result.tool_calls.append(vcall)
+                if not vres.ok:
+                    self.skills.record_failure(skill.name)  # type: ignore[union-attr]
+                    return False
         self.skills.touch(skill.name)  # type: ignore[union-attr]
         result.shortcut = True
         return True

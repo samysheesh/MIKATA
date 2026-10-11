@@ -327,8 +327,12 @@ class FakeBrowser:
         return f"Texte écrit dans le champ « {field} »."
 
     async def back(self) -> str:
-        await self._record("back")
+        self.log.append(("back", ()))
         return "Page précédente."
+
+    async def quit(self) -> str:
+        self.log.append(("quit", ()))
+        return "Navigateur de travail fermé."
 
     async def aclose(self) -> None:
         pass

@@ -452,6 +452,13 @@ class FileIndex:
                 conn.execute("INSERT INTO files_fts(files_fts) VALUES ('rebuild')")
         built = conn.execute("SELECT value FROM meta WHERE key='built_at'").fetchone()
         if built is not None:
+            # Base déjà construite : prête immédiatement, sans réimport (le flag
+            # `ready` doit être levé ici, sinon l'index répond « se construit »).
+            self._count = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+            self._built_at = built[0]
+            self._source = "direct" if usn.can_read_volumes() else "helper"
+            self._ready = True
+            logger.info("Index des fichiers : {} entrées (base existante).", self._count)
             return
         # Source directe (MIKATA en administrateur) ou fichiers du helper élevé.
         # Backend « spotlight » : mdfind + FSEvents/watchdog, jamais NTFS.

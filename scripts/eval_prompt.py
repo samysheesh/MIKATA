@@ -358,6 +358,10 @@ class DryRunBrowser:
         self.actions.append("page précédente")
         return "Page précédente."
 
+    async def quit(self) -> str:
+        self.actions.append("fermer le navigateur de travail")
+        return "Navigateur de travail fermé."
+
     async def aclose(self) -> None:
         pass
 

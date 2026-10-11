@@ -72,9 +72,12 @@ web:
 browser:                           # ajout phase 12b : navigateur piloté (protocole DevTools)
   enabled: true                    # outils browser_* (Brave lancé par MIKATA si fermé)
   cdp_port: 9222                   # port DevTools de Brave
-  fallback_uia: true               # Brave ouvert sans le port : suggérer les outils UIA
+  fallback_uia: true               # mode legacy : Brave ouvert sans le port -> outils UIA
   page_text_max_chars: 4000        # texte lu par browser_read, tronqué
   click_timeout_s: 5               # délai d'une commande DevTools
+  own_profile: true                # phase 12f : MIKATA navigue dans son propre profil Brave
+  profile_dir: data/brave_profile  # ... fenêtre séparée et minimisée, ton Brave intouché
+  window_hidden: true              # fenêtre créée cachée (false : minimisée, pour se connecter)
 skills:                            # ajout phase 12c : savoir-faire appris (data/skills/skills.json)
   enabled: true                    # procédures mémorisées et rejouées
   max_skills: 30                   # au plus N procédures (les moins utilisées sortent)
@@ -83,6 +86,7 @@ skills:                            # ajout phase 12c : savoir-faire appris (data
   auto_learn_min_rounds: 2         # ... à partir de N étapes d'outils
   max_failures: 3                  # échecs au rejeu avant désactivation
   max_steps: 10                    # étapes rejouées au plus
+  local_replay: true               # phase 12e : rejeu local instantané des procédures paramétrées
 files_index:                       # ajout phase 12d : index local des fichiers (MFT + journal USN)
   enabled: true                    # find_path / list_folder / open_in_explorer
   db: data/files_index.db          # base SQLite (WAL), jamais envoyée au LLM
@@ -112,7 +116,7 @@ tts:
     timeout_s: 10
     cache_max_mb: 300              # phrases gardées dans data/tts_cache/elevenlabs (jamais refacturées)
 agent:
-  follow_up_s: 6                   # fenêtre de suivi sans mot d'activation (0 = désactivée)
+  follow_up_s: 3                   # fenêtre de suivi sans mot d'activation (0 = désactivée)
   follow_up_min_confidence: 0.2    # suivi : transcription moins fiable (0 à 1) -> ignorée, bip
   follow_up_use_llm_gate: true     # suivi : le LLM dit si la phrase s'adresse à MIKATA
   session_reset_min: 10
@@ -148,7 +152,7 @@ logging:                           # ajout phase 0 (§10 « Logs »)
 ui:                                # ajout phase 8 : mascotte et réglages (processus à part)
   enabled: true                    # canal local vers l'interface (false : MIKATA seul, comme avant)
   mascot: true                     # lancer la mascotte au démarrage de MIKATA
-  skin: femme                      # dossier assets/mascot/<skin>/ ; default : Mika, dessinée en code
+  skin: gars                       # dossier assets/mascot/<skin>/ ; default : Mika, dessinée en code
   bubble_s: 8                      # la bulle reste N s après la dernière phrase
   profiles:                        # ajout phase 11 : skin -> voix (piper | kokoro | elevenlabs), à chaud
     default: {voice: kokoro}       # Mika : voix locale et gratuite

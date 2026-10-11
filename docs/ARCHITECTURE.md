@@ -207,8 +207,9 @@ Bonne nouvelle côté matériel : avec un casque fermé, le son du jeu ne revien
 - **ui** : `show_text` (fenêtre avec texte long), `clipboard_read`, `clipboard_write`.
 - **memory** : `remember`, `forget`.
 - **uia** (phase 12a) : `uia_window` (contrôles d'une fenêtre : noms, types), `uia_read` (texte d'un contrôle ou de la fenêtre), `uia_click` ★ / `uia_set_text` ★ (par nom de contrôle, vérifiés par `check_ui_action` et `check_typed_text`), `uia_state` (état ambiant en cache : présence vocale Discord...). Implémentation : `mikata/uia/controller.py` — `UiController` (signature publique inchangée) choisit une fois à la construction le moteur selon `config.uia.backend` : bibliothèque `uiautomation` (comtypes, Apache-2.0) sous Windows, `macuiauto` (API AX) sous macOS ; fenêtres trouvées par `tools/desktop.py`, appels sur le thread COM dédié des outils. L'état ambiant est relu par un thread à part toutes les `uia.state_poll_s` secondes, mis en pause pendant qu'un outil agit, gardé en RAM seulement (jamais loggé). `mikata/uia/client.py` s'abonne aux événements d'accessibilité au démarrage : `UiaClientsAreListening()` devient vrai et les applications Chromium/Electron exposent leur arbre complet sans drapeau de lancement.
-- **browser** (phase 12b) : `browser_tabs`, `browser_open` (il ne conclut pas la commande : une tâche web continue par `browser_read` puis `browser_click`), `browser_read` (titre, texte, liens, boutons de la page), `browser_click` ★ / `browser_type` ★ (par texte visible / libellé, vérifiés par `check_ui_action`, `check_download` et `check_typed_text`), `browser_back` ★. Implémentation : `mikata/browser/cdp.py` (client DevTools sur WebSocket, bibliothèque `websockets`, testé sous Linux contre un faux serveur) et `mikata/browser/controller.py` (attache paresseuse : port ouvert → attaché ; Brave fermé → lancé avec `--remote-debugging-port` ; Brave ouvert sans le port → refus poli, jamais de fermeture automatique). Le JavaScript envoyé au navigateur est fixe, jamais fourni par le LLM.
+- **browser** (phase 12b) : `browser_tabs`, `browser_open` (il ne conclut pas la commande : une tâche web continue par `browser_read` puis `browser_click`), `browser_read` (titre, texte, liens, boutons de la page), `browser_click` ★ / `browser_type` ★ (par texte visible / libellé, vérifiés par `check_ui_action`, `check_download` et `check_typed_text`), `browser_back` ★. Implémentation : `mikata/browser/cdp.py` (client DevTools sur WebSocket, bibliothèque `websockets`, testé sous Linux contre un faux serveur) et `mikata/browser/controller.py`. Phase 12f : MIKATA navigue dans **son propre profil Brave** (`--user-data-dir` sous `data/brave_profile/`, fenêtre séparée minimisée en arrière-plan, autoplay autorisé) — le Brave de l'utilisateur n'est jamais touché ni fermé ; mode legacy (`browser.own_profile: false`) : attache paresseuse (port ouvert → attaché ; Brave fermé → lancé avec `--remote-debugging-port` ; Brave ouvert sans le port → refus poli, jamais de fermeture automatique). Le JavaScript envoyé au navigateur est fixe, jamais fourni par le LLM.
 - **skills** (phase 12c) : `list_skills`, `remember_skill` ★, `forget_skill` ★. Mémoire procédurale (`mikata/skills/library.py`, `data/skills/skills.json`) : une commande multi-étapes réussie est distillée (`mikata/skills/distill.py`, un appel LLM en arrière-plan) en procédure ; la commande suivante qui ressemble la rejoue sans appel LLM (étapes rejouées via le registre : garde-fou compris), ou la reçoit comme plan si elle a des paramètres `{x}` à remplir. Échec au rejeu → repli sur le LLM avec les étapes déjà faites, compteur d'échecs, désactivation après `skills.max_failures` ; rejeu réussi → réactivation.
+  - **Rejeu local (phase 12e)** : à la distillation, la commande est généralisée en pattern de slots (`où est {query}`). Si la phrase suivante colle au pattern, les paramètres sont remplis localement — les mots prononcés (regex pliée, insensible aux accents) et les `outputs` des étapes (`ToolResult.data`, payload structuré publié par `ctx.publish_data`, jamais envoyé au LLM : `find_path` → `{"paths", "best", "count"}`). Tout s'exécute en < 1 s, 0 appel LLM ; le plan LLM reste le repli (phrase hors pattern, paramètre non lié, liaison impossible — sans pénalité — ou outil en échec — avec pénalité). `skills.local_replay` coupe le rejeu local.
 
 Plus tard : intégrations ciblées si un besoin précis apparaît (calendrier, Spotify...), mais la généralité vient des primitives ci-dessus, pas d'un catalogue d'applications.
 
@@ -251,7 +252,7 @@ mikata/
 ├─ .env                      # LLM_API_KEY, SEARCH_API_KEY (jamais commité)
 ├─ assets/sounds/            # earcons .wav
 ├─ models/                   # mikata.onnx, voix Piper, verifier
-├─ data/                     # logs, memory.json, actions.log, wake_logs/, files_index.db, index/ (helper USN)
+├─ data/                     # logs, memory.json, actions.log, wake_logs/, files_index.db, index/ (helper USN), brave_profile/ (phase 12f)
 ├─ scripts/
 │  ├─ install_autostart.ps1  # tâche planifiée à l'ouverture de session
 │  ├─ install_usn_helper.ps1 # phase 12d : tâche élevée du helper USN (un UAC)
@@ -412,6 +413,8 @@ browser:                            # phase 12b : navigateur piloté (DevTools)
   fallback_uia: true
   page_text_max_chars: 4000
   click_timeout_s: 5
+  own_profile: true                 # phase 12f : profil de travail dédié, arrière-plan
+  profile_dir: data/brave_profile   # ... jamais le Brave de l'utilisateur
 skills:                             # phase 12c : savoir-faire appris (data/skills/skills.json)
   enabled: true
   max_skills: 30
@@ -420,6 +423,7 @@ skills:                             # phase 12c : savoir-faire appris (data/skil
   auto_learn_min_rounds: 2
   max_failures: 3
   max_steps: 10
+  local_replay: true                # phase 12e : rejeu local des procédures paramétrées
 files_index:                        # phase 12d : index local des fichiers (MFT + journal USN)
   enabled: true
   db: data/files_index.db           # SQLite WAL, jamais envoyé au LLM

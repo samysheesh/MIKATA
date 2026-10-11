@@ -136,6 +136,11 @@ class Sdk:
                 summary = await self.tool("uia_read")
             except SdkError:
                 summary = ""
+            if not obs.page and summary:
+                # Repli : le navigateur n'est pas contrôlable (Brave sans le port CDP)
+                # mais l'écran est lisible par UIA — les prédicats de page peuvent
+                # vérifier ce qui est effectivement visible.
+                obs.page = summary[:_PAGE_MAX_CHARS]
         finally:
             self._counting = True
         obs.summary = "\n".join(summary.splitlines()[: self._observe_lines])

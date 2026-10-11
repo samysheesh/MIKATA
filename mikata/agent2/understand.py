@@ -47,14 +47,17 @@ def _normalize(intent: Intent) -> Intent:
         hint = re.sub(r"\s+", "", intent.channel_hint.casefold())
         intent.channel_hint = hint or None
     if intent.channel_hint is not None:
-        # Un canal imposé doit savoir faire la capacité de l'intention ; sinon le LLM a
-        # confondu l'objet de la demande avec un canal (« ouvre Discord » -> canal apps).
-        from mikata.agent2.channels import BUILTIN_CHANNELS, capability_for
+        # Un canal imposé doit savoir faire la famille du verbe ; sinon le LLM a confondu
+        # l'objet de la demande avec un canal (« ouvre Discord » -> verb open, le canal
+        # discord ne fait que du send -> hint rejeté, le score choisit apps).
+        from mikata.agent2.channels import BUILTIN_CHANNELS
 
-        capability = capability_for(intent)
+        prefix = f"{intent.verb.value}."
         known = {channel.name: channel for channel in BUILTIN_CHANNELS}
         channel = known.get(intent.channel_hint)
-        if channel is not None and capability not in channel.capabilities:
+        if channel is not None and not any(
+            capability.startswith(prefix) for capability in channel.capabilities
+        ):
             intent.channel_hint = None
     if len(intent.sub_intents) > _SUB_INTENTS_MAX:
         intent.sub_intents = intent.sub_intents[:_SUB_INTENTS_MAX]

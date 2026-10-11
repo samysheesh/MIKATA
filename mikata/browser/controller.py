@@ -18,6 +18,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -122,6 +123,8 @@ class BrowserController:
         self._config = config
         self._desktop = desktop
         self._client: CdpClient | None = None
+        self._work_pids: set[int] | None = None  # cache des PID du profil de travail
+        self._work_pids_at = 0.0
 
     async def aclose(self) -> None:
         if self._client is not None:
@@ -155,14 +158,109 @@ class BrowserController:
         exe = self._brave_exe()
         if exe is None:
             raise ToolError("Brave introuvable : installe-le ou lance-le une fois")
-        port = self._config.browser.cdp_port
+        cfg = self._config.browser
+        argv = [exe, f"--remote-debugging-port={cfg.cdp_port}", "--remote-allow-origins=*"]
+        startupinfo = None
+        if cfg.own_profile:
+            # Phase 12f : profil de travail dédié, fenêtre cachée/minimisée en arrière-plan
+            # — le navigateur de l'utilisateur n'est jamais touché. Si ce profil tourne
+            # déjà, le lancement est un no-op (verrou singleton de Chromium) et le port
+            # répond déjà.
+            profile = self._config.resolve(cfg.profile_dir)
+            profile.mkdir(parents=True, exist_ok=True)
+            argv.append(f"--user-data-dir={profile}")
+            # Les clics de MIKATA passent par du JavaScript (pas un « geste utilisateur ») :
+            # sans ce drapeau, Chromium mettrait les vidéos en pause sur un profil neuf.
+            argv.append("--autoplay-policy=no-user-gesture-required")
+            # Une fenêtre cachée/occluse est mise en pause par Chromium (chargement
+            # arrêté, vidéo jamais lancée) : on désactive cet étranglement.
+            argv.extend(
+                [
+                    "--disable-background-timer-throttling",
+                    "--disable-backgrounding-occluded-windows",
+                    "--disable-renderer-backgrounding",
+                    "--disable-features=CalculateNativeWinOcclusion",
+                ]
+            )
+            if sys.platform == "win32":
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                # Cachée dès la création : elle n'apparaît jamais ; SW_MINIMIZE quand
+                # l'utilisateur veut la voir (connexion à un compte, browser.window_hidden).
+                startupinfo.wShowWindow = 0 if cfg.window_hidden else 6
         subprocess.Popen(
-            [exe, f"--remote-debugging-port={port}", "--remote-allow-origins=*"],
+            argv,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            startupinfo=startupinfo,
             creationflags=0x08000000 if sys.platform == "win32" else 0,  # sans console
         )
-        logger.info("Brave lancé avec le port de contrôle {} (profil normal).", port)
+        self._work_pids = None  # la liste des fenêtres change au prochain appel
+        label = (
+            "profil de travail dédié (fenêtre minimisée)" if cfg.own_profile else "profil normal"
+        )
+        logger.info("Brave lancé avec le port de contrôle {} ({}).", cfg.cdp_port, label)
+
+    def _work_window_pids(self) -> set[int]:
+        """PID des processus du profil de travail (cache court : la liste bouge peu).
+
+        Seule la ligne de commande distingue le Brave de MIKATA de celui de l'utilisateur :
+        le profil de travail porte `--user-data-dir=<profile_dir>`.
+        """
+        if self._work_pids is not None and time.monotonic() - self._work_pids_at < 30.0:
+            return self._work_pids
+        import psutil
+
+        profile = str(self._config.resolve(self._config.browser.profile_dir)).casefold()
+        pids: set[int] = set()
+        try:
+            for proc in psutil.process_iter(["pid"]):
+                try:
+                    if any(profile in arg.casefold() for arg in proc.cmdline()):
+                        pids.add(proc.pid)
+                except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+                    continue
+        except OSError:
+            return self._work_pids or pids
+        self._work_pids, self._work_pids_at = pids, time.monotonic()
+        return pids
+
+    def _minimize_work_window(self) -> None:
+        """Remet la fenêtre du profil de travail en arrière-plan (best effort, Windows).
+
+        Le drapeau de lancement n'agit qu'à la création : si la fenêtre a été montrée à la
+        main (connexion à un compte...), on la re-cache (SW_HIDE) ou la re-minimise
+        (selon `browser.window_hidden`) à chaque commande navigateur. Seules les fenêtres
+        des processus du profil de travail sont touchées : celles du Brave de
+        l'utilisateur ne le sont jamais.
+        """
+        if sys.platform != "win32":
+            return
+        import ctypes
+
+        pids = self._work_window_pids()
+        if not pids:
+            return
+        show = 0 if self._config.browser.window_hidden else 6  # SW_HIDE / SW_MINIMIZE
+        user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+        hwnds: list[int] = []
+
+        @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+        def visit(hwnd: int, _: Any) -> bool:
+            hwnds.append(hwnd)
+            return True
+
+        try:
+            user32.EnumWindows(visit, 0)
+            for hwnd in hwnds:
+                if not user32.IsWindowVisible(hwnd):
+                    continue
+                pid = ctypes.c_ulong()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                if pid.value in pids:
+                    user32.ShowWindow(hwnd, show)
+        except OSError:
+            return  # l'état de la fenêtre est un plus, jamais une erreur
 
     async def _list_targets(self) -> list[Target]:
         try:
@@ -186,6 +284,10 @@ class BrowserController:
         return []
 
     async def _ensure(self) -> CdpClient:
+        if self._config.browser.own_profile:
+            # À chaque commande : la fenêtre de travail reste en arrière-plan, même si
+            # elle a été restaurée à la main entre deux commandes.
+            self._minimize_work_window()
         if self._client is not None:
             return self._client
         cfg = self._config.browser
@@ -193,13 +295,19 @@ class BrowserController:
         for _attempt in range(2):
             targets = await self._list_targets()
             if not targets:
-                if self._browser_running():
+                if cfg.own_profile:
+                    # Le port ne répond pas : lancer (ou rejoindre) le profil de travail.
+                    await self._launch_brave()
+                    self._minimize_work_window()  # la fenêtre vient d'apparaître
+                    targets = await self._wait_targets()
+                elif self._browser_running():
                     raise ToolError(
                         f"Brave est ouvert sans son port de contrôle ({cfg.cdp_port}) : "
                         + self._unattached_hint()
                     )
-                await self._launch_brave()
-                targets = await self._wait_targets()
+                else:
+                    await self._launch_brave()
+                    targets = await self._wait_targets()
             if not targets:
                 raise ToolError(
                     f"le port de contrôle ({cfg.cdp_port}) ne répond pas : "
@@ -218,6 +326,8 @@ class BrowserController:
                 await client.close()
                 continue
             self._client = client
+            if cfg.own_profile:
+                self._minimize_work_window()
             return client
         raise ToolError(f"impossible de piloter le navigateur ({last_error})")
 
@@ -325,6 +435,33 @@ class BrowserController:
         except CdpError as exc:
             raise await self._lost(exc) from exc
         return "Page précédente."
+
+    async def quit(self) -> str:
+        """Ferme complètement le navigateur de travail : fenêtre et lecture comprises.
+
+        Seuls les processus du profil dédié sont arrêtés (ligne de commande
+        `--user-data-dir`) — le Brave de l'utilisateur n'est jamais touché.
+        """
+        import psutil
+
+        profile = str(self._config.resolve(self._config.browser.profile_dir)).casefold()
+        killed = 0
+        try:
+            for proc in psutil.process_iter(["pid"]):
+                try:
+                    if any(profile in arg.casefold() for arg in proc.cmdline()):
+                        proc.kill()
+                        killed += 1
+                except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+                    continue
+        except OSError:
+            pass
+        if self._client is not None:
+            await self._client.close()
+            self._client = None
+        self._work_pids = None
+        logger.info("Navigateur de travail fermé ({} processus).", killed)
+        return "Navigateur de travail fermé."
 
 
 # Réutilisé par les tests : le JavaScript de lecture est fixe.

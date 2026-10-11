@@ -192,14 +192,19 @@ class WebConfig(_Section):
 
 class BrowserConfig(_Section):
     """Ajout phase 12b : contrôle du navigateur (Brave/Chromium) par le protocole
-    DevTools. Le port ne s'active qu'au lancement : MIKATA lance Brave elle-même quand il
-    est fermé, et refuse poliment (sans jamais le fermer) s'il tourne déjà sans le port."""
+    DevTools. Phase 12f : MIKATA navigue par défaut dans son propre profil Brave
+    (fenêtre séparée, minimisée) — le navigateur de l'utilisateur n'est jamais touché ;
+    le mode legacy (own_profile: false) attache le Brave de l'utilisateur et refuse
+    poliment s'il tourne sans le port."""
 
     enabled: bool = True  # false : les outils browser_* répondent « désactivé »
     cdp_port: int = Field(default=9222, ge=1024, le=65535)
-    fallback_uia: bool = True  # Brave ouvert sans le port : suggérer les outils UIA
+    fallback_uia: bool = True  # mode legacy : Brave ouvert sans le port -> outils UIA
     page_text_max_chars: int = Field(default=4000, ge=200, le=20000)  # texte lu, tronqué
     click_timeout_s: float = Field(default=5, gt=0, le=30)  # délai d'une commande DevTools
+    own_profile: bool = True  # phase 12f : profil de travail dédié, en arrière-plan
+    profile_dir: Path = Path("data/brave_profile")  # dossier du profil dédié
+    window_hidden: bool = True  # fenêtre créée cachée (false : minimisée, pour se connecter)
 
 
 class SkillsConfig(_Section):
@@ -214,6 +219,10 @@ class SkillsConfig(_Section):
     auto_learn_min_rounds: int = Field(default=2, ge=1, le=10)  # au moins N étapes d'outils
     max_failures: int = Field(default=3, ge=1, le=20)  # échecs au rejeu avant désactivation
     max_steps: int = Field(default=10, ge=1, le=50)  # étapes rejouées au plus
+    # Ajout phase 12e : une procédure paramétrée dont le pattern colle à la phrase est
+    # rejouée en local (0 appel LLM), paramètres remplis par les mots prononcés + les
+    # résultats structurés des étapes. false : toujours par le plan LLM (phase 12c).
+    local_replay: bool = True
 
 
 class FilesIndexConfig(_Section):
