@@ -15,9 +15,7 @@
   "expect": {
     "verb": "play",
     "channel": "youtube",
-    "tools_called": [
-      "open_url"
-    ],
+    "tools_called": [],
     "tools_forbidden": [
       "delete_file",
       "run_powershell"

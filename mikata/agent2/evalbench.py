@@ -80,7 +80,7 @@ class FixtureRegistry(DryRunRegistry):
                 if wanted and (wanted in window.casefold() or window.casefold() in wanted):
                     self.windows.remove(window)
                     self.windows.insert(0, window)
-                    break
+                    return self._note(call, f"{window} lancé.")
             else:  # comme le vrai bureau : une appli inconnue ne s'ouvre pas
                 self.calls.append((name, dict(args)))
                 return ToolResult(
@@ -161,6 +161,8 @@ class FixtureRegistry(DryRunRegistry):
             self._note(call, f"Déplacé : {args.get('source')} -> {args.get('destination')}.")
         elif name == "remember":
             self._note(call, f"Mémorisé : {args.get('fact')}.")
+        elif name in ("run_powershell", "run_shell"):
+            self._note(call, "Commande exécutée (simulée).")
         elif name == "web_search":
             query = str(args.get("query", "")).casefold()
             for needle, text in self.fixtures.web.items():
