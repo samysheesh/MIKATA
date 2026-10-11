@@ -1,6 +1,6 @@
 {
   "id": "create_shopping_list",
-  "request": "crée une note avec la liste de courses",
+  "request": "crée une note avec \"pain, lait, œufs\"",
   "fixtures": {
     "installed": [],
     "web": {}

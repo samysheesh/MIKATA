@@ -1,6 +1,6 @@
 {
   "id": "monitor_gpu_price",
-  "request": "surveille le prix d'une carte graphique",
+  "request": "préviens-moi si le prix d'une RTX 5070 passe sous 600 euros",
   "fixtures": {
     "installed": [
       "Google Chrome"

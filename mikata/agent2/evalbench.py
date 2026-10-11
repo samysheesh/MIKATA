@@ -59,36 +59,54 @@ class EvalResult(BaseModel):
 
 
 class FixtureRegistry(DryRunRegistry):
-    """Registre simulé nourri par les textes du cas : les lectures renvoient les fixtures,
-    tout le reste renvoie « (simulé) » sans rien exécuter."""
+    """Registre simulé nourri par les textes du cas, avec un état : les actions changent
+    ce que les lectures renvoient (fenêtre active, page affichée), pour que les prédicats
+    de vérification (app_focused, page_shows...) restent significatifs. Rien ne touche le
+    vrai PC."""
 
     def __init__(self, fixtures: EvalFixtures) -> None:
         super().__init__()
         self.fixtures = fixtures
+        self.windows = list(fixtures.installed)  # la première = fenêtre active
+        self.page = "\n".join(fixtures.web.values()) or "(simulé)"
 
     async def execute(self, call: ToolCallReq) -> ToolResult:
-        if call.name == "web_search":
-            query = str(call.arguments.get("query", "")).casefold()
+        name = call.name
+        args = call.arguments
+        if name in ("open_app", "focus_window"):
+            wanted = str(args.get("name", "")).casefold()
+            for window in list(self.windows):
+                if wanted and (wanted in window.casefold() or window.casefold() in wanted):
+                    self.windows.remove(window)
+                    self.windows.insert(0, window)
+                    break
+            else:
+                self.windows.insert(0, str(args.get("name", "")))
+        elif name in ("browser_open", "open_url", "fetch_page"):
+            url = str(args.get("url", ""))
+            texts = "\n".join(self.fixtures.web.values())
+            self.page = f"Titre : Navigateur simulé\nURL : {url}\nTexte :\n{texts}"
+        elif name == "web_search":
+            query = str(args.get("query", "")).casefold()
             for needle, text in self.fixtures.web.items():
                 if needle.casefold() in query or query in needle.casefold():
-                    self.calls.append((call.name, dict(call.arguments)))
+                    self.calls.append((name, dict(args)))
                     return ToolResult(
-                        call.id, call.name, ok=True, content=text, terminal=False, duration_s=0.0
+                        call.id, name, ok=True, content=text, terminal=False, duration_s=0.0
                     )
-        if call.name == "list_windows":
-            lines = [f"- {name} : Fenêtre {name}" for name in self.fixtures.installed[:3]]
+        elif name == "list_windows":
+            lines = [f"- {window} : Fenêtre {window}" for window in self.windows[:5]]
             text = "Fenêtres ouvertes :\n" + "\n".join(lines) if lines else "(simulé)"
-            self.calls.append((call.name, dict(call.arguments)))
+            self.calls.append((name, dict(args)))
             return ToolResult(
-                call.id, call.name, ok=True, content=text, terminal=False, duration_s=0.0
+                call.id, name, ok=True, content=text, terminal=False, duration_s=0.0
             )
-        if call.name in ("browser_read", "uia_read"):
-            # Les outils de lecture renvoient les textes des fixtures : les prédicats de
-            # vérification (page_shows, text_visible...) restent significatifs.
-            text = "\n".join(self.fixtures.web.values()) or "(simulé)"
-            self.calls.append((call.name, dict(call.arguments)))
+        elif name in ("browser_read", "uia_read"):
+            # Les outils de lecture renvoient l'état simulé : les prédicats de vérification
+            # (page_shows, text_visible...) restent significatifs.
+            self.calls.append((name, dict(args)))
             return ToolResult(
-                call.id, call.name, ok=True, content=text, terminal=False, duration_s=0.0
+                call.id, name, ok=True, content=self.page, terminal=False, duration_s=0.0
             )
         return await super().execute(call)
 

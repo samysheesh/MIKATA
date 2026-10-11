@@ -1,6 +1,6 @@
 {
   "id": "automate_hourly_screenshot",
-  "request": "enregistre une capture d'écran toutes les heures",
+  "request": "enregistre une capture d'écran toutes les heures dans le dossier captures",
   "fixtures": {
     "installed": [],
     "web": {}

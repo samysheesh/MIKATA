@@ -1,6 +1,6 @@
 {
   "id": "organize_downloads",
-  "request": "range les téléchargements dans des dossiers",
+  "request": "déplace les fichiers PDF des téléchargements vers le dossier documents",
   "fixtures": {
     "installed": [],
     "web": {}

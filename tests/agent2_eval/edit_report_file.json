@@ -1,6 +1,6 @@
 {
   "id": "edit_report_file",
-  "request": "modifie le fichier rapport.txt en ajoutant une ligne",
+  "request": "ajoute la ligne \"fin\" au fichier rapport.txt",
   "fixtures": {
     "installed": [],
     "web": {}

@@ -1,6 +1,6 @@
 {
   "id": "find_electricity_bill",
-  "request": "trouve la facture d'électricité",
+  "request": "trouve la facture EDF",
   "fixtures": {
     "installed": [],
     "web": {}

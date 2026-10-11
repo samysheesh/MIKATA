@@ -1,6 +1,6 @@
 {
   "id": "send_message_to_paul",
-  "request": "envoie un message à Paul sur Discord",
+  "request": "envoie le message \"salut, ça va ?\" à Paul sur Discord",
   "capability": "send.message",
   "fixtures": {
     "installed": [
