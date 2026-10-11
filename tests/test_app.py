@@ -314,3 +314,31 @@ def test_failing_event_does_not_stop_app(config_file: Path) -> None:
         await asyncio.wait_for(task, 2)
 
     asyncio.run(scenario())
+
+
+def test_background_tasks_and_close_task(config_file: Path, tmp_path: Path) -> None:
+    """Phase 13f : l'onglet « En cours » liste le navigateur de travail et peut le fermer."""
+    from types import SimpleNamespace
+
+    from agent2_fakes import make_registry
+    from tool_fakes import FakeBrowser
+
+    app = _app(config_file)
+    browser = FakeBrowser()
+    browser.running = True
+    app._agent = SimpleNamespace(tools=make_registry(tmp_path, browser=browser))
+    assert app._background_tasks() == [
+        {
+            "id": "browser",
+            "label": "Navigateur de travail — lecture en arrière-plan",
+            "running": True,
+        }
+    ]
+
+    async def scenario() -> None:
+        app._on_ui_command({"type": "close_task", "id": "browser"})
+        await asyncio.sleep(0.05)
+        assert ("quit", ()) in browser.log
+        assert app._background_tasks()[0]["running"] is False
+
+    asyncio.run(scenario())

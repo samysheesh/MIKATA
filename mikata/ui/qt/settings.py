@@ -170,6 +170,8 @@ class SettingsWindow(QWidget):
         self.tabs.addTab(self._audio_tab(), "Audio")
         self.tabs.addTab(self._wake_tab(), "Mot d'activation")
         self.tabs.addTab(self._conversation_tab(), "Conversation")
+        self.tasks_tab_index = 3
+        self.tabs.addTab(self._tasks_tab(), "En cours")  # phase 13f : arrière-plan fermable
         self.tabs.addTab(self._cost_tab(), "Coût et clés")
         self.tabs.addTab(self._mascot_tab(), "Mascotte")
         self.skins_tab = SkinsTab(
@@ -180,6 +182,7 @@ class SettingsWindow(QWidget):
         )
         self.tabs.addTab(self.skins_tab, "Skins")
         self.tabs.addTab(self._log_tab(), "Journal")
+        self.tabs.currentChanged.connect(self._tab_changed)
 
         self.status = QLabel("")
         self.status.setObjectName("status")
@@ -475,6 +478,65 @@ class SettingsWindow(QWidget):
         if message.get("error"):
             self.status.setText(f"MIKATA refuse la configuration : {message['error']}")
 
+    def on_tasks(self, message: dict[str, Any]) -> None:
+        """Phase 13f : la liste de ce qui tourne en arrière-plan, avec « Fermer »."""
+        tasks = message.get("tasks")
+        if not isinstance(tasks, list):
+            return
+        self._rebuild_tasks(tasks)
+
+    # -- onglet « En cours » (phase 13f) ----------------------------------------------------
+
+    def _tasks_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.addWidget(
+            self._hint("Ce que MIKATA fait tourner en arrière-plan, fermable d'un clic.")
+        )
+        self.tasks_empty = QLabel("Rien ne tourne en arrière-plan.")
+        self.tasks_empty.setObjectName("hint")
+        layout.addWidget(self.tasks_empty)
+        self.tasks_rows = QVBoxLayout()
+        layout.addLayout(self.tasks_rows)
+        layout.addStretch(1)
+        return page
+
+    def _tab_changed(self, index: int) -> None:
+        if index == self.tasks_tab_index:
+            self._send({"type": "list_tasks"})
+
+    def _refresh_tasks(self) -> None:
+        if self.tabs.currentIndex() == self.tasks_tab_index:
+            self._send({"type": "list_tasks"})
+
+    def _rebuild_tasks(self, tasks: list[dict[str, Any]]) -> None:
+        while self.tasks_rows.count():
+            item = self.tasks_rows.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        active = [task for task in tasks if task.get("running")]
+        self.tasks_empty.setVisible(not active)
+        for task in active:
+            task_id = task.get("id")
+            row = QHBoxLayout()
+            label = QLabel(str(task.get("label", task.get("id", ""))))
+            state = QLabel("actif")
+            state.setObjectName("badge_live")
+            close_button = QPushButton("Fermer")
+            close_button.clicked.connect(
+                lambda _checked=False, task_id=task_id: self._send(
+                    {"type": "close_task", "id": task_id}
+                )
+            )
+            row.addWidget(label, 1)
+            row.addWidget(state)
+            row.addWidget(close_button)
+            holder = QWidget()
+            holder.setLayout(row)
+            row.setContentsMargins(0, 0, 0, 0)
+            self.tasks_rows.addWidget(holder)
+
     # -- actions ----------------------------------------------------------------------------
 
     def _replace_secret(self, name: str) -> None:
@@ -523,6 +585,8 @@ class SettingsWindow(QWidget):
         self._polls += 1
         if self._polls % COST_REFRESH_POLLS == 0:  # compteur ElevenLabs écrit par MIKATA
             self._refresh_cost()
+        if self._polls % 20 == 0:  # toutes les 10 s : onglet « En cours »
+            self._refresh_tasks()
         lines = self.tail.poll()
         if lines:
             self._log_lines = (self._log_lines + lines)[-MAX_LOG_LINES:]

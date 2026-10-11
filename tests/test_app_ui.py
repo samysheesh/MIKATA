@@ -253,7 +253,20 @@ def test_real_channel_end_to_end(config_file: Path) -> None:
         return received
 
     hello, mic, bye = asyncio.run(scenario())
-    assert hello == {"type": "hello", "version": 1, "state": "idle", "follow_up_s": 0, "mic": "ok"}
+    assert hello == {
+        "type": "hello",
+        "version": 1,
+        "state": "idle",
+        "follow_up_s": 0,
+        "mic": "ok",
+        "tasks": [
+            {
+                "id": "browser",
+                "label": "Navigateur de travail — lecture en arrière-plan",
+                "running": False,
+            }
+        ],  # phase 13f : onglet « En cours »
+    }
     assert mic == {"type": "mic", "status": "paused"} and bye == {"type": "bye"}
     assert app.paused
 

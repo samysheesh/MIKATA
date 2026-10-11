@@ -372,7 +372,25 @@ def test_settings_show_the_current_values(base: Path) -> None:
     assert values["wake.threshold"] == wake.threshold and values["agent.follow_up_s"] == 6
     assert values["audio.input_device"] == "default" and values["llm.reasoning_effort"] == "none"
     assert "ui.skin" not in values and values["ui.mascot"] is True  # onglet Skins : immédiat
-    assert window.tabs.count() == 7
+    assert window.tabs.count() == 8  # + onglet « En cours » (phase 13f)
+    window.close()
+
+
+def test_tasks_tab_lists_and_closes(base: Path) -> None:
+    from PySide6.QtWidgets import QPushButton
+
+    sent: list[dict[str, Any]] = []
+    window = _settings(base, sent)
+    window.on_tasks(
+        {"type": "tasks", "tasks": [{"id": "browser", "label": "Navigateur", "running": True}]}
+    )
+    assert window.tasks_empty.isHidden()
+    buttons = window.tasks_rows.itemAt(0).widget().findChildren(QPushButton)
+    close_button = next(button for button in buttons if button.text() == "Fermer")
+    close_button.click()
+    assert sent[-1] == {"type": "close_task", "id": "browser"}
+    window.on_tasks({"type": "tasks", "tasks": []})
+    assert not window.tasks_empty.isHidden()
     window.close()
 
 

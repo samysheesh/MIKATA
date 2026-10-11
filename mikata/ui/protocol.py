@@ -9,9 +9,11 @@ ralentir la boucle audio ni faire tomber MIKATA. Les deux parlent par une connex
 - L'interface se connecte et envoie d'abord `{"type": "hello", "token": ...}` ; sans le bon
   jeton, la connexion est fermée.
 - MIKATA → interface : `state`, `wake`, `heard`, `say`, `result`, `error`, `mic`, `config`, `voice`,
-  `open_settings`, `show_mascot`, `bye` (voir `MIKATA_EVENTS`).
+  `tasks`, `open_settings`, `show_mascot`, `bye` (voir `MIKATA_EVENTS`).
 - Interface → MIKATA : `reload_config` (après écriture de config.yaml), `pause`, `restart`
-  (redémarrer MIKATA : arrêt propre avec le code 75, relancé par la supervision ou par lui-même).
+  (redémarrer MIKATA : arrêt propre avec le code 75, relancé par la supervision ou par lui-même),
+  `list_tasks`, `close_task` (onglet « En cours » des réglages : ce qui tourne en arrière-plan,
+  fermable — ajout phase 13f).
 
 Ce module n'importe ni Qt ni asyncio : il sert aux deux côtés et aux tests.
 """
@@ -42,12 +44,13 @@ MIKATA_EVENTS = (
     "mic",  # status : ok | paused | busy
     "config",  # applied, restart, error : réponse à reload_config
     "voice",  # event (fallback | resume | profile), engine, message : voix (phase 11)
+    "tasks",  # tasks : [{id, label, running}] — ce qui tourne en arrière-plan (phase 13f)
     "open_settings",
     "show_mascot",
     "bye",  # MIKATA s'arrête : l'interface se ferme
 )
 # Commandes de l'interface vers MIKATA.
-UI_COMMANDS = ("hello", "reload_config", "pause", "restart")
+UI_COMMANDS = ("hello", "reload_config", "pause", "restart", "list_tasks", "close_task")
 
 
 class ProtocolError(ValueError):

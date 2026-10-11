@@ -296,6 +296,7 @@ class FakeBrowser:
         self.href = href  # lien renvoyé par find (téléchargement simulé si .exe/.zip...)
         self.log: list[tuple[str, Any]] = []
         self.fail: set[str] = set()
+        self.running = False  # phase 13f : onglet « En cours »
 
     async def _record(self, name: str, value: Any = None) -> None:
         if name in self.fail:
@@ -308,6 +309,7 @@ class FakeBrowser:
 
     async def open_url(self, url: str) -> str:
         await self._record("open", url)
+        self.running = True
         return f"Page ouverte : {url}"
 
     async def read(self, max_chars: int) -> str:
@@ -332,6 +334,7 @@ class FakeBrowser:
 
     async def quit(self) -> str:
         self.log.append(("quit", ()))
+        self.running = False
         return "Navigateur de travail fermé."
 
     async def aclose(self) -> None:

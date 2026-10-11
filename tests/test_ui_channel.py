@@ -49,6 +49,17 @@ def test_channel_file(tmp_path: Path) -> None:
     assert read_channel(tmp_path / "absent.json") is None
 
 
+def test_tasks_messages_round_trip() -> None:
+    """Phase 13f : l'onglet « En cours » liste et ferme l'arrière-plan."""
+    line = encode({"type": "tasks", "tasks": [{"id": "browser", "label": "x", "running": True}]})
+    decoded = decode(line, MIKATA_EVENTS)
+    assert decoded["tasks"] == [{"id": "browser", "label": "x", "running": True}]
+    decode(encode({"type": "list_tasks"}), UI_COMMANDS)
+    assert decode(encode({"type": "close_task", "id": "browser"}), UI_COMMANDS)["id"] == "browser"
+    with pytest.raises(ProtocolError):
+        decode(encode({"type": "close_task", "id": "browser"}), MIKATA_EVENTS)
+
+
 async def _connect(bridge: UiBridge, token: str | None = None) -> tuple[Any, Any]:
     assert bridge.channel is not None
     reader, writer = await asyncio.open_connection("127.0.0.1", bridge.channel.port)

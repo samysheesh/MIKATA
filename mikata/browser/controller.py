@@ -203,6 +203,13 @@ class BrowserController:
         )
         logger.info("Brave lancé avec le port de contrôle {} ({}).", cfg.cdp_port, label)
 
+    @property
+    def running(self) -> bool:
+        """Le navigateur de travail tourne (profil dédié, même fenêtre cachée)."""
+        if not self._config.browser.own_profile:
+            return False
+        return bool(self._work_window_pids())
+
     def _work_window_pids(self) -> set[int]:
         """PID des processus du profil de travail (cache court : la liste bouge peu).
 

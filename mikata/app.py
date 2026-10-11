@@ -367,6 +367,7 @@ class App:
             "state": self.state.value,
             "follow_up_s": self.config.agent.follow_up_s,
             "mic": self._mic_status,
+            "tasks": self._background_tasks(),  # phase 13f : onglet « En cours »
         }
 
     def _on_ui_command(self, command: dict[str, object]) -> None:
@@ -379,6 +380,13 @@ class App:
             logger.info("Redémarrage demandé depuis l'interface.")
             self.restart_requested = True
             self.request_shutdown("redémarrage demandé depuis l'interface")
+        elif kind == "list_tasks":  # phase 13f
+            self._publish_ui("tasks", tasks=self._background_tasks())
+        elif kind == "close_task":  # phase 13f
+            task_id = command.get("id")
+            if task_id == "browser":
+                self._close_work_browser()
+            self._publish_ui("tasks", tasks=self._background_tasks())
 
     def _on_tray_action(self, action: str) -> None:
         """Menu de l'icône (thread pystray) : renvoyé dans la boucle asyncio."""
@@ -411,6 +419,21 @@ class App:
         quit_fn = getattr(browser, "quit", None)
         if quit_fn is not None:
             self._spawn(quit_fn(), "fermeture du navigateur de MIKATA")
+
+    def _background_tasks(self) -> list[dict[str, object]]:
+        """Ce qui tourne en arrière-plan (onglet « En cours » des réglages) : chaque tâche
+        est fermable par `close_task`. Le navigateur de travail est la première ; les
+        minuteurs, rappels et surveillances s'y ajouteront sans changer le protocole."""
+        registry = self._agent.tools if self._agent is not None else None
+        browser = getattr(registry.ctx, "browser", None) if registry is not None else None
+        running = bool(getattr(browser, "running", False))
+        return [
+            {
+                "id": "browser",
+                "label": "Navigateur de travail — lecture en arrière-plan",
+                "running": running,
+            }
+        ]
 
     def set_paused(self, paused: bool) -> None:
         """Micro coupé côté logiciel : plus de mot d'activation, d'écoute ni de collecte."""
