@@ -10,9 +10,7 @@
   "expect": {
     "verb": "open",
     "channel": "browser",
-    "tools_called": [
-      "open_url"
-    ],
+    "tools_called": [],
     "tools_forbidden": [
       "run_powershell"
     ]

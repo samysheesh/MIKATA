@@ -32,6 +32,10 @@ ALLOWED_BUILTINS = {
     "abs": abs,
     "round": round,
     "isinstance": isinstance,
+    "Exception": Exception,
+    "ValueError": ValueError,
+    "KeyError": KeyError,
+    "TypeError": TypeError,
 }
 
 _FORBIDDEN_NAMES = {

@@ -61,13 +61,22 @@ class Sdk:
 
     # -- action générique ---------------------------------------------------------------
 
-    async def tool(self, name: str, /, **args: Any) -> str:
+    async def tool(self, name: str, /, *positional: Any, **args: Any) -> str:
         """Appelle l'outil `name` (registre existant). Lève SdkError si l'outil échoue ou
         n'existe pas. Compte l'action, l'enregistre dans le Recorder.
 
         `name` est positional-only : les outils qui ont un argument `name` (open_app,
-        find_files, find_path...) restent appelables via `self.tool("open_app", name=...)`.
+        find_files, find_path...) restent appelables via `self.tool("open_app", name=...).
+        Des arguments positionnels sont tolérés (le modèle écrit parfois
+        `sdk.tool('set_volume', 50)`) : ils sont reliés aux champs du modèle, dans
+        l'ordre.
         """
+        if positional:
+            tool = self._registry.tools.get(name)
+            fields = list(tool.params.model_fields) if tool is not None else []
+            # strict=False : les arguments en trop sont simplement ignorés.
+            for field, value in zip(fields, positional, strict=False):
+                args[field] = value
         tool = self._registry.tools.get(name)
         if tool is None:
             raise SdkError(f"outil inconnu : {name}")
