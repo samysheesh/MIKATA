@@ -113,3 +113,17 @@ def test_judge_invalid_answer_is_false_and_unreliable() -> None:
         return await check(Judge(question="Est-ce ouvert ?"), _OBS, (), llm, effort="none")
 
     assert asyncio.run(scenario()) == (False, False)
+
+
+def test_judge_sees_the_work_browser_page() -> None:
+    """Le juge juge d'après la page du navigateur de travail : sans elle, il dirait
+    toujours non (la vidéo tourne dans une fenêtre cachée, pas sur l'écran actif)."""
+    llm = ScriptedLLM(['{"reached": true, "why": "la page de la vidéo est là"}'])
+
+    async def scenario() -> tuple:
+        await check(Judge(question="Est-ce en lecture ?"), _OBS, (), llm, effort="none")
+        return llm.calls[0]
+
+    messages = asyncio.run(scenario())
+    user = messages[-1]["content"]
+    assert "One Piece Opening 27" in user  # la page est envoyée entre marqueurs

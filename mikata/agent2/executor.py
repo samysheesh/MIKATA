@@ -45,8 +45,10 @@ def _observation_text(obs: Observation) -> str:
     lines = [
         f"App active : {obs.active_app}",
         f"Titre : {obs.title}",
-        "Résumé :",
+        "Page du navigateur de travail :",
     ]
+    lines.extend((obs.page or "").splitlines())
+    lines.append("Résumé de l'écran :")
     lines.extend(obs.summary.splitlines())
     return "\n".join(lines) or "(écran illisible)"
 
