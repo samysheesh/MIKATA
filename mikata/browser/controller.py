@@ -190,6 +190,11 @@ class BrowserController:
                 # premier _minimize_work_window, selon browser.window_hidden) ne flashe
                 # jamais.
                 startupinfo.wShowWindow = 0
+            if cfg.window_hidden:
+                # Parade définitive contre le flash : même si Brave ignore SW_HIDE (ou
+                # restaure la session), la fenêtre naît hors écran — physiquement
+                # invisible. Seule la fenêtre du profil de travail est concernée.
+                argv.append("--window-position=-32000,-32000")
             if self._work_window_pids():
                 # Le profil tourne déjà : un nouveau lancement serait repris par le
                 # verrou singleton de Chromium, qui RESTAURE la fenêtre existante en
@@ -222,6 +227,19 @@ class BrowserController:
         généré peut la montrer — on la re-cache dans la foulée (jamais le Brave de
         l'utilisateur)."""
         self._minimize_work_window()
+
+    def is_work_window(self, handle: int) -> bool:
+        """La fenêtre `handle` appartient au profil de travail ? Elle ne doit alors
+        jamais passer au premier plan (le focus serait un flash avant le re-cache)."""
+        if not self._config.browser.own_profile or sys.platform != "win32" or not handle:
+            return False
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(handle, ctypes.byref(pid))
+        return pid.value in self._work_window_pids()
 
     def _work_window_pids(self) -> set[int]:
         """PID des processus du profil de travail (cache court : la liste bouge peu).

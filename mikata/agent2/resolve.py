@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import unicodedata
 from collections.abc import Sequence
+from datetime import datetime
 
 from pydantic import BaseModel
 
@@ -111,8 +112,13 @@ async def _resolve_one(
             return first, "files", True
         return None
     if unknown.kind == "web":
+        query = question
+        # « le dernier / la dernière » : l'année courante rend la recherche bien plus
+        # précise (le moteur remonte sinon des contenus plus anciens mais très référencés).
+        if any(word in _fold(question) for word in ("dernier", "derniere", "dernière", "latest")):
+            query = f"{question} {datetime.now().year}"
         try:
-            results = await sdk.web_search(question)
+            results = await sdk.web_search(query)
         except Exception:
             results = ""
         value = await _extract(llm, question, results, effort=effort)

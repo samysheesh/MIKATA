@@ -101,3 +101,28 @@ def test_user_kind_stays_unresolved(tmp_path: Path) -> None:
     intent = _intent([Unknown(name="choix", question="que préfères-tu ?", kind="user")])
     resolved, missing = _run(intent, ScriptedLLM([]), memory_facts=[], tmp_path=tmp_path)
     assert resolved == [] and missing == ["choix"]
+
+
+def test_last_question_searches_with_the_current_year(tmp_path: Path) -> None:
+    """« le dernier » : l'année courante est ajoutée à la requête (les moteurs remontent
+    sinon des contenus plus anciens mais très référencés)."""
+    from datetime import datetime
+
+    intent = _intent([Unknown(name="titre", question="quel est le dernier opening ?", kind="web")])
+    llm = ScriptedLLM(['{"value": "X", "confident": true}'])
+    seen: list[str] = []
+
+    async def fake_search(question: str) -> str:
+        seen.append(question)
+        return "résultats"
+
+    registry = make_registry(tmp_path)
+
+    async def scenario() -> tuple:
+        sdk = _sdk(registry)
+        sdk.web_search = fake_search  # type: ignore[method-assign]
+        return await resolve_unknowns(intent, sdk, llm, effort="none", memory_facts=[])
+
+    resolved, _missing = asyncio.run(scenario())
+    assert resolved and seen
+    assert str(datetime.now().year) in seen[0]
