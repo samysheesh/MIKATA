@@ -364,6 +364,13 @@ class FocusWindow(BaseTool[AppName]):
         if not windows:
             raise no_window_error(args.name, opened)
         await self.ctx.run_blocking(desktop.focus_window, windows[0])
+        # Le focus peut viser le navigateur de travail de MIKATA : on le re-cache
+        # aussitôt (sa fenêtre ne doit jamais apparaître à l'écran).
+        if self.ctx.config.browser.own_profile:
+            browser = self.ctx.browser
+            keep_hidden = getattr(browser, "keep_hidden", None)
+            if keep_hidden is not None:
+                await self.ctx.run_blocking(keep_hidden)
         return f"« {windows[0].title} » au premier plan."
 
 

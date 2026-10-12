@@ -195,6 +195,26 @@ def test_close_focus_and_list_windows(tmp_path: Path) -> None:
     assert empty.content == "Aucune fenêtre ouverte."
 
 
+def test_focus_window_rehides_the_work_browser(tmp_path: Path) -> None:
+    """Un focus_window du code généré peut montrer le navigateur de travail : l'outil le
+    re-cache aussitôt (jamais le Brave de l'utilisateur)."""
+    from agent2_fakes import make_registry
+    from tool_fakes import FakeBrowser
+
+    browser = FakeBrowser()
+
+    async def scenario() -> ToolResult:
+        registry = make_registry(tmp_path, browser=browser, desktop=FakeDesktop())
+        try:
+            return await registry.execute(ToolCallReq("1", "focus_window", {"name": "Spotify"}))
+        finally:
+            await registry.aclose()
+
+    focused = asyncio.run(scenario())
+    assert focused.ok
+    assert ("keep_hidden", ()) in browser.log
+
+
 def test_close_window_closes_only_one(tmp_path: Path) -> None:
     desktop = FakeDesktop()
     active = _run(tmp_path, desktop, "close_window")  # « ferme cette fenêtre »

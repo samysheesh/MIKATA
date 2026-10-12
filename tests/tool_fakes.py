@@ -337,6 +337,10 @@ class FakeBrowser:
         self.running = False
         return "Navigateur de travail fermé."
 
+    def keep_hidden(self) -> None:
+        """Le focus_window du code généré est suivi d'un re-cache de la fenêtre de travail."""
+        self.log.append(("keep_hidden", ()))
+
     async def aclose(self) -> None:
         pass
 

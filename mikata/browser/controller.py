@@ -217,6 +217,12 @@ class BrowserController:
             return False
         return bool(self._work_window_pids())
 
+    def keep_hidden(self) -> None:
+        """Remet aussitôt la fenêtre de travail en arrière-plan : un focus_window du code
+        généré peut la montrer — on la re-cache dans la foulée (jamais le Brave de
+        l'utilisateur)."""
+        self._minimize_work_window()
+
     def _work_window_pids(self) -> set[int]:
         """PID des processus du profil de travail (cache court : la liste bouge peu).
 
