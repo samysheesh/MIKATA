@@ -126,3 +126,17 @@ def test_last_question_searches_with_the_current_year(tmp_path: Path) -> None:
     resolved, _missing = asyncio.run(scenario())
     assert resolved and seen
     assert str(datetime.now().year) in seen[0]
+
+
+def test_direct_url_is_resolved_alongside_the_value(tmp_path: Path) -> None:
+    """Un lien direct dans les résultats (youtube.com/watch) devient une valeur *_url :
+    le plan ouvre la vidéo directement, sans page de recherche ni clic."""
+    intent = _intent([Unknown(name="titre", question="titre exact ?", kind="web")])
+    llm = ScriptedLLM(
+        ['{"value": "CARMINE", "confident": true, "url": "https://www.youtube.com/watch?v=abc123"}']
+    )
+    resolved, missing = _run(intent, llm, memory_facts=[], sdk_patch="search", tmp_path=tmp_path)
+    assert missing == []
+    by_name = {item.name: item.value for item in resolved}
+    assert by_name["titre"] == "CARMINE"
+    assert by_name["titre_url"] == "https://www.youtube.com/watch?v=abc123"

@@ -222,6 +222,14 @@ class BrowserController:
             return False
         return bool(self._work_window_pids())
 
+    async def prewarm(self) -> None:
+        """Lance le profil de travail en arrière-plan dès le démarrage de MIKATA : la
+        première demande n'attend plus le démarrage à froid (~150 Mo au repos, ~0 % CPU).
+        No-op si le profil tourne déjà."""
+        if not self._config.browser.own_profile or self._work_window_pids():
+            return
+        await self._launch_brave()
+
     def keep_hidden(self) -> None:
         """Remet aussitôt la fenêtre de travail en arrière-plan : un focus_window du code
         généré peut la montrer — on la re-cache dans la foulée (jamais le Brave de

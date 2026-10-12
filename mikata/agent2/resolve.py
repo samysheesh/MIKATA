@@ -24,6 +24,7 @@ from mikata.llm.base import LLMClient
 class _ResolveAnswer(BaseModel):
     value: str
     confident: bool
+    url: str = ""
 
 
 def _fold(text: str) -> str:
@@ -48,9 +49,11 @@ def _observation_text(obs: Observation) -> str:
     return f"App active : {obs.active_app}\nTitre : {obs.title}\nRésumé :\n{obs.summary}"
 
 
-async def _extract(llm: LLMClient, question: str, text: str, *, effort: str | None) -> str:
+async def _extract(
+    llm: LLMClient, question: str, text: str, *, effort: str | None
+) -> _ResolveAnswer | None:
     if not text.strip():
-        return ""
+        return None
     answer, _, _ = await ask_json(
         llm,
         RESOLVE_SYSTEM.format(question=question),
@@ -59,8 +62,8 @@ async def _extract(llm: LLMClient, question: str, text: str, *, effort: str | No
         effort=effort,
     )
     if answer is None or not answer.confident or not answer.value.strip():
-        return ""
-    return answer.value.strip()
+        return None
+    return answer
 
 
 async def resolve_unknowns(
@@ -80,6 +83,12 @@ async def resolve_unknowns(
             resolved.append(
                 Resolved(name=unknown.name, value=value[0], source=value[1], confident=value[2])
             )
+            if value[3]:  # lien direct trouvé dans les résultats (ex. youtube.com/watch)
+                resolved.append(
+                    Resolved(
+                        name=f"{unknown.name}_url", value=value[3], source="web", confident=True
+                    )
+                )
         else:
             missing.append(unknown.name)
     return resolved, missing
@@ -92,15 +101,15 @@ async def _resolve_one(
     *,
     effort: str | None,
     memory_facts: Sequence[str],
-) -> tuple[str, str, bool] | None:
-    """(valeur, source, confiant) ou None."""
+) -> tuple[str, str, bool, str | None] | None:
+    """(valeur, source, confiant, lien direct éventuel) ou None."""
     question = unknown.question
     # 1. Mémoire : un fait contient un mot significatif de la question.
     question_words = {word for word in _fold(question).split() if len(word) >= 4}
     for fact in memory_facts:
         fact_words = {word for word in _fold(fact).split() if len(word) >= 4}
         if question_words & fact_words:
-            return fact, "memory", True
+            return fact, "memory", True, None
     # 2. Selon le type d'inconnue.
     if unknown.kind == "file":
         try:
@@ -109,7 +118,7 @@ async def _resolve_one(
             found = ""
         first = _first_result(found)
         if first and "Aucun fichier" not in found:
-            return first, "files", True
+            return first, "files", True, None
         return None
     if unknown.kind == "web":
         query = question
@@ -121,15 +130,19 @@ async def _resolve_one(
             results = await sdk.web_search(query)
         except Exception:
             results = ""
-        value = await _extract(llm, question, results, effort=effort)
-        return (value, "web", True) if value else None
+        answer = await _extract(llm, question, results, effort=effort)
+        if answer is None:
+            return None
+        return answer.value.strip(), "web", True, answer.url.strip() or None
     if unknown.kind in ("screen", "app"):
         try:
             observation = await sdk.observe()
         except Exception:
             observation = None
         text = _observation_text(observation) if observation is not None else ""
-        value = await _extract(llm, question, text, effort=effort)
-        return (value, "screen", True) if value else None
+        answer = await _extract(llm, question, text, effort=effort)
+        if answer is None:
+            return None
+        return answer.value.strip(), "screen", True, None
     # contact : mémoire seulement (étape 1) ; user : l'orchestrateur décide.
     return None

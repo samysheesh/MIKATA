@@ -420,6 +420,17 @@ class App:
         if quit_fn is not None:
             self._spawn(quit_fn(), "fermeture du navigateur de MIKATA")
 
+    def prewarm_work_browser(self) -> None:
+        """Lance le navigateur de travail en arrière-plan dès le démarrage : la première
+        demande web ne paie plus le démarrage à froid (no-op s'il tourne déjà)."""
+        if not self.config.browser.own_profile:
+            return
+        registry = self._agent.tools if self._agent is not None else None
+        browser = getattr(registry.ctx, "browser", None) if registry is not None else None
+        prewarm = getattr(browser, "prewarm", None)
+        if prewarm is not None:
+            self._spawn(prewarm(), "préchauffage du navigateur de travail")
+
     def _background_tasks(self) -> list[dict[str, object]]:
         """Ce qui tourne en arrière-plan (onglet « En cours » des réglages) : chaque tâche
         est fermable par `close_task`. Le navigateur de travail est la première ; les
@@ -584,6 +595,7 @@ class App:
                 self._tasks.append(asyncio.create_task(self._stats_loop(), name="stats"))
             self._tasks.append(asyncio.create_task(self._maintenance_loop(), name="maintenance"))
             self.start_dream_task()
+            self.prewarm_work_browser()
             if self._collector is not None:
                 self._negatives_saved = sum(1 for _ in self._negatives_dir.rglob("*.wav"))
                 logger.warning(
