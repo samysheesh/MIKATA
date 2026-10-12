@@ -11,7 +11,7 @@ from agent2_fakes import ScriptedLLM, make_registry
 from tool_fakes import FakeDesktop
 
 from mikata.agent2.executor import run_subgoal
-from mikata.agent2.schema import AppFocused, SubGoal
+from mikata.agent2.schema import AppFocused, SubGoal, ToolSucceeded
 from mikata.agent2.sdk import Sdk
 from mikata.config import Agent2Config
 
@@ -52,7 +52,7 @@ def test_first_failure_then_success_shows_the_error_to_the_llm(tmp_path: Path) -
             "{\"code\": \"await sdk.open_app('Spotify')\\nreturn 'ok'\"}",
         ]
     )
-    steps = _run(tmp_path, _subgoal(), llm, desktop=FakeDesktop())
+    steps = _run(tmp_path, _subgoal(ToolSucceeded(tool="open_app")), llm, desktop=FakeDesktop())
     assert len(steps) == 2
     assert steps[0].error and "SdkError" in steps[0].error
     assert steps[1].goal_reached and steps[1].error is None
@@ -68,7 +68,7 @@ def test_rejected_code_retries_instead_of_crashing(tmp_path: Path) -> None:
             "{\"code\": \"await sdk.open_app('Spotify')\\nreturn 'ok'\"}",
         ]
     )
-    steps = _run(tmp_path, _subgoal(), llm, desktop=FakeDesktop())
+    steps = _run(tmp_path, _subgoal(ToolSucceeded(tool="open_app")), llm, desktop=FakeDesktop())
     assert len(steps) == 2
     assert steps[0].error and "CodeRejected" in steps[0].error
     assert steps[1].goal_reached
@@ -78,7 +78,7 @@ def test_three_failures_give_three_steps_not_reached(tmp_path: Path) -> None:
     desktop = FakeDesktop()
     desktop.fail.add("launch")
     llm = ScriptedLLM(["{\"code\": \"await sdk.open_app('Introuvable')\\nreturn 'x'\"}"] * 3)
-    steps = _run(tmp_path, _subgoal(), llm, desktop=desktop)
+    steps = _run(tmp_path, _subgoal(ToolSucceeded(tool="open_app")), llm, desktop=desktop)
     assert len(steps) == 3
     assert all(not step.goal_reached for step in steps)
     assert all(step.error is not None for step in steps)
@@ -88,8 +88,19 @@ def test_guard_refusal_stops_the_subgoal_immediately(tmp_path: Path) -> None:
     llm = ScriptedLLM(
         ["{\"code\": \"await sdk.write_file('D:/interdit/x.txt', 'x')\\nreturn 'x'\"}"]
     )
-    steps = _run(tmp_path, _subgoal(), llm, desktop=FakeDesktop())
+    steps = _run(tmp_path, _subgoal(ToolSucceeded(tool="write_file")), llm, desktop=FakeDesktop())
     assert len(steps) == 1
     assert steps[0].error and "garde-fou" in steps[0].error
     assert not steps[0].goal_reached
     assert len(llm.calls) == 1  # aucun nouvel essai demandé
+
+
+def test_already_satisfied_subgoal_does_nothing_and_asks_no_llm(tmp_path: Path) -> None:
+    """La fenêtre est déjà au premier plan : le sous-but est validé sans appel LLM et
+    sans refaire quoi que ce soit (un « refaire » pourrait casser ce qui tourne)."""
+    llm = ScriptedLLM([])  # aucune réponse : rien ne doit être demandé
+    steps = _run(tmp_path, _subgoal(), llm, desktop=FakeDesktop())
+    assert len(steps) == 1
+    assert steps[0].goal_reached and steps[0].error is None
+    assert steps[0].code == "" and steps[0].actions == []
+    assert llm.calls == []

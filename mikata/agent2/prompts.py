@@ -104,6 +104,8 @@ Règles strictes :
 - Pas d'import, pas d'open, pas d'attribut commençant par « _ ».
 - Chaque appel au sdk est `await sdk.methode(...)`.
 - Fais le minimum pour atteindre le sous-but, puis `return` un court texte de ce que tu as fait.
+- Si la condition de réussite est DÉJÀ vraie à l'écran, ne fais rien : `return` directement
+  (refaire le travail peut casser ce qui vient d'être fait).
 - Ne dis rien à l'utilisateur (pas de sdk.say) sauf si le sous-but l'exige.
 - Toute autre méthode n'existe pas : pour un outil qui n'est pas dans cette liste,
   appelle `await sdk.tool("<nom de l'outil>", ...)`.

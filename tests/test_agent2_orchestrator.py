@@ -194,7 +194,9 @@ def _seed_recipe(tmp_path: Path) -> tuple[Any, Any]:
 
 
 def test_full_request_reaches_done_and_saves_a_verified_trace(tmp_path: Path) -> None:
-    llm = ScriptedLLM([_UNDERSTAND, _RESOLVE, _PLAN, _STEP1, _STEP2])
+    # Le sous-but 0 (page_shows) est déjà vrai à l'écran : le pré-contrôle le valide
+    # sans appel LLM ni action ; seul le sous-but 1 (browser_click) demande du code.
+    llm = ScriptedLLM([_UNDERSTAND, _RESOLVE, _PLAN, _STEP2])
     browser = FakeBrowser(page="Titre : YouTube\nTexte :\nOne Piece Opening 27 en lecture")
     agent2, speech, _legacy = _agent2(tmp_path, llm, browser=browser)
 
@@ -210,6 +212,8 @@ def test_full_request_reaches_done_and_saves_a_verified_trace(tmp_path: Path) ->
     assert trace.verified and trace.outcome == "ok"
     assert trace.channel == "youtube" and trace.channel_announced
     assert len(trace.plan) == 2 and len(trace.steps) == 2
+    assert trace.steps[0].code == "" and trace.steps[0].goal_reached  # pré-vérifié, rien refait
+    assert [action.tool for action in trace.steps[1].actions] == ["browser_click"]
 
 
 def test_chat_is_delegated_to_the_legacy_agent(tmp_path: Path) -> None:

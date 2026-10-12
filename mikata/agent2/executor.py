@@ -72,6 +72,14 @@ async def run_subgoal(
         error: str | None = None
         code = ""
         reached = False
+        if sub.done_when.type != "judge":
+            # La condition est déjà vraie à l'écran ? On n'appelle pas le LLM et on ne
+            # refait rien (un « refaire » pourrait casser ce qui vient d'être fait, ex.
+            # rouvrir la recherche pendant que la vidéo tourne).
+            already, _ = await check(sub.done_when, obs, [], llm, effort=cfg.fast_effort)
+            if already:
+                steps.append(_make_step(index, attempt, "", recorder, None, obs, True))
+                return steps
         if sub.skill and skills is not None:
             code = f"skill:{sub.skill}"
             try:

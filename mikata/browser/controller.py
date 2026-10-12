@@ -190,6 +190,13 @@ class BrowserController:
                 # premier _minimize_work_window, selon browser.window_hidden) ne flashe
                 # jamais.
                 startupinfo.wShowWindow = 0
+            if self._work_window_pids():
+                # Le profil tourne déjà : un nouveau lancement serait repris par le
+                # verrou singleton de Chromium, qui RESTAURE la fenêtre existante en
+                # plein écran avant qu'on la re-cache — le flash. On n'attend que le
+                # port : l'instance existante va le servir.
+                logger.info("Profil de travail déjà lancé : attente du port {}.", cfg.cdp_port)
+                return
         subprocess.Popen(
             argv,
             stdout=subprocess.DEVNULL,
