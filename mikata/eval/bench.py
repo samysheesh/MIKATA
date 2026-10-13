@@ -13,6 +13,7 @@ réussite : une phase qui ralentit le chemin court se voit ici.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import statistics
@@ -31,6 +32,7 @@ from mikata.eval.sim import SimWorld, WorldSpec
 from mikata.tools.base import ToolContext
 
 AgentFactory = Callable[[Config, ToolContext], Any]
+LIVE_SETTLE_S = 4.0  # vrai PC : délai laissé à l'état pour se stabiliser
 
 
 class Task(BaseModel):
@@ -257,7 +259,13 @@ async def run_trial(
         answer = (getattr(result, "answer", "") or " ".join(speech.said)).strip()
         raw_calls = getattr(result, "tool_calls", []) or []
         calls = [(call.name, dict(call.arguments)) for call in raw_calls]
-        failures = [f"erreur : {error}"] if error else grade(task, Env(ctx, answer, calls, world))
+        env = Env(ctx, answer, calls, world)
+        failures = [f"erreur : {error}"] if error else grade(task, env)
+        # Vrai PC : une fenêtre met un instant à apparaître, on relit l'état quelques fois.
+        deadline = time.monotonic() + (LIVE_SETTLE_S if live_ctx is not None else 0.0)
+        while failures and not error and time.monotonic() < deadline:
+            await asyncio.sleep(0.5)
+            failures = grade(task, env)
         usage = getattr(result, "usage", None)
         first = getattr(result, "first_token_at", None)
         trial = Trial(
@@ -286,6 +294,8 @@ async def run_trial(
 
 async def restore_live(task: Task, ctx: ToolContext, before: dict[str, Any]) -> None:
     """Remet le vrai PC dans l'état d'avant l'essai (volume, presse-papiers, fenêtres)."""
+    if any(item.startswith("close:") for item in task.restore):
+        await asyncio.sleep(1.5)  # la fenêtre à refermer doit avoir eu le temps de s'ouvrir
     for item in task.restore:
         try:
             if item == "volume" and ctx.audio is not None:
