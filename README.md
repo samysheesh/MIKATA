@@ -4,6 +4,8 @@ Assistant vocal local pour PC Windows 11 : on dit « MIKATA », il écoute, tran
 interroge un LLM cloud, agit sur le PC et répond à voix haute dans le casque.
 
 - Architecture (fait foi) : [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- Cœur agent (ce qui suit la transcription : programmes, politiques, apprentissage) : [`docs/AGENT_CORE.md`](docs/AGENT_CORE.md)
+- Banc d'essai : `uv run python scripts/eval_bench.py` (50 tâches, PC simulé ou réel)
 - Instructions pour Claude Code : [`CLAUDE.md`](CLAUDE.md)
 - Lancement : `uv run python -m mikata` (options : `--check-config`, `--config CHEMIN`, `--no-tray`, `--no-audio`, `--no-llm`, `--ask "question"`)
 - Réglages : `config.yaml` ; secrets : `.env` (copier `.env.example`, jamais commité) : `LLM_API_KEY`, `SEARCH_API_KEY` (Tavily, voir phase 4)
