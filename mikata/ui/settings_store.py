@@ -58,6 +58,12 @@ SETTINGS: tuple[SettingSpec, ...] = (
     SettingSpec("ui.skin", "Skin de la mascotte", True),
     SettingSpec("ui.bubble_s", "Bulle visible après la dernière phrase (s)", True),
     SettingSpec("ui.mascot", "Mascotte au démarrage de MIKATA", False),
+    SettingSpec(
+        "guard.full_access",
+        "Accès complet",
+        False,
+        "plus aucune confirmation après une page web ou un fichier lu",
+    ),
 )
 SPECS = {spec.key: spec for spec in SETTINGS}
 

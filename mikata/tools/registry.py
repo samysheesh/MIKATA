@@ -116,6 +116,7 @@ class ToolResult:
     terminal: bool
     duration_s: float
     data: dict[str, Any] | None = None  # payload structuré (phase 12e), jamais envoyé au LLM
+    status: str = "ok"  # ok | échec | refusé | annulé | délai (phase 14c : lu par les scripts)
 
 
 # Payload structuré qu'un outil peut publier pendant son exécution (même tâche que
@@ -229,4 +230,4 @@ class ToolRegistry:
             duration * 1000,
             content[:160].replace("\n", " "),
         )
-        return ToolResult(call.id, call.name, ok, content, terminal, duration, data)
+        return ToolResult(call.id, call.name, ok, content, terminal, duration, data, status)

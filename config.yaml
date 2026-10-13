@@ -139,6 +139,7 @@ guard:
   backup_days: 14                  # sauvegardes avant écrasement (data/backups), puis corbeille
   shutdown_cancel_s: 5             # délai pour dire « stop » avant extinction / redémarrage / veille
   confirm_after_web: false         # true : commande shell après une page web -> confirmation orale
+  full_access: false               # true : accès complet, plus aucune confirmation après un contenu lu
   confirm_risky: true              # commandes risquées (registre, services...) -> « Tu confirmes ? »
   confirm_timeout_s: 6             # temps laissé pour répondre oui / non
   trash_max_mb: 4096               # au-delà, mise à la corbeille refusée (Windows supprimerait)

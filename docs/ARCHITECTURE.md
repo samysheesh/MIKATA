@@ -292,8 +292,9 @@ mikata/
     │                                              # sous Windows, Spotlight sous macOS)
     ├─ tts/    base.py  piper_tts.py  kokoro_tts.py  normalize.py  cache.py
     │        router.py  elevenlabs.py  credits.py   # phase 11 : profils de voix, ElevenLabs
-    ├─ action/ effects.py  sdk.py                  # phase 14b : effets, confiance, SDK des
-    │                                              # scripts (façade sur le registre)
+    ├─ action/ effects.py  sdk.py  interp.py       # phases 14b-14c : effets, confiance, SDK,
+    │        policy.py  extract.py  runtime.py     # interpréteur de scripts, politiques,
+    │                                              # extraction en quarantaine
     ├─ eval/   sim.py  bench.py  agents.py         # phase 14a : banc d'essai (PC simulé,
     │                                              # correcteurs d'état final)
     └─ ui/     tray.py  notify.py  hotkeys.py
@@ -416,6 +417,8 @@ guard:
   backup_days: 14
   shutdown_cancel_s: 5
   confirm_after_web: false
+  full_access: false                # phase 14c : true = plus aucune confirmation après un
+                                    # contenu lu (les refus restent)
 browser:                            # phase 12b : navigateur piloté (DevTools)
   enabled: true
   cdp_port: 9222

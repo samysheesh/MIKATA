@@ -31,6 +31,7 @@ interroge un LLM cloud, agit sur le PC et répond à voix haute dans le casque.
 | 13 | Agent v2 | retirée en 14a |
 | 14a | Socle du nouveau cœur agent : retrait de la v2, CI verte, banc d'essai, mesure de référence | livrée, à valider sur le PC |
 | 14b | Espace d'action : effet et confiance déclarés par chaque outil, résultats structurés, référence du SDK | livrée, à valider sur le PC |
+| 14c | Interpréteur de scripts (budget, provenance), politiques d'action, extraction en quarantaine, réglage « accès complet » | livrée, à valider sur le PC |
 
 ## Développement
 
@@ -2746,3 +2747,55 @@ uv run python -c "from mikata.tools.registry import load_builtin_tools, register
 
 Attendu : tout en `passed`, puis la référence du SDK (55 fonctions, de `apps.close` à
 `web.search`), avec `[conséquent]` et `[contenu non fiable]` aux bons endroits.
+
+## Phase 14c — interpréteur, provenance et politiques
+
+Troisième phase de [`docs/AGENT_CORE.md`](docs/AGENT_CORE.md) (§3.4 et §3.5). Rien n'est
+encore branché sur la voix : cette phase livre le moteur que la boucle utilisera (phase 14d).
+
+- **Interpréteur maison** (`mikata/action/interp.py`) : le code écrit par le modèle n'est plus
+  passé à `exec`. Il est évalué nœud par nœud dans un sous-ensemble de Python : pas d'import,
+  pas de fonction ni de classe, pas d'attribut caché, seulement le SDK et quelques fonctions
+  de base. Un **budget** borne le nombre d'opérations, la durée et la taille des valeurs, et
+  l'interpréteur rend la main à la boucle asyncio en cours de route.
+- **Provenance** : chaque valeur porte un niveau de confiance (fiable, local, non fiable),
+  propagé par chaque opération, y compris quand un contenu lu ne fait que choisir une branche.
+- **Politiques** (`mikata/action/policy.py`), appliquées par le code à chaque appel d'outil :
+  lire et agir de façon réversible sont libres ; une action conséquente qui dépend d'un
+  contenu lu demande un « oui » ; une commande shell ou un souvenir construits à partir d'un
+  contenu lu sont refusés, toujours. Le garde-fou de la phase 5 reste derrière, dans chaque
+  outil.
+- **Extraction en quarantaine** (`mikata/action/extract.py`) : le contenu d'une page ou d'un
+  fichier est confié à un appel LLM sans outil, qui rend des champs fixés d'avance.
+- **Réglage « accès complet »** (`guard.full_access`, case dans les réglages) : désactivé par
+  défaut. Activé, plus aucune confirmation ; les refus, eux, ne se désactivent pas.
+
+### Vérification sur le PC
+
+```powershell
+git fetch origin
+git checkout phase-14c-interpreteur
+uv sync
+uv run ruff check . ; uv run ruff format --check . ; uv run pytest
+uv run pytest tests\test_action_interp.py tests\test_action_runtime.py tests\test_guard_criteria.py -v
+```
+
+Attendu : tout en `passed`. Les trois critères de la phase sont des tests :
+
+- `test_an_infinite_loop_stops_in_under_a_second` : `while True: pass` s'arrête en moins
+  d'une seconde (l'ancien bac à sable gelait MIKATA), et
+  `test_the_event_loop_keeps_running_during_a_long_script` montre que le reste continue de
+  tourner pendant un script long ;
+- la suite d'injection (`test_untrusted_content_never_becomes_a_shell_command`,
+  `test_a_consequential_action_after_untrusted_content_asks_first`,
+  `test_control_flow_taint_asks_too`, `test_untrusted_content_never_becomes_a_memory`...) :
+  aucune action conséquente ne part d'un contenu lu sans un « oui » ;
+- `tests\test_guard_criteria.py` (critère de la phase 5) reste vert.
+
+Essai à la main, sans LLM ni action réelle risquée :
+
+```powershell
+uv run python -c "import asyncio; from mikata.action.interp import Interpreter, Val; from mikata.action.effects import Trust; H=type('H',(),{'namespaces':lambda s:{},'functions':lambda s:set()})(); print(asyncio.run(Interpreter(H).run('return sum([x*x for x in range(10)])')))"
+```
+
+Attendu : `Val(value=285, trust=<Trust.TRUSTED: 0>)`.

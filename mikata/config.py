@@ -327,6 +327,10 @@ class GuardConfig(_Section):
     backup_days: int = Field(default=14, ge=1)
     shutdown_cancel_s: float = Field(default=5, ge=0)
     confirm_after_web: bool = False
+    # Phase 14c (docs/AGENT_CORE.md §3.5) : « accès complet ». Faux (défaut) : une action
+    # conséquente qui dépend d'un contenu lu (page web, fichier, texte d'une appli) demande
+    # un « oui ». Vrai : aucune confirmation. Les refus, eux, ne se désactivent pas.
+    full_access: bool = False
     # Ajouts phase 5 : confirmation orale des commandes risquées (liste grise), délai de
     # réponse, taille maximale envoyée à la corbeille (au-delà, Windows supprimerait
     # définitivement : refus).
