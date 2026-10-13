@@ -25,6 +25,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from mikata.action.effects import Effect, Trust
 from mikata.tools.base import BaseTool, ToolError
 from mikata.tools.registry import register_tool
 
@@ -95,6 +96,10 @@ class FindParams(BaseModel):
 @register_tool
 class FindFiles(BaseTool[FindParams]):
     name = "find_files"
+    returns = "{paths, best, count}"
+    sdk = "files.search"
+    effect = Effect.READ
+    expected_s = 2.0
     description = (
         "Cherche des fichiers ou dossiers par nom dans le dossier personnel (Bureau = Desktop, "
         "Téléchargements = Downloads...), les plus récents d'abord."
@@ -137,6 +142,10 @@ def read_text(path: Path) -> str:
 @register_tool
 class ReadFile(BaseTool[PathParams]):
     name = "read_file"
+    returns = "{path, text}"
+    sdk = "files.read"
+    effect = Effect.READ
+    output = Trust.UNTRUSTED
     description = "Lit un fichier texte (début du fichier si il est long)."
     params = PathParams
 
@@ -145,6 +154,7 @@ class ReadFile(BaseTool[PathParams]):
         if not path.is_file():
             raise ToolError(f"fichier introuvable : {path}")
         text = await self.ctx.run_blocking(read_text, path)
+        self.ctx.publish_data({"path": str(path), "text": text})
         return f"Contenu de {path} {DATA_NOTICE} :\n{text}"
 
 
@@ -172,6 +182,8 @@ def write_text(path: Path, content: str, mode: str) -> None:
 @register_tool
 class WriteFile(BaseTool[WriteParams]):
     name = "write_file"
+    sdk = "files.write"
+    effect = Effect.CONSEQUENTIAL
     description = (
         "Écrit un fichier texte (créer, remplacer ou ajouter) ; un fichier remplacé est "
         "d'abord sauvegardé."
@@ -204,6 +216,8 @@ class MoveParams(BaseModel):
 @register_tool
 class MoveFile(BaseTool[MoveParams]):
     name = "move_file"
+    sdk = "files.move"
+    effect = Effect.CONSEQUENTIAL
     description = (
         "Déplace ou renomme un fichier ou un dossier ; un fichier remplacé est d'abord sauvegardé."
     )
@@ -240,6 +254,9 @@ def _move(source: Path, target: Path) -> None:
 @register_tool
 class DeleteFile(BaseTool[PathParams]):
     name = "delete_file"
+    sdk = "files.trash"
+    effect = Effect.CONSEQUENTIAL
+    expected_s = 0.5
     description = (
         "Met un fichier ou un dossier à la corbeille (récupérable ; jamais de suppression "
         "définitive)."
@@ -297,6 +314,9 @@ class FindPathParams(BaseModel):
 @register_tool
 class FindPath(BaseTool[FindPathParams]):
     name = "find_path"
+    returns = "{paths, best, count}"
+    sdk = "files.find"
+    effect = Effect.READ
     description = (
         "Cherche un fichier ou un dossier dans l'index local (instantané, tout le PC, "
         "sans les accents). À préférer à find_files."
@@ -332,6 +352,8 @@ class ListFolderParams(BaseModel):
 @register_tool
 class ListFolder(BaseTool[ListFolderParams]):
     name = "list_folder"
+    sdk = "files.list"
+    effect = Effect.READ
     description = "Liste le contenu d'un dossier depuis l'index local (dossiers d'abord)."
     params = ListFolderParams
     terminal = False
@@ -369,6 +391,10 @@ class OpenInExplorerParams(BaseModel):
 @register_tool
 class OpenInExplorer(BaseTool[OpenInExplorerParams]):
     name = "open_in_explorer"
+    returns = "{path, is_dir}"
+    sdk = "files.reveal"
+    effect = Effect.ACT
+    expected_s = 0.5
     description = "Ouvre l'Explorateur de fichiers sur un dossier (ou sélectionne le fichier)."
     params = OpenInExplorerParams
     terminal = True

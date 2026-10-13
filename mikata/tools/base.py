@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Generic, Protocol, TypeVar, run
 from loguru import logger
 from pydantic import BaseModel
 
+from mikata.action.effects import Effect, Trust
 from mikata.config import Config
 
 if TYPE_CHECKING:
@@ -60,6 +61,14 @@ class BaseTool(Generic[P]):
     description: ClassVar[str]
     params: ClassVar[type[BaseModel]]
     terminal: ClassVar[bool] = False
+    # Phase 14b (docs/AGENT_CORE.md §3.3) : place de l'outil dans l'espace d'action.
+    # Un outil qui ne déclare rien est traité avec prudence : effet conséquent.
+    sdk: ClassVar[str] = ""  # « espace.fonction » dans les scripts ; "" = tool.<name>
+    effect: ClassVar[Effect] = Effect.CONSEQUENTIAL
+    output: ClassVar[Trust] = Trust.LOCAL  # confiance de ce que l'outil renvoie
+    expected_s: ClassVar[float] = 0.3  # durée typique (accusé de réception si c'est long)
+    platforms: ClassVar[tuple[str, ...]] = ()  # vide = toutes
+    returns: ClassVar[str] = "str"  # forme du résultat reçu par un script
 
     def __init__(self, ctx: ToolContext) -> None:
         self.ctx = ctx
@@ -354,8 +363,9 @@ class ToolContext:
         task.add_done_callback(self.tasks.discard)
 
     def publish_data(self, data: dict[str, Any]) -> None:
-        """Payload structuré du résultat de l'outil en cours (phase 12e) : lu par le
-        registre et attaché à `ToolResult.data` pour le rejeu local des savoir-faire."""
+        """Résultat structuré de l'outil en cours : lu par le registre et attaché à
+        `ToolResult.data`. C'est ce qu'un script reçoit de l'appel (le texte reste pour
+        le modèle) ; jamais envoyé au LLM tel quel."""
         from mikata.tools.registry import _TOOL_DATA
 
         _TOOL_DATA.set(data)

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import re
 import time
 from collections.abc import Iterable
 from contextvars import ContextVar
@@ -43,6 +44,7 @@ FAMILIES = (
 )
 
 _REGISTRY: dict[str, type[Any]] = {}
+SDK_NAME_RE = re.compile(r"^[a-z][a-z_]*\.[a-z][a-z_]*$")
 T = TypeVar("T", bound=type)
 
 
@@ -60,6 +62,9 @@ def register_tool(cls: T) -> T:
         raise TypeError(f"{cls.__name__} : `terminal` doit être un booléen")
     if not asyncio.iscoroutinefunction(getattr(cls, "run", None)):
         raise TypeError(f"{cls.__name__} : `run` doit être une coroutine")
+    sdk = getattr(cls, "sdk", "")
+    if sdk and not SDK_NAME_RE.match(sdk):
+        raise TypeError(f"{cls.__name__} : `sdk` doit avoir la forme « espace.fonction »")
     if name in _REGISTRY and _REGISTRY[name] is not cls:
         raise ValueError(f"outil « {name} » enregistré deux fois")
     _REGISTRY[name] = cls

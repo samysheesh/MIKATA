@@ -9,8 +9,11 @@ confirmation ; une page lue marque le tour (confirm_after_web s'applique).
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
+from mikata.action.effects import Effect, Trust
 from mikata.agent.guard import Verdict
 from mikata.tools.base import BaseTool, BrowserControl, GuardDenied, ToolContext, ToolError
 from mikata.tools.registry import register_tool
@@ -31,6 +34,9 @@ class BrowserOpenParams(BaseModel):
 @register_tool
 class BrowserOpen(BaseTool[BrowserOpenParams]):
     name = "browser_open"
+    sdk = "browser.open"
+    effect = Effect.ACT
+    expected_s = 3.0
     description = (
         "Ouvre une URL dans le navigateur (Brave) et attend la page, puis continue : lis "
         "la page (browser_read) et clique (browser_click) ou écris (browser_type) pour "
@@ -46,6 +52,30 @@ class BrowserOpen(BaseTool[BrowserOpenParams]):
         return await _browser(self.ctx).open_url(args.url)
 
 
+def parse_page(text: str) -> dict[str, Any]:
+    """Page lue par `BrowserControl.read`, en champs : titre, adresse, texte, liens, boutons."""
+    page: dict[str, Any] = {"title": "", "url": "", "text": "", "links": [], "buttons": []}
+    body: list[str] = []
+    in_text = False
+    for line in text.splitlines():
+        if line.startswith("Titre : ") and not page["title"]:
+            page["title"] = line[len("Titre : ") :].strip()
+        elif line.startswith("URL : ") and not page["url"]:
+            page["url"] = line[len("URL : ") :].strip()
+        elif line.startswith("Texte :"):
+            in_text = True
+        elif line.startswith("Liens : "):
+            in_text = False
+            page["links"] = [part.strip() for part in line[len("Liens : ") :].split(" | ")]
+        elif line.startswith("Boutons : "):
+            in_text = False
+            page["buttons"] = [part.strip() for part in line[len("Boutons : ") :].split(" | ")]
+        elif in_text:
+            body.append(line)
+    page["text"] = "\n".join(body).strip()
+    return page
+
+
 class BrowserReadParams(BaseModel):
     """Lit l'onglet actif du navigateur."""
 
@@ -53,6 +83,11 @@ class BrowserReadParams(BaseModel):
 @register_tool
 class BrowserRead(BaseTool[BrowserReadParams]):
     name = "browser_read"
+    returns = "{title, url, text, links, buttons}"
+    sdk = "browser.read"
+    effect = Effect.READ
+    output = Trust.UNTRUSTED
+    expected_s = 1.0
     description = (
         "Lit la page du navigateur (titre, texte, liens et boutons visibles), sans la "
         "mettre au premier plan. À utiliser avant de cliquer."
@@ -63,6 +98,7 @@ class BrowserRead(BaseTool[BrowserReadParams]):
     async def run(self, args: BrowserReadParams) -> str:
         text = await _browser(self.ctx).read(self.ctx.config.browser.page_text_max_chars)
         _mark_web_read()
+        self.ctx.publish_data(parse_page(text))
         return text
 
 
@@ -74,6 +110,10 @@ class BrowserClickParams(BaseModel):
 @register_tool
 class BrowserClick(BaseTool[BrowserClickParams]):
     name = "browser_click"
+    sdk = "browser.click"
+    effect = Effect.ACT
+    output = Trust.UNTRUSTED
+    expected_s = 2.0
     description = "Clique un élément de la page du navigateur par son texte visible."
     params = BrowserClickParams
     terminal = True
@@ -97,6 +137,9 @@ class BrowserTypeParams(BaseModel):
 @register_tool
 class BrowserType(BaseTool[BrowserTypeParams]):
     name = "browser_type"
+    sdk = "browser.type"
+    effect = Effect.CONSEQUENTIAL
+    expected_s = 1.0
     description = "Écrit un texte dans un champ de la page du navigateur (par libellé)."
     params = BrowserTypeParams
     terminal = True
@@ -116,6 +159,9 @@ class BrowserBackParams(BaseModel):
 @register_tool
 class BrowserBack(BaseTool[BrowserBackParams]):
     name = "browser_back"
+    sdk = "browser.back"
+    effect = Effect.ACT
+    expected_s = 1.0
     description = "Revient à la page précédente du navigateur."
     params = BrowserBackParams
     terminal = True
@@ -131,6 +177,10 @@ class BrowserTabsParams(BaseModel):
 @register_tool
 class BrowserTabs(BaseTool[BrowserTabsParams]):
     name = "browser_tabs"
+    sdk = "browser.tabs"
+    effect = Effect.READ
+    output = Trust.UNTRUSTED
+    expected_s = 0.5
     description = "Liste les onglets ouverts du navigateur (titre et URL)."
     params = BrowserTabsParams
     terminal = False
@@ -146,6 +196,9 @@ class BrowserCloseParams(BaseModel):
 @register_tool
 class BrowserClose(BaseTool[BrowserCloseParams]):
     name = "browser_close"
+    sdk = "browser.close"
+    effect = Effect.ACT
+    expected_s = 0.5
     description = (
         "Ferme complètement le navigateur de travail de MIKATA : sa fenêtre et sa lecture "
         "en cours s'arrêtent (jamais le navigateur de l'utilisateur)."

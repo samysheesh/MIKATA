@@ -27,6 +27,7 @@ from collections.abc import Sequence
 
 from pydantic import BaseModel, Field
 
+from mikata.action.effects import Effect
 from mikata.tools.base import AppEntry, BaseTool, NoParams, ToolError, WindowInfo
 from mikata.tools.registry import register_tool
 
@@ -282,6 +283,9 @@ class AppName(BaseModel):
 @register_tool
 class OpenApp(BaseTool[AppName]):
     name = "open_app"
+    sdk = "apps.open"
+    effect = Effect.ACT
+    expected_s = 1.0
     description = "Ouvre (ou ramène au premier plan) une application ou un jeu installé."
     params = AppName
     terminal = True
@@ -300,6 +304,8 @@ class OpenApp(BaseTool[AppName]):
 @register_tool
 class CloseApp(BaseTool[AppName]):
     name = "close_app"
+    sdk = "apps.close"
+    effect = Effect.ACT
     description = "Ferme une application ouverte (toutes ses fenêtres), comme avec la croix."
     params = AppName
     terminal = True
@@ -326,6 +332,8 @@ class WindowParams(BaseModel):
 @register_tool
 class CloseWindow(BaseTool[WindowParams]):
     name = "close_window"
+    sdk = "apps.close_window"
+    effect = Effect.ACT
     description = (
         "Ferme une seule fenêtre, comme avec la croix : la fenêtre active (« ferme cette "
         "fenêtre »), ou celle d'une appli ou d'un titre donné."
@@ -353,6 +361,8 @@ class CloseWindow(BaseTool[WindowParams]):
 @register_tool
 class FocusWindow(BaseTool[AppName]):
     name = "focus_window"
+    sdk = "apps.focus"
+    effect = Effect.ACT
     description = "Met au premier plan la fenêtre d'une application déjà ouverte."
     params = AppName
     terminal = True
@@ -377,6 +387,10 @@ class FocusWindow(BaseTool[AppName]):
 @register_tool
 class ListWindows(BaseTool[NoParams]):
     name = "list_windows"
+    returns = "{windows: [{app, title}]}"
+    sdk = "apps.windows"
+    effect = Effect.READ
+    expected_s = 0.2
     description = "Liste les fenêtres ouvertes (application et titre)."
     params = NoParams
 
@@ -386,4 +400,7 @@ class ListWindows(BaseTool[NoParams]):
         if not windows:
             return "Aucune fenêtre ouverte."
         lines = [f"- {w.process or '?'} : {w.title}" for w in windows[:30]]
+        self.ctx.publish_data(
+            {"windows": [{"app": w.process, "title": w.title} for w in windows[:30]]}
+        )
         return "Fenêtres ouvertes :\n" + "\n".join(lines)

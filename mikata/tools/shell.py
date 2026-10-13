@@ -20,6 +20,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from mikata.action.effects import Effect, Trust
 from mikata.agent.guard import AFTER_WEB, Decision, Guard, Verdict
 from mikata.tools.base import (
     ActionCancelled,
@@ -102,6 +103,11 @@ class PowerShellParams(BaseModel):
 @register_tool
 class RunPowerShell(BaseTool[PowerShellParams]):
     name = "run_powershell"
+    sdk = "shell.run"
+    effect = Effect.CONSEQUENTIAL
+    output = Trust.UNTRUSTED
+    expected_s = 3.0
+    platforms = ("win32",)
     description = (
         "Dernier recours sous Windows : commande PowerShell pour ce qu'aucun autre outil "
         "ne sait faire "
@@ -142,6 +148,11 @@ class ShellParams(BaseModel):
 @register_tool
 class RunShell(BaseTool[ShellParams]):
     name = "run_shell"
+    sdk = "shell.run"
+    effect = Effect.CONSEQUENTIAL
+    output = Trust.UNTRUSTED
+    expected_s = 3.0
+    platforms = ("darwin",)
     description = (
         "Dernier recours sous macOS : commande zsh pour ce qu'aucun autre outil ne sait "
         "faire (jamais pour ouvrir ou fermer une appli, taper du texte, déplacer ou "
@@ -195,6 +206,10 @@ def script_argv(path: Path, arguments: list[str]) -> list[str]:
 @register_tool
 class RunScript(BaseTool[ScriptParams]):
     name = "run_script"
+    sdk = "shell.script"
+    effect = Effect.CONSEQUENTIAL
+    output = Trust.UNTRUSTED
+    expected_s = 3.0
     description = "Lance un des scripts de l'utilisateur rangés dans scripts/user (30 s max)."
     params = ScriptParams
 

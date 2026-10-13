@@ -14,6 +14,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from mikata.action.effects import Effect
 from mikata.agent.guard import Verdict
 from mikata.tools.base import BaseTool, GuardDenied, ToolError
 from mikata.tools.registry import register_tool
@@ -151,6 +152,9 @@ class TypeParams(BaseModel):
 @register_tool
 class TypeText(BaseTool[TypeParams]):
     name = "type_text"
+    sdk = "keyboard.type"
+    effect = Effect.CONSEQUENTIAL
+    expected_s = 0.5
     description = "Tape un texte au clavier dans la fenêtre active (accents compris)."
     params = TypeParams
     terminal = True
@@ -176,6 +180,8 @@ class KeysParams(BaseModel):
 @register_tool
 class PressKeys(BaseTool[KeysParams]):
     name = "press_keys"
+    sdk = "keyboard.press"
+    effect = Effect.CONSEQUENTIAL
     description = "Appuie sur une touche ou un raccourci clavier dans la fenêtre active."
     params = KeysParams
     terminal = True
@@ -206,6 +212,8 @@ class MouseParams(BaseModel):
 @register_tool
 class Mouse(BaseTool[MouseParams]):
     name = "mouse"
+    sdk = "mouse.do"
+    effect = Effect.CONSEQUENTIAL
     description = "Clic, double-clic, clic droit, molette ou déplacement de la souris."
     params = MouseParams
     terminal = True

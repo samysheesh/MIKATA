@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from mikata.action.effects import Effect
 from mikata.agent.memory import LongTermMemory, MemoryFullError, ShortTermMemory
 from mikata.tools.base import BaseTool, ToolContext, ToolError
 from mikata.tools.registry import register_tool
@@ -34,6 +35,9 @@ class FactParams(BaseModel):
 @register_tool
 class Remember(BaseTool[FactParams]):
     name = "remember"
+    sdk = "memory.remember"
+    effect = Effect.CONSEQUENTIAL
+    expected_s = 0.1
     description = "Mémorise durablement un fait sur l'utilisateur quand il le demande."
     params = FactParams
     terminal = True
@@ -55,6 +59,9 @@ class ForgetParams(BaseModel):
 @register_tool
 class Forget(BaseTool[ForgetParams]):
     name = "forget"
+    sdk = "memory.forget"
+    effect = Effect.CONSEQUENTIAL
+    expected_s = 0.1
     description = "Oublie un fait mémorisé, quand l'utilisateur le demande."
     params = ForgetParams
     terminal = True
@@ -96,6 +103,9 @@ class HistoryDurationParams(BaseModel):
 @register_tool
 class SetHistoryDuration(BaseTool[HistoryDurationParams]):
     name = "set_history_duration"
+    sdk = "memory.keep_history"
+    effect = Effect.ACT
+    expected_s = 0.1
     description = (
         "Change combien de temps la conversation est gardée sans échange (« garde la "
         "conversation un mois »)."

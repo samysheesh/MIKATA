@@ -14,6 +14,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from mikata.action.effects import Effect
 from mikata.tools.apps import name_score
 from mikata.tools.base import BaseTool, ToolError
 from mikata.tools.registry import register_tool
@@ -126,6 +127,9 @@ class MediaParams(BaseModel):
 @register_tool
 class MediaControl(BaseTool[MediaParams]):
     name = "media_control"
+    sdk = "media.control"
+    effect = Effect.ACT
+    expected_s = 0.2
     description = (
         "Contrôle la musique ou la vidéo en cours (Spotify, navigateur...) : lecture, pause, "
         "piste suivante ou précédente."
@@ -158,6 +162,9 @@ class VolumeParams(BaseModel):
 @register_tool
 class SetVolume(BaseTool[VolumeParams]):
     name = "set_volume"
+    sdk = "audio.volume"
+    effect = Effect.ACT
+    expected_s = 0.2
     description = "Règle le volume général de Windows (absolu en %, ou relatif)."
     params = VolumeParams
     terminal = True
@@ -183,6 +190,9 @@ class MuteParams(BaseModel):
 @register_tool
 class Mute(BaseTool[MuteParams]):
     name = "mute"
+    sdk = "audio.mute"
+    effect = Effect.ACT
+    expected_s = 0.2
     description = "Coupe le son de Windows, ou le remet."
     params = MuteParams
     terminal = True
@@ -210,6 +220,9 @@ class OutputParams(BaseModel):
 @register_tool
 class SetOutputDevice(BaseTool[OutputParams]):
     name = "set_output_device"
+    sdk = "audio.output"
+    effect = Effect.ACT
+    expected_s = 0.5
     description = "Change la sortie audio par défaut de Windows (casque, enceintes...)."
     params = OutputParams
     terminal = True

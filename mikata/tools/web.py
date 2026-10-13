@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field
 
+from mikata.action.effects import Effect, Trust
 from mikata.tools.base import BaseTool, ToolContext, ToolError, current_turn
 from mikata.tools.registry import register_tool
 
@@ -124,6 +125,9 @@ class UrlParams(BaseModel):
 @register_tool
 class OpenUrl(BaseTool[UrlParams]):
     name = "open_url"
+    sdk = "web.open"
+    effect = Effect.ACT
+    expected_s = 0.5
     description = "Ouvre une page web dans le navigateur par défaut."
     params = UrlParams
     terminal = True
@@ -165,6 +169,11 @@ class SearchParams(BaseModel):
 @register_tool
 class WebSearch(BaseTool[SearchParams]):
     name = "web_search"
+    returns = "{answer, results: [{title, snippet, url}]}"
+    sdk = "web.search"
+    effect = Effect.READ
+    output = Trust.UNTRUSTED
+    expected_s = 1.5
     description = (
         "Recherche sur le web (actualité, faits récents, horaires...) ; renvoie un résumé et "
         "des extraits avec leurs adresses."
@@ -201,6 +210,7 @@ class WebSearch(BaseTool[SearchParams]):
                 }
                 for r in data.get("results") or []
             ]
+            self.ctx.publish_data({"answer": data.get("answer"), "results": results})
             return format_results(data.get("answer"), results)
         response = await _request(
             self.ctx,
@@ -219,6 +229,7 @@ class WebSearch(BaseTool[SearchParams]):
             }
             for r in (data.get("web") or {}).get("results") or []
         ]
+        self.ctx.publish_data({"answer": None, "results": results})
         return format_results(None, results)
 
 
@@ -238,6 +249,11 @@ def extract_text(html: str, url: str) -> str:
 @register_tool
 class FetchPage(BaseTool[UrlParams]):
     name = "fetch_page"
+    returns = "{url, text}"
+    sdk = "web.fetch"
+    effect = Effect.READ
+    output = Trust.UNTRUSTED
+    expected_s = 2.0
     description = "Lit le texte principal d'une page web (article, recette, documentation)."
     params = UrlParams
 
@@ -252,6 +268,7 @@ class FetchPage(BaseTool[UrlParams]):
         text = await asyncio.to_thread(extract_text, html, url)
         if not text:
             raise ToolError("aucun texte lisible sur cette page")
+        self.ctx.publish_data({"url": url, "text": text})
         return f"Texte de {url} {DATA_NOTICE} :\n{text}"
 
 
@@ -296,6 +313,9 @@ def format_weather(place: str, data: dict[str, Any], day: int) -> str:
 @register_tool
 class GetWeather(BaseTool[WeatherParams]):
     name = "get_weather"
+    sdk = "web.weather"
+    effect = Effect.READ
+    expected_s = 1.0
     description = (
         "Météo actuelle et prévisions jusqu'à 6 jours pour une ville : à utiliser pour toute "
         "question de météo, même si l'utilisateur dit « cherche »."

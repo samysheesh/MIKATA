@@ -11,6 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from mikata.action.effects import Effect
 from mikata.tools.base import BaseTool, NoParams, ToolContext, ToolError
 from mikata.tools.registry import register_tool
 
@@ -24,6 +25,9 @@ def _library(ctx: ToolContext) -> Any:
 @register_tool
 class ListSkills(BaseTool[NoParams]):
     name = "list_skills"
+    sdk = "skills.list"
+    effect = Effect.READ
+    expected_s = 0.1
     description = "Liste les procédures que MIKATA sait déjà faire (apprises en usage)."
     params = NoParams
     terminal = False
@@ -55,6 +59,9 @@ class RememberSkillParams(BaseModel):
 @register_tool
 class RememberSkill(BaseTool[RememberSkillParams]):
     name = "remember_skill"
+    sdk = "skills.remember"
+    effect = Effect.CONSEQUENTIAL
+    expected_s = 2.0
     description = (
         "Mémorise comment faire la tâche qui vient de réussir, pour la refaire plus vite "
         "la prochaine fois (apprentissage forcé, avec la description donnée)."
@@ -85,6 +92,9 @@ class ForgetSkillParams(BaseModel):
 @register_tool
 class ForgetSkill(BaseTool[ForgetSkillParams]):
     name = "forget_skill"
+    sdk = "skills.forget"
+    effect = Effect.CONSEQUENTIAL
+    expected_s = 0.1
     description = "Oublie une procédure apprise (elle sera réexplorée si on la redemande)."
     params = ForgetSkillParams
     terminal = True

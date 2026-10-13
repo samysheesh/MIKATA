@@ -292,6 +292,8 @@ mikata/
     │                                              # sous Windows, Spotlight sous macOS)
     ├─ tts/    base.py  piper_tts.py  kokoro_tts.py  normalize.py  cache.py
     │        router.py  elevenlabs.py  credits.py   # phase 11 : profils de voix, ElevenLabs
+    ├─ action/ effects.py  sdk.py                  # phase 14b : effets, confiance, SDK des
+    │                                              # scripts (façade sur le registre)
     ├─ eval/   sim.py  bench.py  agents.py         # phase 14a : banc d'essai (PC simulé,
     │                                              # correcteurs d'état final)
     └─ ui/     tray.py  notify.py  hotkeys.py

@@ -21,6 +21,7 @@ from typing import Any
 from loguru import logger
 from pydantic import BaseModel, Field, model_validator
 
+from mikata.action.effects import Effect
 from mikata.llm.prompts import format_now
 from mikata.tools.base import BaseTool, NoParams, ToolContext, ToolError, current_turn
 from mikata.tools.registry import register_tool
@@ -92,6 +93,9 @@ def _require_announce(ctx: ToolContext) -> None:
 @register_tool
 class GetTime(BaseTool[NoParams]):
     name = "get_time"
+    sdk = "system.time"
+    effect = Effect.READ
+    expected_s = 0.1
     description = "Donne la date et l'heure exactes (à la seconde)."
     params = NoParams
 
@@ -166,6 +170,9 @@ def _nvml_line(pynvml: Any) -> str:
 @register_tool
 class SystemStatus(BaseTool[NoParams]):
     name = "system_status"
+    sdk = "system.status"
+    effect = Effect.READ
+    expected_s = 0.5
     description = (
         "État du PC : utilisation du processeur, de la mémoire, du disque, et carte "
         "graphique (charge, mémoire vidéo, température)."
@@ -184,6 +191,9 @@ class TimerParams(BaseModel):
 @register_tool
 class SetTimer(BaseTool[TimerParams]):
     name = "set_timer"
+    sdk = "system.timer"
+    effect = Effect.ACT
+    expected_s = 0.1
     description = "Lance un minuteur ; MIKATA prévient à voix haute quand il sonne."
     params = TimerParams
     terminal = True
@@ -218,6 +228,9 @@ class ReminderParams(BaseModel):
 @register_tool
 class SetReminder(BaseTool[ReminderParams]):
     name = "set_reminder"
+    sdk = "system.reminder"
+    effect = Effect.ACT
+    expected_s = 0.1
     description = "Programme un rappel à une heure donnée ou dans N minutes (dans les 7 jours)."
     params = ReminderParams
     terminal = True
@@ -247,6 +260,8 @@ class SetReminder(BaseTool[ReminderParams]):
 @register_tool
 class Lock(BaseTool[NoParams]):
     name = "lock"
+    sdk = "system.lock"
+    effect = Effect.ACT
     description = "Verrouille la session Windows (écran de connexion)."
     params = NoParams
     terminal = True
@@ -285,6 +300,9 @@ class _PowerTool(BaseTool[NoParams]):
 @register_tool
 class Shutdown(_PowerTool):
     name = "shutdown"
+    sdk = "system.shutdown"
+    effect = Effect.CONSEQUENTIAL
+    expected_s = 6.0
     description = "Éteint le PC (après 5 s pendant lesquelles « stop » annule)."
     action = "shutdown"
     announce = "Extinction"
@@ -294,6 +312,9 @@ class Shutdown(_PowerTool):
 @register_tool
 class Restart(_PowerTool):
     name = "restart"
+    sdk = "system.restart"
+    effect = Effect.CONSEQUENTIAL
+    expected_s = 6.0
     description = "Redémarre le PC (après 5 s pendant lesquelles « stop » annule)."
     action = "restart"
     announce = "Redémarrage"
@@ -303,6 +324,9 @@ class Restart(_PowerTool):
 @register_tool
 class Sleep(_PowerTool):
     name = "sleep"
+    sdk = "system.sleep"
+    effect = Effect.CONSEQUENTIAL
+    expected_s = 6.0
     description = "Met le PC en veille (après 5 s pendant lesquelles « stop » annule)."
     action = "sleep"
     announce = "Mise en veille"

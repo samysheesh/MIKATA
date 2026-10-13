@@ -30,6 +30,7 @@ interroge un LLM cloud, agit sur le PC et répond à voix haute dans le casque.
 | 11 à 12f | Voix ElevenLabs, pilotage des applis (UIA), navigateur (CDP), savoir-faire, index des fichiers | fusionnées |
 | 13 | Agent v2 | retirée en 14a |
 | 14a | Socle du nouveau cœur agent : retrait de la v2, CI verte, banc d'essai, mesure de référence | livrée, à valider sur le PC |
+| 14b | Espace d'action : effet et confiance déclarés par chaque outil, résultats structurés, référence du SDK | livrée, à valider sur le PC |
 
 ## Développement
 
@@ -2718,3 +2719,30 @@ uv run python scripts\eval_bench.py --mode live
 
 Le mode `live` ne rejoue que les tâches marquées `live: true` (volume, presse-papiers,
 calculatrice, un fichier de test, questions), sans son, et remet le PC en état.
+
+## Phase 14b — l'espace d'action
+
+Deuxième phase de [`docs/AGENT_CORE.md`](docs/AGENT_CORE.md) (§3.3). Le comportement de
+MIKATA ne change pas : cette phase prépare ce que les scripts et les politiques liront.
+
+- **Chaque outil déclare trois choses** (`mikata/tools/*.py`) : son nom dans le SDK
+  (`sdk = "web.search"`), son **effet** (`lire`, `agir`, `conséquent`) et la **confiance**
+  de ce qu'il renvoie (`non fiable` pour une page web, le contenu d'un fichier, le
+  presse-papiers, le texte d'une appli, la sortie d'une commande). Un outil qui ne déclare
+  rien est traité comme conséquent.
+- **Résultats structurés** : les outils de lecture publient des données (résultats de
+  recherche, page lue, fenêtres, contenu de fichier) qu'un script utilisera directement,
+  sans relire du texte.
+- **Référence du SDK** (`mikata/action/sdk.py`) : une ligne par fonction, générée depuis le
+  registre. Elle pèse environ 1 700 tokens, contre 5 600 pour les schémas JSON des 56 outils.
+
+```powershell
+git fetch origin
+git checkout phase-14b-action
+uv sync
+uv run ruff check . ; uv run ruff format --check . ; uv run pytest
+uv run python -c "from mikata.tools.registry import load_builtin_tools, registered_tools; from mikata.action.sdk import SdkCatalog; load_builtin_tools(); print(SdkCatalog(registered_tools(), 'win32').reference())"
+```
+
+Attendu : tout en `passed`, puis la référence du SDK (55 fonctions, de `apps.close` à
+`web.search`), avec `[conséquent]` et `[contenu non fiable]` aux bons endroits.

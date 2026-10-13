@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from mikata.action.effects import Effect, Trust
 from mikata.agent.guard import Verdict
 from mikata.tools.base import BaseTool, GuardDenied, ToolContext, ToolError, UiAutomation
 from mikata.tools.registry import register_tool
@@ -43,6 +44,11 @@ class UiaWindowParams(WindowParams):
 @register_tool
 class UiaWindow(BaseTool[UiaWindowParams]):
     name = "uia_window"
+    returns = "{window, controls: [{name, kind, text}]}"
+    sdk = "ui.controls"
+    effect = Effect.READ
+    output = Trust.UNTRUSTED
+    expected_s = 0.8
     description = (
         "Liste les contrôles (boutons, champs, textes, éléments) d'une fenêtre "
         "d'application, par titre ou nom de processus (sans argument : fenêtre active). "
@@ -59,6 +65,12 @@ class UiaWindow(BaseTool[UiaWindowParams]):
             raise ToolError(f"aucun contrôle lisible dans « {win.title} »")
         lines = [f"Fenêtre « {win.title} » ({win.process}), {len(controls)} contrôles :"]
         lines.extend(f"- {control.name} [{control.kind}]" for control in controls)
+        self.ctx.publish_data(
+            {
+                "window": win.title,
+                "controls": [{"name": c.name, "kind": c.kind, "text": c.text} for c in controls],
+            }
+        )
         return "\n".join(lines)
 
 
@@ -71,6 +83,10 @@ class UiaReadParams(WindowParams):
 @register_tool
 class UiaRead(BaseTool[UiaReadParams]):
     name = "uia_read"
+    sdk = "ui.read"
+    effect = Effect.READ
+    output = Trust.UNTRUSTED
+    expected_s = 0.8
     description = (
         "Lit le texte d'un contrôle ou de toute une fenêtre d'application (par titre ou "
         "processus), sans la mettre au premier plan."
@@ -99,6 +115,9 @@ class UiaClickParams(WindowParams):
 @register_tool
 class UiaClick(BaseTool[UiaClickParams]):
     name = "uia_click"
+    sdk = "ui.click"
+    effect = Effect.ACT
+    expected_s = 0.8
     description = (
         "Clique un contrôle d'application par son nom (bouton, lien, élément de liste...), "
         "dans la fenêtre donnée. Le garde-fou peut refuser ou demander confirmation."
@@ -123,6 +142,9 @@ class UiaSetTextParams(WindowParams):
 @register_tool
 class UiaSetText(BaseTool[UiaSetTextParams]):
     name = "uia_set_text"
+    sdk = "ui.set_text"
+    effect = Effect.CONSEQUENTIAL
+    expected_s = 0.8
     description = (
         "Écrit un texte dans un champ d'application nommé (plus sûr que taper à l'aveugle). "
         "Le garde-fou peut refuser le texte (commande de suppression)."
@@ -147,6 +169,10 @@ class UiaStateParams(BaseModel):
 @register_tool
 class UiaState(BaseTool[UiaStateParams]):
     name = "uia_state"
+    sdk = "ui.state"
+    effect = Effect.READ
+    output = Trust.UNTRUSTED
+    expected_s = 0.1
     description = (
         "Lit l'état ambiant du PC gardé en mémoire (par ex. qui est dans le salon vocal "
         "Discord), sans rien ouvrir ni déplacer."

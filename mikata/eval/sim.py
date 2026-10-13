@@ -329,9 +329,10 @@ class SimBrowser:
 
     async def read(self, max_chars: int) -> str:
         page = self._page()
-        links = "\n".join(f"- {label}" for label in page.links)
-        text = f"Titre : {page.title}\nURL : {self.url}\nTexte :\n{page.text}\nLiens :\n{links}"
-        return text[:max_chars]
+        lines = [f"Titre : {page.title}", f"URL : {self.url}", f"Texte :\n{page.text[:max_chars]}"]
+        if page.links:
+            lines.append("Liens : " + " | ".join(page.links))
+        return "\n".join(lines)
 
     def _link(self, text: str, nth: int) -> tuple[str, str]:
         hits = [
