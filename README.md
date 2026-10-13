@@ -32,6 +32,7 @@ interroge un LLM cloud, agit sur le PC et répond à voix haute dans le casque.
 | 14a | Socle du nouveau cœur agent : retrait de la v2, CI verte, banc d'essai, mesure de référence | livrée, à valider sur le PC |
 | 14b | Espace d'action : effet et confiance déclarés par chaque outil, résultats structurés, référence du SDK | livrée, à valider sur le PC |
 | 14c | Interpréteur de scripts (budget, provenance), politiques d'action, extraction en quarantaine, réglage « accès complet » | livrée, à valider sur le PC |
+| 14d | Boucle unique : l'outil `script` (code comme action), politiques sur les outils directs, rôle fort du modèle | livrée, à valider sur le PC |
 
 ## Développement
 
@@ -2799,3 +2800,77 @@ uv run python -c "import asyncio; from mikata.action.interp import Interpreter, 
 ```
 
 Attendu : `Val(value=285, trust=<Trust.TRUSTED: 0>)`.
+
+## Phase 14d — la boucle écrit des programmes
+
+Quatrième phase de [`docs/AGENT_CORE.md`](docs/AGENT_CORE.md) (§3.2). C'est la première
+qui change le comportement de MIKATA.
+
+- **Un seul appel pour choisir** : le modèle répond, appelle un outil direct (comme avant),
+  ou écrit un court programme avec l'outil `script`. Dans un programme, les outils gardent
+  leur nom et leurs arguments (`set_volume(level=30)`, `move_file(...)`), plus `extract`,
+  `expect`, `parallel`, `ask`.
+- **Suite du tour** : une phrase rendue par le programme est dite telle quelle (un seul appel
+  LLM) ; une donnée revient au modèle, qui formule ; une erreur revient avec ce qui est déjà
+  fait, et il corrige. Après deux échecs le rôle fort prend le relais (`llm.strong_model`,
+  `llm.strong_effort`) ; après trois, ou après un refus, le tour se ferme aux outils.
+- **Politiques sur les outils directs** : dès que le modèle a lu un contenu venu d'ailleurs
+  (page web, fichier, presse-papiers, texte d'une appli), une action conséquente demande un
+  « oui », sauf en accès complet. Ce contenu n'entre plus dans l'historique de conversation.
+- **Corrections tirées du banc** : `move_file` crée le dossier d'arrivée au lieu de renommer
+  le fichier ; `find_files` et `list_folder` rendent leurs chemins ; « Bureau/... » mène au
+  vrai Bureau dans les outils d'index.
+- `agent.scripts: false` revient aux outils directs seuls.
+
+### Mesures (14/10/2026, PC simulé, vrai LLM, 49 tâches, 3 essais chacune)
+
+Une tâche compte comme réussie si elle réussit **aux trois essais**.
+
+| | Avec programmes | Outils directs seuls |
+| --- | --- | --- |
+| Tâches réussies aux trois essais | **48/49 (98 %)** | 47/49 (96 %) |
+| Actions simples | 17/17, 1,3 s | 16/17, 1,3 s |
+| Enchaînements longs | **6/6, 2,8 s, 2 appels LLM** | 5/6, 3,7 s, 3 appels LLM |
+| Sécurité (contenus piégés) | 8/8 | 8/8 |
+| Durée médiane, toutes tâches | 2,2 s | 2,3 s |
+| Coût des 147 essais | 0,050 $ | 0,048 $ |
+
+À lire ainsi : le chemin direct n'a pas ralenti, les enchaînements longs gagnent environ un
+quart de leur durée et un appel LLM, et les deux modes résistent aux contenus piégés de ce
+banc. La différence de fond est ailleurs : avec les politiques, ce n'est plus la prudence du
+modèle qui protège, c'est le code. La seule tâche encore instable (« coupe mon micro sur
+Discord », mauvais bouton une fois sur trois) est un cas pour le carnet de leçons de la
+phase 14e.
+
+Non fait dans cette phase, par rapport au document : les tâches de fond avec accusé de
+réception, le chemin « exploration » borné, et la réduction du nombre de schémas d'outils
+envoyés (mesurée comme risquée, voir §3.3 du document).
+
+### Vérification sur le PC
+
+```powershell
+git fetch origin
+git checkout phase-14d-boucle
+uv sync
+uv run ruff check . ; uv run ruff format --check . ; uv run pytest
+uv run pytest tests\test_agent_scripts.py -v
+```
+
+Attendu : tout en `passed`. Puis le banc, avec et sans programmes (quelques centimes) :
+
+```powershell
+uv run python scripts\eval_bench.py --trials 3 --json data\eval\scripts.json
+uv run python scripts\eval_bench.py --trials 3 --no-scripts --json data\eval\direct.json
+```
+
+Et à la voix, ou sans micro avec `--ask` :
+
+```powershell
+uv run python -m mikata --ask "mets le volume à 30" --no-audio
+uv run python -m mikata --ask "combien de fenêtres sont ouvertes, et laquelle est devant ?" --no-audio
+uv run python -m mikata --ask "copie dans le presse-papiers le titre du dernier film de Christopher Nolan" --no-audio
+```
+
+Attendu : la première en un appel (`chemin : court-circuit`), les suivantes avec
+`chemin : programme (...)` dans la ligne `--ask`, et le titre dans le presse-papiers.
+Pour l'accès complet : case « Accès complet » dans les réglages, ou `guard.full_access: true`.
