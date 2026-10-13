@@ -111,7 +111,10 @@ class FindFiles(BaseTool[FindParams]):
         roots = [guard.resolve_path(args.folder)] if args.folder else guard.allowed
         found, cut = await self.ctx.run_blocking(find, roots, args.name)
         if not found:
+            self.ctx.publish_data({"paths": [], "best": None, "count": 0})
             return f"Aucun fichier ne correspond à « {args.name} »."
+        paths = [str(path) for path in found[:FIND_MAX_RESULTS]]
+        self.ctx.publish_data({"paths": paths, "best": paths[0], "count": len(found)})
         lines = [_describe(path) for path in found[:FIND_MAX_RESULTS]]
         more = len(found) - len(lines)
         tail = f"\n… et {more} autre(s)." if more > 0 else ""
@@ -207,7 +210,10 @@ class WriteFile(BaseTool[WriteParams]):
 
 class MoveParams(BaseModel):
     source: str = Field(min_length=1, description="Fichier ou dossier à déplacer / renommer")
-    destination: str = Field(min_length=1, description="Nouveau chemin, ou dossier d'arrivée")
+    destination: str = Field(
+        min_length=1,
+        description="Nouveau chemin complet, ou dossier d'arrivée (créé s'il n'existe pas)",
+    )
     overwrite: bool = Field(
         default=False, description="Remplacer un fichier existant (sauvegardé avant)"
     )
@@ -230,7 +236,7 @@ class MoveFile(BaseTool[MoveParams]):
         if not source.exists():
             raise ToolError(f"introuvable : {source}")
         guard.check_removable(source)
-        if target.is_dir():
+        if target.is_dir() or _names_a_folder(args.destination, source, target):
             target = target / source.name
         if target == source:
             raise ToolError("source et destination identiques")
@@ -244,6 +250,17 @@ class MoveFile(BaseTool[MoveParams]):
         await self.ctx.run_blocking(_move, source, target)
         saved = f" (ancien fichier sauvegardé : {backup})" if backup else ""
         return f"Déplacé : {source} -> {target}{saved}."
+
+
+def _names_a_folder(raw: str, source: Path, target: Path) -> bool:
+    """La destination désigne-t-elle un dossier qui n'existe pas encore ? Oui si elle finit
+    par un séparateur, ou si un fichier à extension part vers un nom sans extension
+    (« notes.txt » vers « Bureau/Notes ») : sans cela, le fichier serait renommé « Notes »."""
+    if target.exists():
+        return False
+    if raw.rstrip().endswith(("/", "\\")):
+        return True
+    return source.is_file() and bool(source.suffix) and not target.suffix
 
 
 def _move(source: Path, target: Path) -> None:
@@ -292,9 +309,17 @@ def _format_entry(entry: dict[str, Any]) -> str:
     return f"{entry['path']}{kind}{_when(entry.get('mtime'))}"
 
 
-def _absolute(path: str) -> str:
-    """Chemin absolu (les chemins de l'index le sont déjà) ; relatif = dossier perso."""
+def _absolute(path: str, guard: Any = None) -> str:
+    """Chemin absolu (les chemins de l'index le sont déjà) ; relatif = dossier perso.
+    Avec le garde-fou, « Bureau », « Documents »... mènent aux vrais dossiers."""
     p = Path(path).expanduser()
+    if (
+        guard is not None
+        and not p.is_absolute()
+        and not (len(path) >= 3 and path[0].isalpha() and path[1] == ":" and path[2] in "\\/")
+        and not path.startswith("\\\\")
+    ):
+        return str(guard.absolute(path))
     if p.is_absolute():
         return str(p)
     # Chemin Windows absolu (D:\\, D:/, UNC) vu hors Windows : le garder tel quel
@@ -333,7 +358,7 @@ class FindPath(BaseTool[FindPathParams]):
         if args.folder:
             # Compare les deux sens de séparateur : les chemins de l'index Windows
             # (« D:\\… ») doivent matcher même quand os.sep vaut « / » (darwin).
-            folder = _absolute(args.folder).replace("\\", "/").rstrip("/") + "/"
+            folder = _absolute(args.folder, self.ctx.guard).replace("\\", "/").rstrip("/") + "/"
             results = [r for r in results if r["path"].replace("\\", "/").startswith(folder)]
         if not results:
             self.ctx.publish_data({"paths": [], "best": None, "count": 0})
@@ -362,16 +387,22 @@ class ListFolder(BaseTool[ListFolderParams]):
         index = self.ctx.require_index()
         if not index.ready():
             raise ToolError(INDEX_NOT_READY)
-        folder = _absolute(args.path)
+        folder = _absolute(args.path, self.ctx.guard)
         entries = index.list_folder(folder, 50)
         if not entries:
-            self.ctx.publish_data({"paths": [], "best": None, "count": 0})
+            self.ctx.publish_data({"paths": [], "best": None, "count": 0, "entries": []})
             return f"Dossier vide ou introuvable : {folder}"
+        sep = "\\" if "\\" in folder else "/"
+        base = folder.rstrip("\\/") + sep
         self.ctx.publish_data(
             {
-                "paths": [f"{folder}{entry['name']}" for entry in entries],
+                "paths": [base + entry["name"] for entry in entries],
                 "best": folder,
                 "count": len(entries),
+                "entries": [
+                    {"name": e["name"], "path": base + e["name"], "is_dir": bool(e["is_dir"])}
+                    for e in entries
+                ],
             }
         )
         lines = [f"{folder} ({len(entries)} entrées) :"]

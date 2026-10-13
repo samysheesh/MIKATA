@@ -285,6 +285,11 @@ class Guard:
             path = self._personal_folder(text)
         return path.resolve(strict=False)
 
+    def absolute(self, raw: str) -> Path:
+        """Chemin absolu de `raw`, dossiers personnels compris (« Bureau/x » -> vrai Bureau),
+        sans contrôle des dossiers autorisés : pour les outils qui ne font que chercher."""
+        return self._absolute(Path(raw.strip().strip('"').strip("'")))
+
     def _personal_folder(self, relative: str) -> Path:
         """« Bureau/x.txt » ou « Desktop\\x.txt » -> vrai dossier Bureau (OneDrive compris)."""
         parts = [part for part in re.split(r"[\\/]+", relative) if part]

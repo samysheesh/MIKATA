@@ -127,6 +127,15 @@ class _Method:
     name: str
 
 
+@dataclass(frozen=True)
+class _Lambda:
+    """`lambda x: ...` : paramètres, corps et variables visibles là où il est écrit."""
+
+    params: tuple[str, ...]
+    body: ast.expr
+    scopes: tuple[dict[str, Val], ...]
+
+
 def _field_key(item: Any, key: Any) -> Any:
     if key is None:
         return item
@@ -179,6 +188,10 @@ BUILTINS: dict[str, Callable[..., Any]] = {
     "dict": dict,
     "set": set,
     "tuple": tuple,
+    "type": lambda value: type(value).__name__,  # un nom (« str », « dict »), pas la classe
+    "isinstance": isinstance,
+    "map": lambda function, items: [function(item) for item in items],
+    "filter": lambda function, items: [item for item in items if function(item)],
 }
 # Méthodes permises par type : jamais `format` (il lit des attributs par une chaîne).
 METHODS: dict[type, frozenset[str]] = {
@@ -670,10 +683,17 @@ class Interpreter:
         if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)):
             return await self._comprehension(node)
         if isinstance(node, ast.Lambda):
-            raise ScriptError(
-                'lambda n\'est pas permis ; pour trier : sorted(lignes, key="champ")',
-                self._line(node),
-            )
+            arguments = node.args
+            if (
+                arguments.vararg
+                or arguments.kwarg
+                or arguments.kwonlyargs
+                or arguments.defaults
+                or arguments.posonlyargs
+            ):
+                raise ScriptError("lambda : arguments simples seulement", self._line(node))
+            names = tuple(argument.arg for argument in arguments.args)
+            return Val(_Lambda(names, node.body, tuple(self._scopes)), self._pc_trust())
         raise ScriptError(
             f"« {type(node).__name__} » n'est pas permis dans un script", self._line(node)
         )
@@ -778,10 +798,72 @@ class Interpreter:
             if target.name in ("keys", "values", "items"):
                 result = [list(item) if isinstance(item, tuple) else item for item in result]
             return Val(self._sized(result, node), trust)
-        if callable(target) and target in BUILTINS.values():
+        if isinstance(target, _Lambda):
+            return await self._apply(target, args, callee.trust, node)
+        if callable(target) and any(target is builtin for builtin in BUILTINS.values()):
+            functional = await self._functional(target, args, kwargs, trust, node)
+            if functional is not None:
+                return functional
             result = target(*raw_args, **raw_kwargs)
             return Val(self._sized(result, node), trust)
         raise ScriptError("ceci ne s'appelle pas", self._line(node))
+
+    async def _apply(self, function: _Lambda, args: list[Val], trust: Trust, node: ast.AST) -> Val:
+        """Appelle un lambda : son corps est évalué ici, avec ses paramètres liés."""
+        if len(args) != len(function.params):
+            raise ScriptError(
+                f"lambda : {len(function.params)} argument(s) attendu(s), {len(args)} donné(s)",
+                self._line(node),
+            )
+        saved = self._scopes
+        self._scopes = [*function.scopes, dict(zip(function.params, args, strict=True))]
+        if len(self._scopes) > 40:
+            raise BudgetExceeded("lambda trop imbriqués", self._line(node))
+        try:
+            result = await self._eval(function.body)
+        finally:
+            self._scopes = saved
+        return Val(result.value, result.trust.join(trust))
+
+    async def _functional(
+        self, target: Any, args: list[Val], kwargs: dict[str, Val], trust: Trust, node: ast.AST
+    ) -> Val | None:
+        """`sorted`, `min`, `max`, `map`, `filter` avec un lambda : la clé de chaque élément
+        est calculée par l'interpréteur, puis la fonction de base fait le reste."""
+        key = kwargs.get("key")
+        first = args[0].value if args else None
+        if target in (BUILTINS["map"], BUILTINS["filter"]) and isinstance(first, _Lambda):
+            if len(args) != 2:
+                raise ScriptError(
+                    "map(fonction, liste) ou filter(fonction, liste)", self._line(node)
+                )
+            items = self._iterate(args[1].value, node)
+            results = [
+                await self._apply(first, [Val(i, args[1].trust)], trust, node) for i in items
+            ]
+            out_trust = join(trust, *(r.trust for r in results))
+            if target is BUILTINS["map"]:
+                return Val([r.value for r in results], out_trust)
+            kept = [item for item, r in zip(items, results, strict=True) if r.value]
+            return Val(kept, out_trust)
+        if key is None or not isinstance(key.value, _Lambda):
+            return None
+        if target not in (BUILTINS["sorted"], BUILTINS["min"], BUILTINS["max"]):
+            raise ScriptError("key=lambda : seulement pour sorted, min et max", self._line(node))
+        source = args[0] if len(args) == 1 else Val([a.value for a in args], trust)
+        items = self._iterate(source.value, node)
+        keys = [await self._apply(key.value, [Val(i, source.trust)], trust, node) for i in items]
+        out_trust = join(trust, *(k.trust for k in keys))
+        pairs = list(zip((k.value for k in keys), range(len(items)), items, strict=True))
+        if target is BUILTINS["sorted"]:
+            reverse = bool(kwargs["reverse"].value) if "reverse" in kwargs else False
+            ordered = sorted(pairs, key=lambda pair: pair[0], reverse=reverse)
+            return Val([item for _, _, item in ordered], out_trust)
+        if not pairs:
+            default = kwargs.get("default")
+            return Val(default.value if default else None, out_trust)
+        chooser = min if target is BUILTINS["min"] else max
+        return Val(chooser(pairs, key=lambda pair: pair[0])[2], out_trust)
 
     def _expect(self, args: list[Val], kwargs: dict[str, Val], node: ast.AST) -> Val:
         if not args:

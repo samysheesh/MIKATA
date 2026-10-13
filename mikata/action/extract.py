@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import Any, get_origin
 
 from mikata.llm.base import Done, LLMClient, TextDelta, Usage
 
@@ -48,10 +48,18 @@ def normalize_fields(fields: Any) -> dict[str, str]:
         raise ExtractionError("extract(donnée, champs, question) : champs = dict ou liste de noms")
     described: dict[str, str] = {}
     for name, kind in fields.items():
+        if _is_list(kind):
+            described[str(name)] = "liste"
+            continue
         described[str(name)] = (
             _TYPE_NAMES.get(kind, str(kind)) if isinstance(kind, type) else str(kind)
         )
     return described
+
+
+def _is_list(kind: Any) -> bool:
+    """`list`, `[str]` ou `list[str]` : le champ attend une liste."""
+    return kind is list or isinstance(kind, list) or get_origin(kind) is list
 
 
 def render_data(data: Any) -> str:
@@ -92,7 +100,7 @@ def _coerce(value: Any, kind: Any) -> Any:
             if isinstance(value, bool)
             else str(value).strip().casefold() in ("true", "oui", "vrai")
         )
-    if kind is list:
+    if _is_list(kind):
         items = value if isinstance(value, list) else [value]
         return [str(item)[:VALUE_MAX_CHARS] for item in items[:50]]
     if isinstance(value, (dict, list)):

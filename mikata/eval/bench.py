@@ -45,6 +45,9 @@ class Task(BaseModel):
     max_llm_calls: int | None = None  # budget (rapporté, pas éliminatoire)
     live: bool = False  # rejouable sur le vrai PC, la nuit, sans bruit ni risque
     live_expect: list[dict[str, Any]] | None = None  # contrôles propres au vrai PC
+    # Réponse de l'utilisateur simulé à « Tu confirmes ? ». Par défaut : « oui » pour une
+    # demande normale, « non » pour une tâche de sécurité (il n'a rien demandé de tel).
+    confirm: str | None = None
     restore: list[str] = Field(default_factory=list)  # live : volume, clipboard, close:<appli>
 
 
@@ -228,6 +231,8 @@ class Trial:
     answer: str
     calls: list[str] = field(default_factory=list)
     error: str = ""
+    scripts: int = 0  # programmes exécutés (outil script)
+    confirmations: int = 0  # « Tu confirmes ? » posés à l'utilisateur
 
 
 async def run_trial(
@@ -249,9 +254,14 @@ async def run_trial(
         start = time.monotonic()
         error = ""
         result: Any = None
+        reply = task.confirm or ("non" if "securite" in task.tags else "oui")
+
+        async def confirm(timeout_s: float) -> str:
+            return reply
+
         try:
             result = await agent.respond(
-                task.request, speech, label=f"eval:{task.id}", listen=answers
+                task.request, speech, label=f"eval:{task.id}", listen=answers or confirm
             )
         except Exception as exc:  # une tâche qui plante compte comme un échec, pas comme un arrêt
             error = f"{type(exc).__name__}: {exc}"
@@ -282,10 +292,12 @@ async def run_trial(
             outcome=getattr(result, "outcome", "error"),
             answer=answer[:300],
             calls=[
-                f"{name}({', '.join(f'{k}={v!r}' for k, v in args.items())})"
+                f"{name}({', '.join(f'{k}={repr(v)[:80]}' for k, v in args.items())})"
                 for name, args in calls
             ],
             error=error,
+            scripts=len(getattr(result, "scripts", []) or []),
+            confirmations=sum("Tu confirmes" in said for said in speech.said),
         )
         if world is not None:
             await world.ctx.aclose()
@@ -368,7 +380,8 @@ def format_report(tasks: list[Task], trials: list[Trial]) -> str:
     by_task: dict[str, list[Trial]] = {}
     for trial in trials:
         by_task.setdefault(trial.task, []).append(trial)
-    lines = [f"{'tâche':28} {'réussite':9} {'durée':>7} {'1er':>6} {'LLM':>4}  détail"]
+    head = f"{'tâche':28} {'réussite':9} {'durée':>7} {'1er':>6} {'LLM':>4} {'prog':>4}"
+    lines = [f"{head}  détail"]
     for task in tasks:
         runs = by_task.get(task.id)
         if not runs:
@@ -380,7 +393,8 @@ def format_report(tasks: list[Task], trials: list[Trial]) -> str:
             f"{task.id:28} {ok}/{len(runs):<7} "
             f"{statistics.median(t.seconds for t in runs):6.1f}s "
             f"{(f'{statistics.median(first):.1f}s' if first else '—'):>6} "
-            f"{statistics.median(t.llm_calls for t in runs):4.0f}  {detail[:70]}"
+            f"{statistics.median(t.llm_calls for t in runs):4.0f} "
+            f"{sum(t.scripts for t in runs):4d}  {detail[:70]}"
         )
     tags = sorted({tag for task in tasks for tag in task.tags})
     lines.append("")

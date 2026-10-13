@@ -35,14 +35,29 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from loguru import logger
 
+from mikata.action.effects import Trust
+from mikata.action.policy import Verdict, confirm_question, decide
+from mikata.action.runtime import ScriptOutcome, ScriptRuntime
+from mikata.action.sdk import SdkCatalog
+from mikata.agent.guard import log_action
 from mikata.agent.memory import LongTermMemory, ShortTermMemory, is_reset_command
+from mikata.agent.script_tool import (
+    SCRIPT_SCHEMA,
+    SCRIPT_TOOL,
+    data_message,
+    failure_message,
+    has_data,
+    script_guide,
+    spoken_result,
+)
 from mikata.config import Config
 from mikata.llm.base import Done, LLMClient, TextDelta, ToolCallReq, Usage
 from mikata.llm.prompts import active_window_title, build_messages, dynamic_context
 from mikata.llm.reasoning import at_least, detect_reasoning
+from mikata.plat import platform
 from mikata.skills.distill import distill
 from mikata.skills.library import bind_slots, compile_pattern
-from mikata.tools.base import ToolError, TurnIO, turn_context
+from mikata.tools.base import ToolError, TurnIO, current_turn, turn_context
 from mikata.tts.cache import PHRASES
 from mikata.tts.normalize import FragmentSplitter
 
@@ -50,6 +65,21 @@ if TYPE_CHECKING:
     from mikata.llm.usage import UsageTracker
     from mikata.skills.library import Skill, SkillLibrary
     from mikata.tools.registry import ToolRegistry, ToolResult
+
+UNTRUSTED_HISTORY = "(contenu lu ailleurs, non gardé dans l'historique)"
+SCRIPT_FAILURES_BEFORE_ESCALATION = 2
+MAX_SCRIPT_FAILURES = 3  # programmes en échec dans un même tour
+
+
+@dataclass
+class _TurnState:
+    """Ce qui évolue pendant un tour (docs/AGENT_CORE.md §3.5)."""
+
+    trust: Trust = Trust.TRUSTED  # devient « non fiable » dès que le modèle lit un contenu
+    no_tools: bool = False  # après un refus ou un « non » : plus aucun outil dans ce tour
+    script_failures: int = 0
+    strong: bool = False  # rôle « fort » du modèle pour la suite du tour
+
 
 MAX_ATTEMPTS = 2  # un retry immédiat (§6)
 HISTORY_TOOL_CHARS = 400  # résultat d'outil gardé dans l'historique de conversation
@@ -124,6 +154,9 @@ class TurnResult:
     effort: str | None = None  # niveau de réflexion au départ
     effort_final: str | None = None  # après le filet automatique
     effort_reasons: list[str] = field(default_factory=list)
+    # Ajouts phase 14d : programmes exécutés (outil script) et confirmations demandées.
+    scripts: list[ScriptOutcome] = field(default_factory=list)
+    confirmations: int = 0
 
     @property
     def effort_label(self) -> str:
@@ -136,6 +169,13 @@ class TurnResult:
     @property
     def path(self) -> str:
         """Chemin de la requête, pour le log (§10)."""
+        if self.scripts:
+            calls = sum(len(outcome.records) for outcome in self.scripts)
+            end = "direct" if self.shortcut else "reformulé"
+            return (
+                f"programme ({len(self.scripts)}, {calls} appel(s) d'outil, {end}, "
+                f"{self.llm_calls} appel(s) LLM)"
+            )
         if self.shortcut:
             return f"court-circuit (outil terminal, {self.llm_calls} appel(s) LLM)"
         if self.rounds:
@@ -317,6 +357,13 @@ class Agent:
         self._summary_task: asyncio.Task[None] | None = None
         self._skill_task: asyncio.Task[None] | None = None
         self._last_learnable: tuple[str, list[ToolCallReq]] | None = None
+        # Phase 14d : SDK des programmes, tiré du registre (une fois).
+        self._catalog = SdkCatalog(tools.tools, platform()) if tools is not None else None
+        self._script_guide = (
+            script_guide(self._catalog.structured_returns())
+            if self._catalog is not None and config.agent.scripts
+            else None
+        )
         if tools is not None and tools.ctx.history is None:  # outil set_history_duration
             tools.ctx.history = self.memory
         if tools is not None and skills is not None:  # outil remember_skill
@@ -433,9 +480,18 @@ class Agent:
             context = f"{context} {FOLLOW_UP_NOTE}"
         skills_index = self.skills.index() if self.skills is not None else ()
         messages = build_messages(
-            self.memory.messages(), command, context, facts, installed, skills=skills_index
+            self.memory.messages(),
+            command,
+            context,
+            facts,
+            installed,
+            skills=skills_index,
+            script_guide=self._script_guide,
         )
         schemas = self.tools.schemas() if self.tools is not None else []
+        if self._script_guide is not None:
+            schemas = [*schemas, SCRIPT_SCHEMA]
+        state = _TurnState()
         max_rounds = self.config.llm.max_tool_rounds
         fallback_steps = self.config.llm.reasoning_fallback_steps
         spoken: list[str] = []
@@ -498,7 +554,10 @@ class Agent:
         for round_no in range(max_rounds + 1):
             last = round_no == max_rounds  # dernier appel : sans outils, réponse obligée
             gate = _FollowUpGate(follow_up and round_no == 0)
-            reply = await self._call_llm(messages, [] if last else schemas, speech, result, gate)
+            offered = [] if last or state.no_tools else schemas
+            reply = await self._call_llm(
+                messages, offered, speech, result, gate, strong=state.strong
+            )
             if reply is None:
                 result.outcome = "server"
                 self._say_phrase(speech, "server")
@@ -511,7 +570,7 @@ class Agent:
                 spoken.append(reply.text.strip())
             if not reply.calls:
                 break
-            if last or self.tools is None:
+            if last or self.tools is None or state.no_tools:
                 result.tool_calls.extend(reply.calls)
                 logger.warning("Le LLM demande encore des outils : abandon ({} étapes).", round_no)
                 result.outcome = "limit"
@@ -519,7 +578,7 @@ class Agent:
                     self._say_phrase(speech, "error")
                 break
             with turn_context(turn):  # les outils parlent et écoutent dans cette commande
-                results = await self._run_tools(reply, messages, steps, result, on_phase)
+                results = await self._run_tools(reply, messages, steps, result, on_phase, state)
             spoken.extend(turn.spoken)  # ex. « Extinction dans 5 secondes... »
             turn.spoken.clear()
             if all(r.ok and r.terminal for r in results):
@@ -743,8 +802,10 @@ class Agent:
         steps: list[dict[str, Any]],
         result: TurnResult,
         on_phase: Callable[[str], None] | None,
+        state: _TurnState | None = None,
     ) -> list[ToolResult]:
         assert self.tools is not None
+        state = state or _TurnState()
         result.rounds += 1
         calls = [
             call if call.id else ToolCallReq(f"call_{result.rounds}_{i}", call.name, call.arguments)
@@ -773,15 +834,144 @@ class Agent:
         # commandes suivantes.
         messages.append({**assistant, "reasoning_content": reply.reasoning})
         steps.append(assistant)
-        results = list(await asyncio.gather(*(self.tools.execute(call) for call in calls)))
-        result.tool_results.extend(results)
+        # Les outils directs partent ensemble ; un programme s'exécute seul, à son tour.
+        trust_before = state.trust
+        direct = [call for call in calls if call.name != SCRIPT_TOOL]
+        done = dict(
+            zip(
+                (call.id for call in direct),
+                await asyncio.gather(
+                    *(self._execute_direct(call, trust_before, result) for call in direct)
+                ),
+                strict=True,
+            )
+        )
+        for call in calls:
+            if call.name == SCRIPT_TOOL:
+                done[call.id] = await self._run_script(call, state, result)
+        results = [done[call.id] for call in calls]
+        result.tool_results.extend(r for r in results if r.name != SCRIPT_TOOL)
         for res in results:
             messages.append({"role": "tool", "tool_call_id": res.call_id, "content": res.content})
-            short = res.content
+            untrusted = res.ok and self._output_trust(res.name) is Trust.UNTRUSTED
+            if untrusted:
+                state.trust = Trust.UNTRUSTED  # le modèle va lire un contenu venu d'ailleurs
+            if res.status in ("refusé", "annulé"):
+                state.no_tools = True  # un refus ou un « non » ne se contourne pas
+            short = UNTRUSTED_HISTORY if untrusted else res.content
             if len(short) > HISTORY_TOOL_CHARS:
                 short = short[:HISTORY_TOOL_CHARS] + " […]"
             steps.append({"role": "tool", "tool_call_id": res.call_id, "content": short})
         return results
+
+    def _output_trust(self, tool_name: str) -> Trust:
+        entry = self._catalog.by_tool(tool_name) if self._catalog is not None else None
+        return entry.output if entry is not None else Trust.LOCAL
+
+    async def _execute_direct(
+        self, call: ToolCallReq, turn_trust: Trust, result: TurnResult
+    ) -> ToolResult:
+        """Un outil direct, après la politique : si le modèle a lu du contenu non fiable
+        dans ce tour, une action conséquente demande un « oui » (sauf accès complet)."""
+        from mikata.tools.registry import ToolResult
+
+        assert self.tools is not None
+        entry = self._catalog.by_tool(call.name) if self._catalog is not None else None
+        if entry is not None:
+            decision = decide(
+                entry, Trust.TRUSTED, turn_trust, full_access=self.config.guard.full_access
+            )
+            refusal = ""
+            status = "refusé"
+            if decision.verdict is Verdict.DENY:
+                refusal = f"refusé : {decision.reason}"
+            elif decision.verdict is Verdict.CONFIRM:
+                result.confirmations += 1
+                guard = self.tools.ctx.guard
+                accepted = guard is not None and await guard.confirm(
+                    confirm_question(entry), current_turn()
+                )
+                if not accepted:
+                    refusal, status = "l'utilisateur n'a pas confirmé", "annulé"
+            if refusal:
+                log_action(call.name, call.arguments, status, refusal)
+                return ToolResult(call.id, call.name, False, refusal, False, 0.0, None, status)
+        return await self.tools.execute(call)
+
+    async def _run_script(
+        self, call: ToolCallReq, state: _TurnState, result: TurnResult
+    ) -> ToolResult:
+        """Exécute un programme (outil script) et prépare la suite du tour.
+
+        Réussi avec une phrase courte en retour : elle est dite telle quelle et le tour
+        s'arrête là (résultat « terminal »). Réussi avec une donnée : le modèle la formule.
+        En échec : l'erreur revient au modèle, qui corrige ; après un refus ou un « non »,
+        plus aucun outil n'est proposé."""
+        from mikata.tools.registry import ToolResult
+
+        assert self.tools is not None and self._catalog is not None
+        start = time.monotonic()
+        code = str(call.arguments.get("code", ""))
+        runtime = ScriptRuntime(
+            self.tools,
+            self._catalog,
+            llm=self.llm,
+            full_access=self.config.guard.full_access,
+            turn_trust=state.trust,
+            extract_effort=self.config.llm.reasoning_effort,
+        )
+        outcome = await runtime.run(code, timeout_s=self.config.agent.script_timeout_s)
+        result.scripts.append(outcome)
+        result.tool_calls.extend(runtime.tool_calls)
+        result.tool_results.extend(runtime.tool_results)
+        result.llm_calls += runtime.llm_calls
+        if runtime.usage is not None:
+            result.usage = runtime.usage if result.usage is None else result.usage + runtime.usage
+        result.confirmations += sum(
+            r.verdict in ("à confirmer", "non confirmé") for r in outcome.records
+        )
+        duration = time.monotonic() - start
+        logger.info(
+            "Programme : {} en {:.0f} ms ({} appel(s), {} opérations){}",
+            "ok" if outcome.ok else f"ÉCHEC ({outcome.kind})",
+            duration * 1000,
+            len(outcome.records),
+            outcome.steps,
+            "" if outcome.ok else f" : {outcome.error}",
+        )
+        log_action(SCRIPT_TOOL, {"code": code}, "ok" if outcome.ok else outcome.kind, outcome.error)
+        if not outcome.ok:
+            status = {"refus": "refusé", "annulé": "annulé"}.get(outcome.kind, "échec")
+            if outcome.retryable:
+                state.script_failures += 1
+                if state.script_failures >= SCRIPT_FAILURES_BEFORE_ESCALATION:
+                    state.strong = True
+                    strong = at_least(result.effort_final, self.config.llm.strong_effort)
+                    if strong != result.effort_final:
+                        logger.info(
+                            "Rôle fort : réflexion {} -> {} (programme en échec).",
+                            result.effort_final,
+                            strong,
+                        )
+                        result.effort_final = strong
+                        result.effort_reasons.append("programme en échec")
+                if state.script_failures >= MAX_SCRIPT_FAILURES:
+                    state.no_tools = True  # on n'insiste pas : le modèle l'explique
+            else:
+                state.no_tools = True
+            return ToolResult(
+                call.id, SCRIPT_TOOL, False, failure_message(outcome), False, duration, None, status
+            )
+        sentence = spoken_result(outcome)
+        if not has_data(outcome):
+            turn = current_turn()
+            if sentence is not None and turn is not None:
+                turn.speak(sentence)
+            content = sentence or "Programme terminé."
+            return ToolResult(call.id, SCRIPT_TOOL, True, content, True, duration)
+        # Une donnée à formuler : le modèle va la lire, donc le tour en prend la confiance.
+        state.trust = state.trust.join(outcome.trust).join(outcome.read_trust)
+        return ToolResult(call.id, SCRIPT_TOOL, True, data_message(outcome), False, duration)
 
     async def _call_llm(
         self,
@@ -790,6 +980,7 @@ class Agent:
         speech: SpeechSink,
         result: TurnResult,
         gate: _FollowUpGate | None = None,
+        strong: bool = False,
     ) -> _Reply | None:
         """Un appel LLM (avec son retry) ; le texte part au TTS fragment par fragment."""
         gate = gate or _FollowUpGate(active=False)
@@ -812,7 +1003,16 @@ class Agent:
             start = time.monotonic()
             try:
                 request = _with_reasoning(messages, effort)
-                async for event in self.llm.stream(request, tools, reasoning_effort=effort):
+                # Rôle « fort » : un autre modèle seulement s'il est configuré (sinon l'appel
+                # reste identique, la réflexion relevée fait la différence).
+                extra = (
+                    {"model": self.config.llm.strong_model}
+                    if strong and self.config.llm.strong_model
+                    else {}
+                )
+                async for event in self.llm.stream(
+                    request, tools, reasoning_effort=effort, **extra
+                ):
                     if isinstance(event, Done):
                         done = event
                         break

@@ -118,8 +118,27 @@ def test_helpers_sort_and_pick_by_field() -> None:
     assert value("return max(3, 9, 4)") == 9
     assert value("return max([], default=0)") == 0
     assert value("return [[i, x] for i, x in enumerate(['a', 'b'])]") == [[0, "a"], [1, "b"]]
-    with pytest.raises(ScriptError, match="lambda n'est pas permis"):
-        run("return sorted([1], key=lambda x: x)")
+    # Ce que le modèle écrit spontanément marche aussi : un lambda comme clé.
+    assert value(
+        rows + "return [r.n for r in sorted(rows, key=lambda r: r['t'], reverse=True)]"
+    ) == ["a", "c", "b"]
+    assert value(rows + "return max(rows, key=lambda r: r.t).n") == "a"
+    assert value("return sorted([('b', 2), ('a', 9)], key=lambda p: p[1])[0][0]") == "b"
+    assert value("return min([], key=lambda x: x, default='rien')") == "rien"
+    assert value("f = lambda x, y: x * y + 1\nreturn f(3, 4)") == 13
+    assert value("k = 10\nreturn list(map(lambda x: x + k, [1, 2]))") == [11, 12]
+    assert value("return filter(lambda x: x % 2 == 0, range(6))") == [0, 2, 4]
+    assert value("return [type('a'), type({}), type([1]), type(3)]") == [
+        "str",
+        "dict",
+        "list",
+        "int",
+    ]
+    assert value("return [isinstance('a', str), isinstance(3, str)]") == [True, False]
+    with pytest.raises(ScriptError, match="arguments simples"):
+        run("f = lambda *a: a")
+    with pytest.raises(ScriptError, match="1 argument"):
+        run("f = lambda x: x\nreturn f(1, 2)")
 
 
 def test_script_errors_carry_the_line() -> None:
@@ -190,6 +209,9 @@ def test_expect_states_a_post_condition() -> None:
         "return [x for x in ().__class__.__bases__]",
         "return *[1]",
         "f = len\nreturn f.__name__",
+        "f = lambda: 1\nreturn f.__code__",
+        "return (lambda: __import__('os'))()",
+        "return type('a').mro()",
     ],
 )
 def test_nothing_but_the_sdk_is_reachable(code: str) -> None:
@@ -365,3 +387,20 @@ def test_starting_variables_keep_their_trust() -> None:
         FakeHost(), variables={"demande": Val("ouvre", T), "page": Val("x", U)}
     )
     assert asyncio.run(interpreter.run("return demande + page")).trust is U
+
+
+def test_a_lambda_keeps_the_trust_of_what_it_reads() -> None:
+    host = FakeHost({"web.fetch": Val({"text": "b a"}, U)})
+    code = (
+        "page = web.fetch('u')\nmots = sorted(page.text.split(), key=lambda m: m)\nreturn mots[0]"
+    )
+    result = run(code, host)
+    assert result.value == "a" and result.trust is U
+    # Un lambda qui lit une variable non fiable teinte ce qu'il rend, même sur une liste sûre.
+    code = "page = web.fetch('u')\nreturn list(map(lambda x: x + len(page.text), [1, 2]))"
+    assert run(code, host).trust is U
+
+
+def test_a_lambda_cannot_run_forever() -> None:
+    with pytest.raises(BudgetExceeded):
+        run("f = lambda x: [y for y in range(100000)]\nwhile True:\n    f(1)", max_steps=5000)

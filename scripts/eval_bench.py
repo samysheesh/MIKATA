@@ -45,12 +45,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--json", type=Path, default=None, help="rapport détaillé")
     parser.add_argument("--max-cost", type=float, default=0.5, help="arrêt au-delà (dollars)")
     parser.add_argument("--config", type=Path, default=None)
+    parser.add_argument(
+        "--no-scripts", action="store_true", help="outils directs seulement (comparaison)"
+    )
     return parser.parse_args()
 
 
 async def main() -> int:
     args = parse_args()
     config = load_config(args.config) if args.config else load_config()
+    if args.no_scripts:  # la config est figée : on en fait une copie modifiée
+        agent = config.agent.model_copy(update={"scripts": False})
+        config = config.model_copy(update={"agent": agent})
     from mikata.llm.client import OpenAICompatClient, check_llm_config
     from mikata.llm.usage import UsageTracker
 

@@ -194,12 +194,18 @@ class OpenAICompatClient:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         reasoning_effort: str | None = USE_CONFIG,
+        model: str | None = None,
     ) -> AsyncIterator[LLMEvent]:
         """`reasoning_effort` (ajout phase 4) : niveau de réflexion de cet appel ; par défaut
-        celui de la config ; None = paramètre non envoyé."""
+        celui de la config ; None = paramètre non envoyé. `model` (ajout phase 14d) : un
+        autre modèle pour cet appel (rôle « fort ») ; None = celui de la config."""
         import openai
 
-        kwargs: dict[str, Any] = {"model": self.cfg.model, "messages": messages, "stream": True}
+        kwargs: dict[str, Any] = {
+            "model": model or self.cfg.model,
+            "messages": messages,
+            "stream": True,
+        }
         if tools:
             kwargs["tools"] = tools
         if self.cfg.include_usage:

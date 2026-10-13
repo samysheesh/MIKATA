@@ -160,6 +160,15 @@ class SdkCatalog:
                 lines.append(f"{entry.signature()}  # {entry.doc}{marks[entry.effect]}{untrusted}")
         return "\n".join(lines)
 
+    def structured_returns(self) -> str:
+        """Outils qui rendent un objet à champs dans un programme (les autres : un texte)."""
+        rows = [
+            f"{entry.tool}(...) -> {entry.returns}"
+            for entry in self.entries.values()
+            if entry.returns != "str"
+        ]
+        return "\n".join(sorted(rows))
+
     def bind(
         self, entry: SdkEntry, args: tuple[Any, ...], kwargs: dict[str, Any]
     ) -> dict[str, Any]:

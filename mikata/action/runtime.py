@@ -128,7 +128,9 @@ class ScriptRuntime:
         return spaces
 
     def functions(self) -> set[str]:
-        return {"extract", "say", "ask"}
+        """Fonctions hors espaces de noms : extraction, parole, et chaque outil sous son nom
+        d'outil (`set_volume(level=30)` vaut `audio.volume(level=30)`)."""
+        return {"extract", "say", "ask"} | {entry.tool for entry in self.catalog.entries.values()}
 
     async def call_sdk(
         self, name: str, args: list[Val], kwargs: dict[str, Val], pc: Trust, line: int
@@ -187,6 +189,9 @@ class ScriptRuntime:
     async def call_function(
         self, name: str, args: list[Val], kwargs: dict[str, Val], pc: Trust, line: int
     ) -> Val:
+        entry = self.catalog.by_tool(name)
+        if entry is not None:  # un outil appelé par son nom : même chemin que le SDK
+            return await self.call_sdk(entry.name, args, kwargs, pc, line)
         values = [a.value for a in args]
         named = {k: v.value for k, v in kwargs.items()}
         trust = join(pc, *(a.trust for a in args), *(v.trust for v in kwargs.values()))

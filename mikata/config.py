@@ -150,6 +150,11 @@ class LlmConfig(_Section):
     )
     # Filet : un outil en échec, ou plus de N étapes d'outils -> au moins « low ».
     reasoning_fallback_steps: int = Field(default=2, ge=1)
+    # Ajouts phase 14d (docs/AGENT_CORE.md §3.9) : rôle « fort », pris après deux programmes
+    # en échec dans un même tour. `strong_model` : nom d'un modèle plus capable chez le même
+    # fournisseur (null = le même modèle) ; `strong_effort` : sa réflexion.
+    strong_model: str | None = None
+    strong_effort: ReasoningLevel = "medium"
     include_usage: bool = True  # demande le décompte des tokens en fin de flux
     price_input_usd_per_mtok: float = Field(default=0.30, ge=0)
     price_output_usd_per_mtok: float = Field(default=1.20, ge=0)
@@ -320,6 +325,9 @@ class AgentConfig(_Section):
     )
     voice_stop_silence_ms: int = Field(default=160, ge=80, le=1000)  # fin de la phrase d'arrêt
     voice_stop_max_s: float = Field(default=2.0, gt=0, le=10)  # au-delà : pas un « stop »
+    # Ajouts phase 14d (docs/AGENT_CORE.md §3.2) : l'outil `script`, le code comme action.
+    scripts: bool = True  # false : seulement les outils directs, comme avant
+    script_timeout_s: float = Field(default=45, gt=0, le=300)  # durée max d'un programme
 
 
 class GuardConfig(_Section):

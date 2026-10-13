@@ -125,6 +125,23 @@ def test_move_file(tmp_path: Path, home: Path) -> None:
     assert not root.ok and "dossier racine" in root.content
 
 
+def test_move_into_a_new_folder_keeps_the_file_name(tmp_path: Path, home: Path) -> None:
+    """« Range ces fichiers dans Notes » : un dossier d'arrivée qui n'existe pas encore est
+    créé ; le premier fichier n'est pas renommé « Notes » (les suivants échouaient alors)."""
+    ctx = make_ctx(tmp_path)
+    for name in ("a.txt", "b.txt", "c.txt"):
+        (home / "Desktop" / name).write_text(name, encoding="utf-8")
+    for name in ("a.txt", "b.txt"):
+        moved = _execute(ctx, "move_file", source=f"Desktop/{name}", destination="Desktop/Notes")
+        assert moved.ok, moved.content
+    assert sorted(p.name for p in (home / "Desktop" / "Notes").iterdir()) == ["a.txt", "b.txt"]
+    slash = _execute(ctx, "move_file", source="Desktop/c.txt", destination="Desktop/Tri/")
+    assert slash.ok and (home / "Desktop" / "Tri" / "c.txt").is_file()
+    # Renommer reste possible : la destination porte une extension.
+    renamed = _execute(ctx, "move_file", source="Desktop/Notes/a.txt", destination="Desktop/z.md")
+    assert renamed.ok and (home / "Desktop" / "z.md").is_file()
+
+
 def test_delete_file_is_not_terminal_and_reports_the_trash(tmp_path: Path, home: Path) -> None:
     trash = FakeTrash(tmp_path / "Trash")
     result = _execute(

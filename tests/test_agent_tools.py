@@ -355,7 +355,9 @@ def test_context_lists_open_apps_and_facts(tmp_path: Path) -> None:
     llm = ScriptedLLM([TextDelta("Rex !"), Done("stop")])
     _respond(_agent(llm, ctx, open_apps=apps), "comment s'appelle mon chien")
     messages = llm.calls[0]
-    assert "Rex" in messages[1]["content"] and messages[1]["role"] == "system"
+    system = [m["content"] for m in messages if m["role"] == "system"]
+    assert system[1].startswith("PROGRAMMES (outil script)")  # notice fixe, après le prompt
+    assert "Rex" in system[2]
     assert "Applis ouvertes : Spotify, brave." in messages[-1]["content"]
 
 
@@ -449,8 +451,9 @@ def test_tool_speech_replaces_cest_fait(tmp_path: Path) -> None:
     assert not [entry for entry in desktop.log if entry[0] == "power"]
 
 
-def test_command_after_web_page_asks_when_configured(tmp_path: Path) -> None:
-    """guard.confirm_after_web : une commande lancée après une recherche web demande un oui."""
+def test_command_after_web_page_asks_first(tmp_path: Path) -> None:
+    """Une commande lancée après une recherche web demande un oui. Depuis la phase 14d, c'est
+    la politique d'action qui le demande, que `guard.confirm_after_web` soit activé ou non."""
     from tool_fakes import FakeRunner
 
     def server(request: httpx2.Request) -> httpx2.Response:
@@ -478,7 +481,8 @@ def test_command_after_web_page_asks_when_configured(tmp_path: Path) -> None:
     _respond(_agent(llm, ctx), "cherche et lance la commande", sink, listen=listen)
     assert runner.calls == []
     assert sink.said[0] == (
-        "Cette commande va agir juste après la lecture d'une page web. Tu confirmes ?"
+        "Je m'apprête à lancer une commande, d'après un contenu que je viens de lire. "
+        "Tu confirmes ?"
     )
 
 
@@ -490,4 +494,4 @@ def test_installed_apps_reach_the_prompt(tmp_path: Path) -> None:
     )
     _respond(agent, "ouvre spotifaille")
     system = [m["content"] for m in llm.calls[0] if m["role"] == "system"]
-    assert system[1].endswith(": Brave, Spotify.") and "Applications installées" in system[1]
+    assert system[2].endswith(": Brave, Spotify.") and "Applications installées" in system[2]

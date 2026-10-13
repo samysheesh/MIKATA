@@ -279,7 +279,7 @@ mikata/
     ├─ stt/    base.py  whisper_local.py  mlx_whisper.py  parakeet_mlx.py
     │        parakeet_sherpa.py  speculative.py
     ├─ llm/    client.py  prompts.py
-    ├─ agent/  loop.py  memory.py  guard.py
+    ├─ agent/  loop.py  memory.py  guard.py  script_tool.py   # phase 14d : outil script
     ├─ tools/  registry.py  system.py  apps.py  web.py  media.py
     │        input.py  files.py  shell.py  ui.py  memory_tools.py  uia.py  browser.py
     │        skills.py
@@ -409,6 +409,8 @@ tts:
     model: eleven_v4_turbo
     monthly_credit_cap: 30000
 agent:
+  scripts: true                     # phase 14d : programmes (outil script) pour les demandes
+  script_timeout_s: 45              # en plusieurs étapes ; durée max d'un programme
   follow_up_s: 6
   session_reset_min: 10
   thinking_sound_after_s: 1.2

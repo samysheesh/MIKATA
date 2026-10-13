@@ -167,8 +167,11 @@ def build_messages(
     memory_facts: Sequence[str] = (),
     installed_apps: Sequence[str] = (),
     skills: Sequence[str] = (),
+    script_guide: str | None = None,
 ) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    if script_guide:  # phase 14d : notice des programmes, fixe (reste dans le cache de prompt)
+        messages.append({"role": "system", "content": script_guide})
     if installed_apps:
         messages.append(
             {

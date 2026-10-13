@@ -55,6 +55,8 @@ llm:
     low: ["réfléchis"]
     medium: ["réfléchis bien"]
     high: ["réfléchis à fond"]
+  strong_model: null               # rôle fort (après deux programmes en échec) : null = même modèle
+  strong_effort: medium            # ... et sa réflexion
   reasoning_fallback_steps: 2      # outil en échec ou plus de N étapes -> au moins « low »
   include_usage: true              # décompte des tokens (ligne « Tokens » du log)
   price_input_usd_per_mtok: 0.30   # DeepSeek V4.1 Flash sur OpenCode Zen, $ / million
@@ -134,6 +136,8 @@ agent:
   voice_stop_phrases: ["stop", "arrête", "arrête-toi", "tais-toi", "ça suffit", "chut"]
   voice_stop_silence_ms: 160       # silence qui termine la phrase d'arrêt (80 = 1 trame)
   voice_stop_max_s: 2.0            # parole plus longue : pas un arrêt, pas transcrite
+  scripts: true                    # programmes (outil script) pour les demandes en plusieurs étapes
+  script_timeout_s: 45             # durée max d'un programme
 guard:
   allowed_dirs: ["~"]              # dossiers où les outils fichiers ont le droit d'agir
   backup_days: 14                  # sauvegardes avant écrasement (data/backups), puis corbeille

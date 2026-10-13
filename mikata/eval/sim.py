@@ -291,8 +291,12 @@ class SimIndex:
         return [self._row(p) for p in hits[:max_results]]
 
     def list_folder(self, folder: str, limit: int) -> list[dict[str, Any]]:
-        prefix = folder.rstrip("\\/").casefold() + "\\"
-        hits = [p for p in self.entries if p.casefold().startswith(prefix)]
+        prefix = folder.replace("\\", "/").rstrip("/").casefold() + "/"
+        hits = []
+        for path in self.entries:
+            flat = path.replace("\\", "/")
+            if flat.casefold().startswith(prefix) and "/" not in flat[len(prefix) :]:
+                hits.append(path)  # enfants directs seulement
         return [self._row(p) for p in hits[:limit]]
 
     def aclose(self) -> None:

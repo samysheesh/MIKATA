@@ -108,18 +108,21 @@ Il n'y a plus d'étapes « intention », « inconnues », « canal », « plan �
 des lignes du script. Exemple, pour « lance le dernier opening de One Piece » :
 
 ```python
-resultats = web.search("dernier opening One Piece titre")
-info = extract(resultats, {"titre": str, "url": str | None},
-               "Quel est le dernier opening de One Piece ? Lien YouTube direct s'il existe.")
-page = browser.open(info.url or youtube.search_url(info.titre))
-if not info.url:
-    browser.click(page.first_video())
-expect(browser.playing(), "la vidéo est en lecture")
-return "C'est lancé."
+resultats = web_search("dernier opening One Piece titre")
+info = extract(resultats, {"titre": str},
+               "Quel est le titre du dernier opening de One Piece ?")
+expect(info.titre, "un titre a été trouvé")
+browser_open("https://www.youtube.com/results?search_query=" + info.titre)
+browser_click(info.titre)
+return f"C'est lancé : {info.titre}."
 ```
 
 Deux appels LLM (le script, l'extraction) au lieu de huit. Si le script échoue, l'erreur
-revient au modèle, qui corrige ; après deux échecs, le tour passe au modèle fort.
+revient au modèle avec ce qui a déjà été fait, et il corrige ; après deux échecs la
+réflexion monte, après trois le tour se ferme aux outils et MIKATA explique.
+
+Ce que le script rend décide de la suite : une phrase courte est dite telle quelle (un seul
+appel LLM) ; une donnée, ou ce qu'il a affiché par `print`, revient au modèle qui formule.
 
 ### 3.3 L'espace d'action
 
@@ -130,8 +133,17 @@ revient au modèle, qui corrige ; après deux échecs, le tour passe au modèle 
 - **Chaque outil renvoie un résultat structuré** (`texte` pour le modèle, `données` pour le
   script) : le script enchaîne sur des valeurs, pas sur du texte à relire. Cela remplace le
   canal latéral `publish_data`.
-- **Référence du SDK compacte** : des signatures Python avec un exemple par primitive, à la
-  place des 56 schémas JSON. Seuls les outils du chemin direct restent en schémas natifs.
+- **Dans un programme, un outil s'appelle par son nom d'outil**, avec les mêmes arguments :
+  `set_volume(level=30)`, `move_file(source, destination)`. Le modèle n'a rien de nouveau à
+  apprendre, et la notice des programmes ne liste que les outils qui rendent un objet à
+  champs. Les noms du SDK (`audio.volume`, `files.move`) restent disponibles : ce sont ceux
+  des compétences (phase E).
+
+  Écart mesuré en phase 14d par rapport à la première version de ce document, qui prévoyait
+  de remplacer les schémas JSON par une référence du SDK : avec deux noms pour la même
+  action, le modèle se trompait d'arguments et ses programmes échouaient. Garder les schémas
+  natifs et les mêmes noms a supprimé ces échecs ; réduire le nombre de schémas envoyés
+  reste une optimisation possible, à faire sous contrôle du banc.
 - **Ordre des canaux**, du plus fiable au moins fiable : outil dédié, navigateur (DOM),
   arbre d'accessibilité, clavier et souris, puis vision (plus tard, en secours).
 - **Observations filtrées** : contrôles actionnables seulement, bornées, et différences

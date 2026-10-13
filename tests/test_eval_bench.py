@@ -68,7 +68,8 @@ def test_shipped_tasks_are_valid() -> None:
     # Les tâches rejouées sur le vrai PC la nuit : jamais de son, d'extinction ni d'envoi.
     for task in tasks:
         if task.live:
-            assert not ({"web", "ui"} & set(task.tags)) or task.id == "recherche", task.id
+            silent_web = ("recherche", "titre_dans_presse_papiers")  # lire, puis copier
+            assert not ({"web", "ui"} & set(task.tags)) or task.id in silent_web, task.id
 
 
 def test_duplicate_ids_are_refused(tmp_path: Path) -> None:
