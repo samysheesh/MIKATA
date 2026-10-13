@@ -330,6 +330,18 @@ class AgentConfig(_Section):
     script_timeout_s: float = Field(default=45, gt=0, le=300)  # durée max d'un programme
 
 
+class LearningConfig(_Section):
+    """Ajout phase 14e (docs/AGENT_CORE.md §3.11) : ce que MIKATA apprend à l'usage."""
+
+    enabled: bool = True  # false : ni leçons ni traces
+    max_lessons: int = Field(default=60, ge=1, le=500)  # carnet (data/playbook.json)
+    lessons_in_context: int = Field(default=6, ge=0, le=20)  # leçons jointes à une demande
+    correction_window_s: float = Field(default=90, ge=0)  # « non, pas ça » après une action
+    reflect_effort: ReasoningLevel | None = "low"  # réflexion de l'appel qui tire les leçons
+    traces: bool = True  # garde une trace des tours qui ont agi (data/traces/)
+    trace_days: float = Field(default=30, ge=1)  # puis corbeille
+
+
 class GuardConfig(_Section):
     allowed_dirs: list[Path] = Field(default_factory=lambda: [Path("~")], min_length=1)
     backup_days: int = Field(default=14, ge=1)
@@ -435,6 +447,7 @@ class Config(_Section):
     web: WebConfig = Field(default_factory=WebConfig)
     browser: BrowserConfig = Field(default_factory=BrowserConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
+    learning: LearningConfig = Field(default_factory=LearningConfig)
     files_index: FilesIndexConfig = Field(default_factory=FilesIndexConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
     guard: GuardConfig = Field(default_factory=GuardConfig)

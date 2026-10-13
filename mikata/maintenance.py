@@ -24,6 +24,7 @@ from mikata.config import Config
 from mikata.wake.recordings import MISSES_DIR, purge_older_than
 
 WAKE_LOGS_DIR = "data/wake_logs"
+TRACES_DIR = "data/traces"  # même valeur que mikata.learn.trace.TRACES_DIR
 BACKUPS_DIR = "data/backups"  # = agent.guard.BACKUP_DIR (import paresseux du garde-fou évité)
 INTERVAL_S = 24 * 3600
 
@@ -63,5 +64,9 @@ def run_maintenance(config: Config, trash: Callable[[str], None] | None = None) 
         ),
         BACKUPS_DIR: trash_entries_older_than(
             config.resolve(BACKUPS_DIR), config.guard.backup_days, trash=trash
+        ),
+        # Phase 14e : traces des tours (dossiers de jour -> corbeille).
+        TRACES_DIR: trash_entries_older_than(
+            config.resolve(TRACES_DIR), config.learning.trace_days, trash=trash
         ),
     }

@@ -138,6 +138,14 @@ agent:
   voice_stop_max_s: 2.0            # parole plus longue : pas un arrêt, pas transcrite
   scripts: true                    # programmes (outil script) pour les demandes en plusieurs étapes
   script_timeout_s: 45             # durée max d'un programme
+learning:                          # ajout phase 14e : ce que MIKATA apprend à l'usage
+  enabled: true                    # false : ni leçons ni traces
+  max_lessons: 60                  # carnet de leçons (data/playbook.json, lisible à la main)
+  lessons_in_context: 6            # leçons jointes à une demande (au plus, seulement si elles s'y rapportent)
+  correction_window_s: 90          # « non, pas ça » dit dans ce délai : MIKATA en tire une leçon
+  reflect_effort: low              # réflexion de l'appel qui tire les leçons (arrière-plan)
+  traces: true                     # trace des tours qui ont agi (data/traces/)
+  trace_days: 30                   # ... gardées N jours, puis corbeille
 guard:
   allowed_dirs: ["~"]              # dossiers où les outils fichiers ont le droit d'agir
   backup_days: 14                  # sauvegardes avant écrasement (data/backups), puis corbeille

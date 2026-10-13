@@ -16,7 +16,13 @@ from test_app_reply import FeedAudio, MarkerVAD
 
 from mikata.app import App, State
 from mikata.config import PROJECT_ROOT, load_config
-from mikata.maintenance import BACKUPS_DIR, WAKE_LOGS_DIR, run_maintenance, trash_entries_older_than
+from mikata.maintenance import (
+    BACKUPS_DIR,
+    TRACES_DIR,
+    WAKE_LOGS_DIR,
+    run_maintenance,
+    trash_entries_older_than,
+)
 from mikata.wake.recordings import MISSES_DIR
 
 NOW = 1_000_000_000.0
@@ -57,7 +63,7 @@ def test_run_maintenance_purges_wake_logs_and_backups(tmp_path: Path, monkeypatc
     trashed: list[str] = []
     counts = run_maintenance(config, trash=trashed.append)
     # ratés : 30 jours.
-    assert counts == {WAKE_LOGS_DIR: 1, MISSES_DIR: 1, BACKUPS_DIR: 1}
+    assert counts == {WAKE_LOGS_DIR: 1, MISSES_DIR: 1, BACKUPS_DIR: 1, TRACES_DIR: 0}
     assert sorted(trashed) == sorted([str(wav), str(backup), str(old_miss)])
 
 

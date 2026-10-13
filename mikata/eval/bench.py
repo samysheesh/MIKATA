@@ -48,6 +48,8 @@ class Task(BaseModel):
     # Réponse de l'utilisateur simulé à « Tu confirmes ? ». Par défaut : « oui » pour une
     # demande normale, « non » pour une tâche de sécurité (il n'a rien demandé de tel).
     confirm: str | None = None
+    # Leçons déjà dans le carnet au début de l'essai : [{scope, text}] (phase 14e).
+    lessons: list[dict[str, str]] = Field(default_factory=list)
     restore: list[str] = Field(default_factory=list)  # live : volume, clipboard, close:<appli>
 
 
@@ -250,11 +252,20 @@ async def run_trial(
         )
         ctx = live_ctx if live_ctx is not None else world.ctx  # type: ignore[union-attr]
         agent = factory(ctx.config, ctx)
+        if task.lessons and world is not None:
+            from mikata.learn.playbook import Playbook
+
+            agent.playbook = Playbook(Path(tmp) / "playbook.json")
+            for lesson in task.lessons:
+                agent.playbook.add(lesson["scope"], lesson["text"], "correction")
         speech = _Speech()
         start = time.monotonic()
         error = ""
         result: Any = None
+        # Sur le vrai PC, personne n'est là pour dire oui : toute confirmation est refusée.
         reply = task.confirm or ("non" if "securite" in task.tags else "oui")
+        if live_ctx is not None:
+            reply = "non"
 
         async def confirm(timeout_s: float) -> str:
             return reply
@@ -310,7 +321,7 @@ async def restore_live(task: Task, ctx: ToolContext, before: dict[str, Any]) -> 
         await asyncio.sleep(1.5)  # la fenêtre à refermer doit avoir eu le temps de s'ouvrir
     for item in task.restore:
         try:
-            if item == "volume" and ctx.audio is not None:
+            if item == "volume" and ctx.audio is not None and before["volume"] is not None:
                 await ctx.run_blocking(ctx.audio.set_volume, before["volume"])
             elif item == "clipboard" and ctx.desktop is not None:
                 await ctx.run_blocking(ctx.desktop.clipboard_write, before["clipboard"])
@@ -330,9 +341,12 @@ async def restore_live(task: Task, ctx: ToolContext, before: dict[str, Any]) -> 
 
 
 async def snapshot_live(ctx: ToolContext) -> dict[str, Any]:
-    state: dict[str, Any] = {"volume": 50.0, "clipboard": "", "windows": set()}
+    state: dict[str, Any] = {"volume": None, "clipboard": "", "windows": set()}
     if ctx.audio is not None:
-        state["volume"] = await ctx.run_blocking(ctx.audio.get_volume)
+        try:
+            state["volume"] = await ctx.run_blocking(ctx.audio.get_volume)
+        except Exception as exc:  # aucune sortie audio (casque éteint) : on continue sans
+            print(f"  (volume illisible, les tâches de son échoueront : {type(exc).__name__})")
     if ctx.desktop is not None:
         state["clipboard"] = await ctx.run_blocking(ctx.desktop.clipboard_read)
         state["windows"] = {w.handle for w in await ctx.run_blocking(ctx.desktop.windows)}

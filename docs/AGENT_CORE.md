@@ -394,6 +394,21 @@ Cibles proposées, à confirmer une fois la référence de la phase A connue : l
 section 3.8, trois appels LLM au plus en médiane sur les tâches multi-étapes, et 80 % de
 réussite sur trois essais.
 
+## 5 bis. Avancement au 14/10/2026
+
+| Phase | État | Mesure |
+| --- | --- | --- |
+| A. Socle | faite (`phase-14a-socle`) | CI verte ; banc de 50 tâches ; référence 47/49 à un essai |
+| B. Espace d'action | faite (`phase-14b-action`) | 56 outils avec effet et confiance déclarés |
+| C. Interpréteur et politiques | faite (`phase-14c-interpreteur`) | boucle infinie arrêtée en moins d'1 s ; suite d'injection verte |
+| D. Boucle unique | faite en partie (`phase-14d-boucle`) | 48/49 aux trois essais (47/49 sans programmes) ; enchaînements longs 2,8 s contre 3,7 s |
+| E. Apprentissage | première partie (`phase-14e-apprentissage`) | carnet de leçons et traces ; une leçon fait passer une tâche de 2 appels à 1 |
+| F. Ouverture | à faire | |
+
+Reste à faire en D : tâches de fond avec accusé de réception, chemin « exploration » borné.
+Reste à faire en E : compétences (programmes vérifiés, rejeu local), qui remplaceront
+`mikata/skills/`. L'audit de `browser/`, `uia/` et `files/` prévu en phase A n'est pas fait.
+
 ## 6. Décisions prises (13/10/2026)
 
 1. **Interpréteur maison**, avec budget d'exécution et provenance. Monty reste un moteur de

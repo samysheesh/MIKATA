@@ -295,6 +295,8 @@ mikata/
     ├─ action/ effects.py  sdk.py  interp.py       # phases 14b-14c : effets, confiance, SDK,
     │        policy.py  extract.py  runtime.py     # interpréteur de scripts, politiques,
     │                                              # extraction en quarantaine
+    ├─ learn/  trace.py  playbook.py  reflect.py   # phase 14e : traces, carnet de leçons,
+    │                                              # réflexion en arrière-plan
     ├─ eval/   sim.py  bench.py  agents.py         # phase 14a : banc d'essai (PC simulé,
     │                                              # correcteurs d'état final)
     └─ ui/     tray.py  notify.py  hotkeys.py
@@ -414,6 +416,14 @@ agent:
   follow_up_s: 6
   session_reset_min: 10
   thinking_sound_after_s: 1.2
+learning:                           # phase 14e : ce que MIKATA apprend à l'usage
+  enabled: true
+  max_lessons: 60                   # carnet de leçons (data/playbook.json)
+  lessons_in_context: 6
+  correction_window_s: 90
+  reflect_effort: low
+  traces: true                      # data/traces/, corbeille après trace_days jours
+  trace_days: 30
 guard:
   allowed_dirs: ["~"]
   backup_days: 14

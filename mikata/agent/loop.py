@@ -51,6 +51,9 @@ from mikata.agent.script_tool import (
     spoken_result,
 )
 from mikata.config import Config
+from mikata.learn.playbook import Lesson, Playbook, render
+from mikata.learn.reflect import is_correction, reflect, should_reflect
+from mikata.learn.trace import TraceStore, TurnTrace, trace_from_result
 from mikata.llm.base import Done, LLMClient, TextDelta, ToolCallReq, Usage
 from mikata.llm.prompts import active_window_title, build_messages, dynamic_context
 from mikata.llm.reasoning import at_least, detect_reasoning
@@ -157,6 +160,9 @@ class TurnResult:
     # Ajouts phase 14d : programmes exécutés (outil script) et confirmations demandées.
     scripts: list[ScriptOutcome] = field(default_factory=list)
     confirmations: int = 0
+    # Ajouts phase 14e : résultats des outils directs (hors programmes), tour teinté.
+    direct_results: list[ToolResult] = field(default_factory=list)
+    tainted: bool = False
 
     @property
     def effort_label(self) -> str:
@@ -338,6 +344,8 @@ class Agent:
         usage: UsageTracker | None = None,
         open_apps: Callable[[], Awaitable[Sequence[str]]] | None = None,
         installed_apps: Callable[[], Sequence[str]] | None = None,
+        playbook: Playbook | None = None,
+        traces: TraceStore | None = None,
     ) -> None:
         self.llm = llm
         self.config = config
@@ -357,6 +365,11 @@ class Agent:
         self._summary_task: asyncio.Task[None] | None = None
         self._skill_task: asyncio.Task[None] | None = None
         self._last_learnable: tuple[str, list[ToolCallReq]] | None = None
+        # Phase 14e : carnet de leçons, traces, réflexion en arrière-plan.
+        self.playbook = playbook
+        self.traces = traces
+        self._last_trace: tuple[TurnTrace, float] | None = None
+        self._reflect_task: asyncio.Task[None] | None = None
         # Phase 14d : SDK des programmes, tiré du registre (une fois).
         self._catalog = SdkCatalog(tools.tools, platform()) if tools is not None else None
         self._script_guide = (
@@ -479,6 +492,8 @@ class Agent:
         if follow_up:
             context = f"{context} {FOLLOW_UP_NOTE}"
         skills_index = self.skills.index() if self.skills is not None else ()
+        lessons = self._lessons_for(command, context)
+        started = time.monotonic()
         messages = build_messages(
             self.memory.messages(),
             command,
@@ -487,6 +502,7 @@ class Agent:
             installed,
             skills=skills_index,
             script_guide=self._script_guide,
+            lessons=render(lessons),
         )
         schemas = self.tools.schemas() if self.tools is not None else []
         if self._script_guide is not None:
@@ -597,6 +613,8 @@ class Agent:
         if result.answer or steps:
             self.memory.add(command, result.answer or PHRASES["done"], steps)
             self._schedule_summary()
+        result.tainted = state.trust is Trust.UNTRUSTED
+        self._after_turn(command, result, lessons, time.monotonic() - started)
         cfg = self.config.skills
         if (
             self.skills is not None
@@ -606,6 +624,83 @@ class Agent:
         ):
             self._last_learnable = (command, list(result.tool_calls))
         self._maybe_learn_skill(command, result, matched)
+
+    # -- apprentissage (phase 14e) -----------------------------------------------------
+
+    def _lessons_for(self, command: str, context: str) -> list[Lesson]:
+        cfg = self.config.learning
+        if self.playbook is None or not cfg.enabled or cfg.lessons_in_context == 0:
+            return []
+        return self.playbook.select(command, context, cfg.lessons_in_context)
+
+    def _after_turn(
+        self, command: str, result: TurnResult, lessons: list[Lesson], seconds: float
+    ) -> None:
+        """Après un tour qui a agi : trace, bilan des leçons présentes, et réflexion en
+        arrière-plan s'il y a un signal fiable (échec corrigé, ou correction de
+        l'utilisateur). Jamais bloquant, jamais après un contenu non fiable."""
+        cfg = self.config.learning
+        if not cfg.enabled or (self.playbook is None and self.traces is None):
+            return
+        ids = [lesson.id for lesson in lessons]
+        trace = trace_from_result(command, result, seconds, ids, tainted=result.tainted)
+        previous = self._last_trace
+        self._last_trace = (trace, time.monotonic()) if trace.acted else None
+        if not trace.acted:
+            return
+        if self.traces is not None and cfg.traces:
+            self.traces.save(trace)
+        if self.playbook is None:
+            return
+        failed = (
+            trace.outcome != "ok"
+            or bool(trace.failures)
+            or any(not script.ok for script in trace.scripts)
+        )
+        if ids:
+            self.playbook.mark(ids, helpful=not failed)
+        correction_of = None
+        if (
+            previous is not None
+            and time.monotonic() - previous[1] <= cfg.correction_window_s
+            and is_correction(command)
+        ):
+            correction_of = previous[0]
+            if correction_of.lessons:  # elles étaient là quand MIKATA s'est trompé
+                self.playbook.mark(correction_of.lessons, helpful=False)
+        if not should_reflect(trace, correction_of):
+            return
+        if self._reflect_task is not None and not self._reflect_task.done():
+            return
+        self._reflect_task = asyncio.create_task(
+            self._reflect(trace, correction_of), name="réflexion"
+        )
+
+    async def _reflect(self, trace: TurnTrace, correction_of: TurnTrace | None) -> None:
+        assert self.playbook is not None
+        try:
+            async with asyncio.timeout(self.config.llm.turn_timeout_s):
+                lessons, usage = await reflect(
+                    self.llm,
+                    trace,
+                    correction_of=correction_of,
+                    effort=self.config.learning.reflect_effort,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # hors ligne, réponse illisible : on n'apprend rien
+            logger.warning("Réflexion impossible : {}", exc)
+            return
+        if self.usage is not None:
+            self.usage.record("réflexion", usage, 1)
+        source = "correction" if correction_of is not None else "échec corrigé"
+        for scope, text in lessons:
+            self.playbook.add(scope, text, source)
+
+    async def learning_idle(self) -> None:
+        """Attend la fin de la réflexion en cours (tests, arrêt propre)."""
+        if self._reflect_task is not None:
+            await asyncio.gather(self._reflect_task, return_exceptions=True)
 
     # -- savoir-faire (phase 12c) ------------------------------------------------------
 
@@ -851,6 +946,7 @@ class Agent:
                 done[call.id] = await self._run_script(call, state, result)
         results = [done[call.id] for call in calls]
         result.tool_results.extend(r for r in results if r.name != SCRIPT_TOOL)
+        result.direct_results.extend(r for r in results if r.name != SCRIPT_TOOL)
         for res in results:
             messages.append({"role": "tool", "tool_call_id": res.call_id, "content": res.content})
             untrusted = res.ok and self._output_trust(res.name) is Trust.UNTRUSTED
@@ -1074,7 +1170,7 @@ class Agent:
         )
 
     async def aclose(self) -> None:
-        for task in (self._summary_task, self._skill_task):
+        for task in (self._summary_task, self._skill_task, self._reflect_task):
             if task is not None and not task.done():
                 task.cancel()
         aclose = getattr(self.llm, "aclose", None)

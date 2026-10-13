@@ -33,6 +33,7 @@ interroge un LLM cloud, agit sur le PC et répond à voix haute dans le casque.
 | 14b | Espace d'action : effet et confiance déclarés par chaque outil, résultats structurés, référence du SDK | livrée, à valider sur le PC |
 | 14c | Interpréteur de scripts (budget, provenance), politiques d'action, extraction en quarantaine, réglage « accès complet » | livrée, à valider sur le PC |
 | 14d | Boucle unique : l'outil `script` (code comme action), politiques sur les outils directs, rôle fort du modèle | livrée, à valider sur le PC |
+| 14e | Apprentissage, première partie : traces des tours, carnet de leçons, réflexion en arrière-plan | livrée, à valider sur le PC |
 
 ## Développement
 
@@ -2874,3 +2875,54 @@ uv run python -m mikata --ask "copie dans le presse-papiers le titre du dernier 
 Attendu : la première en un appel (`chemin : court-circuit`), les suivantes avec
 `chemin : programme (...)` dans la ligne `--ask`, et le titre dans le presse-papiers.
 Pour l'accès complet : case « Accès complet » dans les réglages, ou `guard.full_access: true`.
+
+## Phase 14e — MIKATA apprend de ses essais (première partie)
+
+Cinquième phase de [`docs/AGENT_CORE.md`](docs/AGENT_CORE.md) (§3.11, niveau 1).
+
+- **Carnet de leçons** (`data/playbook.json`, lisible et modifiable à la main) : de courtes
+  leçons par appli ou domaine, chacune avec ses compteurs « utile » et « nuisible ». Elles
+  s'ajoutent et se retouchent une à une, jamais en bloc (méthode ACE). Seules celles qui se
+  rapportent à la demande rejoignent le contexte, présentées comme des références, pas comme
+  des règles. Une leçon plus nuisible qu'utile est retirée.
+- **D'où vient une leçon** : d'un échec suivi d'une réussite dans le même tour, ou d'une
+  correction de ta part (« non, pas ça... ») dans les 90 secondes. Un appel LLM en
+  arrière-plan, jamais pendant la réponse, en tire au plus deux leçons.
+- **Garde-fous** : rien n'est appris d'un tour qui a lu un contenu venu d'ailleurs (page
+  web, fichier, presse-papiers) ; une leçon ne touche ni aux politiques ni au garde-fou ;
+  les arguments qui dépendent d'un contenu lu ne sont pas gardés dans les traces.
+- **Traces** (`data/traces/AAAA-MM-JJ/`) : un fichier par tour qui a agi (demande,
+  programmes, erreurs, réponse), mis à la corbeille après `learning.trace_days` jours.
+- `learning.enabled: false` coupe tout.
+
+Mesure sur le banc (« coupe mon micro sur Discord », 6 essais) : sans leçon, MIKATA liste
+d'abord les contrôles puis clique (2 appels LLM, 2,5 s) ; avec la leçon « clique Rendre
+muet », il clique directement (1 appel, 1,4 s).
+
+**Non fait dans cette phase** : les compétences (programmes vérifiés rejoués sans appel LLM).
+Les savoir-faire des phases 12c et 12e restent en place en attendant. Un programme rejoué
+sans supervision est la partie la plus risquée de l'apprentissage : son cycle de vie mérite
+d'être validé ensemble avant d'être écrit.
+
+### Vérification sur le PC
+
+```powershell
+git fetch origin
+git checkout phase-14e-apprentissage
+uv sync
+uv run ruff check . ; uv run ruff format --check . ; uv run pytest
+uv run pytest tests\test_learn.py tests\test_agent_learning.py -v
+uv run python scripts\eval_bench.py --only discord_micro discord_micro_lecon --trials 6
+```
+
+À la voix : demande quelque chose que MIKATA fait de travers, corrige-le tout de suite
+(« non, je voulais... »), laisse-le réussir, puis regarde :
+
+```powershell
+Get-Content data\playbook.json
+Select-String -Path data\logs\mikata.log -Encoding utf8 -Pattern "Leçon apprise|Leçon retirée" | Select-Object -Last 5
+Get-ChildItem data\traces -Recurse -Filter *.json | Select-Object -Last 3 FullName
+```
+
+Attendu : une leçon courte et générale dans `playbook.json`, la ligne `Leçon apprise (...)`
+dans le log, et une trace par commande qui a agi.

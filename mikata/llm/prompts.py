@@ -168,6 +168,7 @@ def build_messages(
     installed_apps: Sequence[str] = (),
     skills: Sequence[str] = (),
     script_guide: str | None = None,
+    lessons: str = "",
 ) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
     if script_guide:  # phase 14d : notice des programmes, fixe (reste dans le cache de prompt)
@@ -196,6 +197,8 @@ def build_messages(
                 ),
             }
         )
+    if lessons:  # phase 14e : leçons du carnet qui se rapportent à cette demande
+        messages.append({"role": "system", "content": lessons})
     messages.extend(history)
     messages.append(
         {"role": "user", "content": f"[{context}]\nCommande transcrite : « {command} »"}

@@ -261,8 +261,22 @@ def build_agent(config: Config, phrases: Any = None, *, tools: bool = True) -> A
         installed_apps=(
             (lambda: installed_app_names(desktop.cached_apps())) if desktop is not None else None
         ),
+        **_learning(config),
     )
     return agent
+
+
+def _learning(config: Config) -> dict[str, Any]:
+    """Carnet de leçons et traces (phase 14e), si `learning.enabled`."""
+    if not config.learning.enabled:
+        return {}
+    from mikata.learn.playbook import PLAYBOOK_FILE, Playbook
+    from mikata.learn.trace import TRACES_DIR, TraceStore
+
+    return {
+        "playbook": Playbook(config.resolve(PLAYBOOK_FILE), config.learning.max_lessons),
+        "traces": TraceStore(config.resolve(TRACES_DIR)) if config.learning.traces else None,
+    }
 
 
 def app_vocabulary(agent: Agent | None) -> Callable[[], list[str]] | None:

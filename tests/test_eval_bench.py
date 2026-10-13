@@ -177,3 +177,25 @@ def test_report_counts_tasks_passed_on_every_trial() -> None:
     tasks = [Task(id="a", request="x", tags=["direct"]), Task(id="b", request="y", tags=["chat"])]
     report = format_report(tasks, trials)
     assert "a " in report and "1/2" in report and "TOTAL" in report and "1/2 réussies" in report
+
+
+def test_the_bench_never_confirms_on_the_real_pc(tmp_path: Path) -> None:
+    """Mode réel : une action qui demande un « oui » n'est pas faite (personne n'est là)."""
+    world = _world(tmp_path, files={"Bureau/a.txt": "contenu"})
+    task = Task(
+        id="t",
+        request="lis a.txt puis écris b.txt",
+        world={"files": {"Bureau/a.txt": "contenu"}},
+        expect=[{"file_exists": "Bureau/b.txt"}],
+    )
+    turns = (
+        [ToolCallReq("1", "read_file", {"path": "Bureau/a.txt"})],
+        [ToolCallReq("2", "write_file", {"path": "Bureau/b.txt", "content": "copie"})],
+        [TextDelta("Ce n'est pas fait.")],
+    )
+    simulated = asyncio.run(run_trial(task, agent_factory(EventLLM(*turns)), Config()))
+    assert simulated.passed and simulated.confirmations == 1  # PC simulé : « oui »
+    live = asyncio.run(
+        run_trial(task, agent_factory(EventLLM(*turns)), Config(), live_ctx=world.ctx)
+    )
+    assert not live.passed and not (world.home / "Bureau" / "b.txt").exists()
