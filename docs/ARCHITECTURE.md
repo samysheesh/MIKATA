@@ -148,6 +148,11 @@ Bonne nouvelle côté matériel : avec un casque fermé, le son du jeu ne revien
 
 ## 6. LLM cloud et boucle agent
 
+> **Refonte en cours (phase 14)** : les sections 6 et 7 sont remplacées, phase par phase,
+> par [`AGENT_CORE.md`](AGENT_CORE.md) (boucle unique, code comme action, provenance et
+> politiques, compétences vérifiées, banc d'essai). Tant qu'une phase n'est pas fusionnée,
+> ce qui suit décrit le code en place.
+
 **Tout passe par le LLM : DeepSeek « flash » via ton abonnement CommandCode.** Client unique compatible OpenAI (`openai.AsyncOpenAI` sur un `httpx.AsyncClient` persistant), avec `base_url`, `api_key` et `model` dans la config : le nom exact du modèle est celui que CommandCode expose. Si un jour le fournisseur change, c'est une ligne de config.
 
 À vérifier avant la phase 3 (10 minutes avec `curl`) : que CommandCode donne une clé API **utilisable par un programme tiers**, un endpoint compatible OpenAI, le **streaming** et le **tool calling** (`tools` / `tool_calls`). Si l'un manque, la clé DeepSeek directe coûte quelques euros par mois et ne change rien au code.
@@ -287,6 +292,8 @@ mikata/
     │                                              # sous Windows, Spotlight sous macOS)
     ├─ tts/    base.py  piper_tts.py  kokoro_tts.py  normalize.py  cache.py
     │        router.py  elevenlabs.py  credits.py   # phase 11 : profils de voix, ElevenLabs
+    ├─ eval/   sim.py  bench.py  agents.py         # phase 14a : banc d'essai (PC simulé,
+    │                                              # correcteurs d'état final)
     └─ ui/     tray.py  notify.py  hotkeys.py
 ```
 

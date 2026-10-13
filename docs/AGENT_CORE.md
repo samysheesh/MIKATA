@@ -1,6 +1,6 @@
 # MIKATA — le cœur agent : refonte à partir de l'appel LLM
 
-13 octobre 2026 · proposition à valider (rien n'est implémenté, rien n'est supprimé)
+13 octobre 2026 · validé le soir même (décisions en section 6) · implémentation par phases
 
 Ce document propose de reconstruire sur des bases saines tout ce qui se passe **après la
 transcription** : comprendre la demande, agir sur le PC, vérifier, apprendre. La capture audio,
@@ -34,6 +34,14 @@ Autres faits établis :
 Conclusion : la boucle d'origine est rapide sur le cas courant mais ne vérifie rien et
 n'apprend presque pas ; la v2 a les bonnes idées (code comme action, vérification,
 compétences) dans une structure qui multiplie les appels et n'a pas fait ses preuves.
+
+**Mesure de référence du banc d'essai (phase 14a).** Sur les 49 tâches du banc, PC simulé et
+vrai LLM, la boucle d'origine réussit 47 tâches (96 %), en 2,2 s de médiane et 2 appels LLM ;
+les enchaînements longs prennent 4,6 s et 2 à 5 appels. Les deux échecs venaient du banc.
+Le nouveau cœur ne se justifie donc pas par ces demandes-là, qu'il doit seulement ne pas
+dégrader, mais par ce que la boucle d'origine ne garantit pas : la sécurité par construction
+(elle n'a résisté aux contenus piégés que parce que le modèle a été prudent), la vérification
+du résultat, l'apprentissage, et la tenue sur le vrai web et les vraies interfaces.
 
 ## 2. Ce que dit la recherche
 
@@ -374,14 +382,18 @@ Cibles proposées, à confirmer une fois la référence de la phase A connue : l
 section 3.8, trois appels LLM au plus en médiane sur les tâches multi-étapes, et 80 % de
 réussite sur trois essais.
 
-## 6. Décisions à valider
+## 6. Décisions prises (13/10/2026)
 
-1. **Interpréteur maison** (recommandé) ou Monty.
-2. **Autonomie** : garder « tout sans confirmation » partout, ou demander un « oui » pour les
-   actions conséquentes quand le tour a lu du contenu non fiable (recommandé, surtout pour une
-   publication open source).
-3. **Modèles** : un seul modèle rapide, ou deux rôles rapide et fort (recommandé).
-4. **Outils** : garder `mikata/tools/` comme implémentation (recommandé) ou tout réécrire.
+1. **Interpréteur maison**, avec budget d'exécution et provenance. Monty reste un moteur de
+   rechange possible.
+2. **Autonomie réglable** : une option « accès complet » dans les paramètres
+   (`guard.full_access`). Désactivée, MIKATA demande un « oui » avant une action conséquente
+   quand le tour a lu du contenu non fiable ; activée, il agit sans demander. Dans les deux
+   cas, les actions destructives restent interdites et une commande shell construite à
+   partir d'un contenu non fiable est refusée.
+3. **Deux rôles de modèle**, `llm.fast` et `llm.strong`.
+4. **`mikata/tools/` reste l'implémentation**, enrichie d'un effet déclaré, d'un niveau de
+   confiance de la sortie et d'un résultat structuré.
 
 ## 7. Limites
 

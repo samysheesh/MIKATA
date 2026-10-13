@@ -27,6 +27,9 @@ interroge un LLM cloud, agit sur le PC et répond à voix haute dans le casque.
 | 7 | Mot d'activation « MIKATA » (enregistrement, entraînement Colab, vérificateur de voix, benchmark), démarrage automatique, purge | fusionnée |
 | 8 | Interface : mascotte de bureau (skins), fenêtre de réglages ; licence Apache-2.0, contrôle de secrets en CI | fusionnée |
 | 9 | Finitions : ratés du mot d'activation notés au raccourci, tests de parallélisme déterministes | livrée, à valider sur le PC |
+| 11 à 12f | Voix ElevenLabs, pilotage des applis (UIA), navigateur (CDP), savoir-faire, index des fichiers | fusionnées |
+| 13 | Agent v2 | retirée en 14a |
+| 14a | Socle du nouveau cœur agent : retrait de la v2, CI verte, banc d'essai, mesure de référence | livrée, à valider sur le PC |
 
 ## Développement
 
@@ -2653,3 +2656,65 @@ L'agent v2 (phases 13a à 13e) a été retiré en phase 14a : mesuré sur le PC,
 9 demandes sur 15 en 42 s de médiane et n'avait rien appris. Les raisons et la conception
 qui le remplace sont dans [`docs/AGENT_CORE.md`](docs/AGENT_CORE.md). Le code reste dans
 l'historique git (branches `phase-13a-fondations` à `phase-13e-batterie`).
+
+## Phase 14a — socle du cœur agent
+
+Première phase de [`docs/AGENT_CORE.md`](docs/AGENT_CORE.md) (refonte de tout ce qui suit
+la transcription). Rien ne change encore dans le comportement de MIKATA.
+
+Contenu :
+
+- **Agent v2 retiré** (`mikata/agent2/`, ses tests, sa batterie simulée, sa passe
+  d'arrière-plan, la section `agent2` de `config.yaml`).
+- **CI verte** : le test du profil Brave ne dépend plus d'un Brave installé.
+- **Banc d'essai** (`mikata/eval/`, tâches dans `tests/eval/tasks.yaml`) : 49 demandes, un PC
+  simulé avec un état, et des contrôles sur l'**état final** (volume, fenêtres, fichiers,
+  page affichée, réponse dite), pas sur le chemin suivi. Familles : actions simples,
+  réponses, informations, fichiers, web, interface, enchaînements longs, et sécurité
+  (pages, fichiers et presse-papiers piégés : MIKATA ne doit pas obéir à ce qu'il lit).
+
+### Mesure de référence (boucle actuelle, 13/10/2026)
+
+PC simulé, vrai LLM (`deepseek-v4.1-flash`, réflexion `none`), un essai par tâche. Les
+outils simulés répondent instantanément : les durées sont celles du LLM.
+
+| Famille | Réussies | Durée médiane | Appels LLM (médiane) |
+| --- | --- | --- | --- |
+| Actions simples | 17/17 | 1,3 s | 1 |
+| Réponses sans action | 4/4 | 1,6 s | 1 |
+| Informations | 5/5 | 3,0 s | 2 |
+| Fichiers | 12/12 | 2,6 s | 2 |
+| Web | 8/10 | 4,4 s | 3 |
+| Enchaînements | 10/11 | 4,2 s | 3 |
+| Sécurité | 7/8 | 3,6 s | 2 |
+| **Total** | **47/49 (96 %)** | **2,2 s** | **2** |
+
+Les deux échecs venaient du banc (adresse en `www.` inconnue du faux web, contrôle trop
+strict), corrigés depuis. Conclusion à garder en tête : **la boucle actuelle est rapide et
+juste sur ces demandes**. Le nouveau cœur doit donc faire au moins aussi bien ici, et se
+juge sur ce que ce banc ne mesure pas encore : le vrai web, les vraies interfaces, la
+sécurité garantie par construction plutôt que par la prudence du modèle, la vérification
+du résultat et l'apprentissage.
+
+### Vérification sur le PC
+
+```powershell
+git fetch origin
+git checkout phase-14a-socle
+uv sync
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
+uv run python -m mikata --check-config
+```
+
+Attendu : tout en `passed`, `Configuration valide`. Puis le banc (quelques centimes de LLM,
+rien n'est fait sur le PC en mode simulé) :
+
+```powershell
+uv run python scripts\eval_bench.py --json data\eval\reference-sim.json
+uv run python scripts\eval_bench.py --mode live
+```
+
+Le mode `live` ne rejoue que les tâches marquées `live: true` (volume, presse-papiers,
+calculatrice, un fichier de test, questions), sans son, et remet le PC en état.
