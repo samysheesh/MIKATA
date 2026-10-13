@@ -198,7 +198,7 @@ def test_close_focus_and_list_windows(tmp_path: Path) -> None:
 def test_focus_window_rehides_the_work_browser(tmp_path: Path) -> None:
     """Un focus_window du code généré peut montrer le navigateur de travail : l'outil le
     re-cache aussitôt (jamais le Brave de l'utilisateur)."""
-    from agent2_fakes import make_registry
+    from agent_fakes import make_registry
     from tool_fakes import FakeBrowser
 
     browser = FakeBrowser()

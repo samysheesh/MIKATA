@@ -320,7 +320,7 @@ def test_background_tasks_and_close_task(config_file: Path, tmp_path: Path) -> N
     """Phase 13f : l'onglet « En cours » liste le navigateur de travail et peut le fermer."""
     from types import SimpleNamespace
 
-    from agent2_fakes import make_registry
+    from agent_fakes import make_registry
     from tool_fakes import FakeBrowser
 
     app = _app(config_file)

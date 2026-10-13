@@ -594,7 +594,6 @@ class App:
             if self._cpu is not None and self.config.logging.stats_interval_s > 0:
                 self._tasks.append(asyncio.create_task(self._stats_loop(), name="stats"))
             self._tasks.append(asyncio.create_task(self._maintenance_loop(), name="maintenance"))
-            self.start_dream_task()
             self.prewarm_work_browser()
             if self._collector is not None:
                 self._negatives_saved = sum(1 for _ in self._negatives_dir.rglob("*.wav"))
@@ -1326,45 +1325,6 @@ class App:
         while True:
             self._submit_io(self._maintenance)
             await asyncio.sleep(MAINTENANCE_INTERVAL_S)
-
-    def start_dream_task(self) -> None:
-        """Phase 13e : la passe de nuit de l'agent v2, si elle est activée.
-
-        Seule modification de l'App de toute la phase 13 : une tâche d'arrière-plan,
-        annulée à l'arrêt comme les autres (self._tasks).
-        """
-        if not (self.config.agent2.enabled and self.config.agent2.dream):
-            return
-        from datetime import datetime
-
-        from mikata.agent2.dream import dream_loop
-        from mikata.agent2.orchestrator import Agent2
-
-        if not isinstance(self._agent, Agent2):
-            return
-        self._tasks.append(
-            asyncio.create_task(
-                dream_loop(
-                    self._agent,
-                    now_fn=datetime.now,
-                    busy=self._dream_busy,
-                ),
-                name="passe d'arrière-plan agent v2",
-            )
-        )
-
-    def _dream_busy(self) -> bool:
-        """La seule limite de la passe d'arrière-plan : une commande en cours, ou une
-        charge CPU élevée (pas de compétition avec le travail de l'utilisateur)."""
-        if self._request_tasks:
-            return True
-        if self._cpu is not None:
-            try:
-                cpu, _ = self._cpu.sample()
-                return cpu > 25.0
-            except Exception:
-                pass
-        return False
 
     def _maintenance(self) -> None:
         counts = run_maintenance(self.config)

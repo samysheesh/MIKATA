@@ -322,28 +322,6 @@ class AgentConfig(_Section):
     voice_stop_max_s: float = Field(default=2.0, gt=0, le=10)  # au-delà : pas un « stop »
 
 
-class Agent2Config(_Section):
-    """Ajout phase 13 : agent v2 (docs/AGENT_V2.md). Désactivé par défaut."""
-
-    enabled: bool = False  # true : Agent2 remplace Agent pour les actions
-    code_timeout_s: float = Field(default=60, gt=0)  # durée max d'un script généré
-    max_actions_per_script: int = Field(default=25, ge=1, le=200)
-    max_attempts_per_goal: int = Field(default=3, ge=1, le=10)
-    max_subgoals: int = Field(default=8, ge=1, le=30)
-    traces_days: float = Field(default=30, ge=1)  # purge des traces (corbeille)
-    observe_max_lines: int = Field(default=40, ge=5, le=200)
-    fast_effort: str | None = "none"  # réflexion des appels rapides (understand, step)
-    strong_effort: str | None = "high"  # réflexion des appels forts (plan, compilation)
-    # 13d : apprentissage
-    learn: bool = True
-    trial_successes: int = Field(default=1, ge=1)  # proposé -> essai
-    active_successes: int = Field(default=3, ge=1)  # essai -> actif
-    max_failures: int = Field(default=2, ge=1)  # échecs consécutifs -> rétrogradé
-    # 13e : passe de nuit
-    dream: bool = True
-    dream_hour: int = Field(default=3, ge=0, le=23)
-
-
 class GuardConfig(_Section):
     allowed_dirs: list[Path] = Field(default_factory=lambda: [Path("~")], min_length=1)
     backup_days: int = Field(default=14, ge=1)
@@ -447,7 +425,6 @@ class Config(_Section):
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
     files_index: FilesIndexConfig = Field(default_factory=FilesIndexConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
-    agent2: Agent2Config = Field(default_factory=Agent2Config)
     guard: GuardConfig = Field(default_factory=GuardConfig)
     uia: UiaConfig = Field(default_factory=UiaConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)

@@ -19,9 +19,6 @@ from mikata.config import PROJECT_ROOT, load_config
 from mikata.maintenance import BACKUPS_DIR, WAKE_LOGS_DIR, run_maintenance, trash_entries_older_than
 from mikata.wake.recordings import MISSES_DIR
 
-# Phase 13 : les traces de l'agent v2 sont purgées comme les autres journaux.
-TRACES_DIR = "data/agent2/traces"
-
 NOW = 1_000_000_000.0
 DAY = 86_400
 
@@ -59,8 +56,8 @@ def test_run_maintenance_purges_wake_logs_and_backups(tmp_path: Path, monkeypatc
         os.utime(path, (path.stat().st_mtime - age, path.stat().st_mtime - age))
     trashed: list[str] = []
     counts = run_maintenance(config, trash=trashed.append)
-    # ratés : 30 jours ; les traces de l'agent v2 (phase 13) sont absentes ici.
-    assert counts == {WAKE_LOGS_DIR: 1, MISSES_DIR: 1, BACKUPS_DIR: 1, TRACES_DIR: 0}
+    # ratés : 30 jours.
+    assert counts == {WAKE_LOGS_DIR: 1, MISSES_DIR: 1, BACKUPS_DIR: 1}
     assert sorted(trashed) == sorted([str(wav), str(backup), str(old_miss)])
 
 

@@ -218,6 +218,10 @@ def test_own_profile_launches_a_minimized_dedicated_profile(
     )
     monkeypatch.setattr("mikata.browser.controller.list_targets", async_fake_targets)
     monkeypatch.setattr("mikata.browser.controller.subprocess.Popen", fake_popen)
+    # Brave n'est pas installé sur les machines de CI : le chemin de l'exécutable est simulé.
+    monkeypatch.setattr(
+        "mikata.browser.controller.BrowserController._brave_exe", lambda self: "brave.exe"
+    )
 
     async def run() -> None:
         async with ws_serve(server.handler, "127.0.0.1", port):

@@ -343,7 +343,7 @@ class Agent:
             speech.say(PHRASES[key])
 
     def say_phrase(self, speech: SpeechSink, key: str) -> None:
-        """Phase 13c : alias public de `_say_phrase` pour l'agent v2 (comportement inchangé)."""
+        """Alias public de `_say_phrase`."""
         self._say_phrase(speech, key)
 
     async def respond(
@@ -404,7 +404,7 @@ class Agent:
         return dynamic_context(self._clock(), self._window_title(), self._apps)
 
     async def context(self) -> str:
-        """Phase 13c : alias public de `_context` pour l'agent v2 (comportement inchangé)."""
+        """Alias public de `_context`."""
         return await self._context()
 
     def _escalate(self, result: TurnResult, reason: str) -> None:

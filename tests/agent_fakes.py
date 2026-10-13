@@ -1,4 +1,4 @@
-"""Agent v2 (phase 13a) : outils de test réutilisés par toutes les phases.
+"""Outils de test partagés : LLM scripté et registre d'outils simulé.
 
 Le LLM est scripté, le registre est branché sur les faux services de tests/tool_fakes.py :
 rien ne touche le vrai PC ni le réseau.

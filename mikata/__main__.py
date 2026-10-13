@@ -262,24 +262,6 @@ def build_agent(config: Config, phrases: Any = None, *, tools: bool = True) -> A
             (lambda: installed_app_names(desktop.cached_apps())) if desktop is not None else None
         ),
     )
-    # Phase 13c : agent2.enabled enveloppe l'agent actuel, sans rien changer d'autre.
-    # Phase 13d : la bibliothèque de savoir-faire et les recettes de l'agent v2.
-    if config.agent2.enabled:
-        from mikata.agent2.learn.recipes import RECIPES_FILE, RecipeStore
-        from mikata.agent2.learn.store import SKILLS_DIR, SkillStore
-        from mikata.agent2.orchestrator import Agent2
-        from mikata.agent2.preferences import PREFS_FILE, PreferenceStore
-        from mikata.agent2.trace import TRACES_DIR, TraceStore
-        from mikata.plat import platform
-
-        skills = SkillStore(config.resolve(SKILLS_DIR), config.agent2)
-        agent = Agent2(
-            agent,
-            traces=TraceStore(config.resolve(TRACES_DIR)),
-            prefs=PreferenceStore(config.resolve(PREFS_FILE)),
-            skills=skills,
-            recipes=RecipeStore(config.resolve(RECIPES_FILE), skills, platform()),
-        )
     return agent
 
 

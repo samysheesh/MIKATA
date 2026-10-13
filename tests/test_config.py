@@ -111,19 +111,6 @@ def test_defaults_match_section_10(config_file: Path) -> None:
     assert config.files_index.enabled is True
     assert config.files_index.db == Path("data/files_index.db")
     assert config.files_index.poll_s == 5 and config.files_index.max_results == 20
-    # ajouts phase 13
-    assert config.agent2.enabled is False
-    assert config.agent2.code_timeout_s == 60
-    assert config.agent2.max_actions_per_script == 25
-    assert config.agent2.max_attempts_per_goal == 3
-    assert config.agent2.max_subgoals == 8
-    assert config.agent2.traces_days == 30
-    assert config.agent2.observe_max_lines == 40
-    assert config.agent2.fast_effort == "none" and config.agent2.strong_effort == "high"
-    assert config.agent2.learn is True
-    assert config.agent2.trial_successes == 1 and config.agent2.active_successes == 3
-    assert config.agent2.max_failures == 2
-    assert config.agent2.dream is True and config.agent2.dream_hour == 3
 
 
 def test_repo_config_keys_are_exactly_the_model_fields() -> None:
