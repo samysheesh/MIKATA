@@ -159,7 +159,10 @@ class BrowserController:
         if exe is None:
             raise ToolError("Brave introuvable : installe-le ou lance-le une fois")
         cfg = self._config.browser
-        argv = [exe, f"--remote-debugging-port={cfg.cdp_port}", "--remote-allow-origins=*"]
+        # Pas de « --remote-allow-origins=* » : ce drapeau laisserait n'importe quelle page
+        # web ouverte sur le PC se connecter au port de contrôle. Le client de MIKATA
+        # n'envoie pas d'en-tête Origin, donc Chromium l'accepte sans ce drapeau.
+        argv = [exe, f"--remote-debugging-port={cfg.cdp_port}"]
         startupinfo = None
         if cfg.own_profile:
             # Phase 12f : profil de travail dédié, fenêtre cachée/minimisée en arrière-plan

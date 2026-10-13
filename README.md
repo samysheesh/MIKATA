@@ -34,6 +34,7 @@ interroge un LLM cloud, agit sur le PC et répond à voix haute dans le casque.
 | 14c | Interpréteur de scripts (budget, provenance), politiques d'action, extraction en quarantaine, réglage « accès complet » | livrée, à valider sur le PC |
 | 14d | Boucle unique : l'outil `script` (code comme action), politiques sur les outils directs, rôle fort du modèle | livrée, à valider sur le PC |
 | 14e | Apprentissage, première partie : traces des tours, carnet de leçons, réflexion en arrière-plan | livrée, à valider sur le PC |
+| 14f | Audit du navigateur de travail et de l'index des fichiers : deux corrections, une limite connue | livrée, à valider sur le PC |
 
 ## Développement
 
@@ -2926,3 +2927,45 @@ Get-ChildItem data\traces -Recurse -Filter *.json | Select-Object -Last 3 FullNa
 
 Attendu : une leçon courte et générale dans `playbook.json`, la ligne `Leçon apprise (...)`
 dans le log, et une trace par commande qui a agi.
+
+## Phase 14f — audit du navigateur de travail et de l'index des fichiers
+
+Relecture du code écrit entre le 9 et le 12 octobre (phases 12d à 12f), prévue en phase 14a.
+
+**Corrigé**
+
+- **Port de contrôle du navigateur** (`mikata/browser/controller.py`) : Brave était lancé avec
+  `--remote-allow-origins=*`, qui autorise n'importe quelle page web ouverte sur le PC à se
+  connecter au port de contrôle. Le drapeau est retiré : le client de MIKATA n'envoie pas
+  d'en-tête d'origine, Chromium l'accepte donc sans lui. Vérifié en réel (page ouverte et lue
+  dans la fenêtre de travail cachée, puis navigateur refermé).
+- **Helper de l'index** (`mikata/files/helper.py`) : un journal USN qui restait illisible
+  relançait un scan complet du disque toutes les trois secondes, sans fin, avec les droits
+  administrateur. Après trois échecs de suite, le volume est abandonné jusqu'au prochain
+  démarrage du helper.
+
+**Relu sans défaut trouvé** : les requêtes SQLite de l'index sont toutes paramétrées, le
+terme de recherche plein texte est correctement cité, et la recherche Spotlight passe par
+une liste d'arguments, sans shell.
+
+**Limite connue, non corrigée** : le helper de l'index tourne avec les droits
+administrateur (tâche planifiée « MIKATA Indexer USN ») mais exécute le Python et le code du
+dossier du projet, que n'importe quel programme lancé par l'utilisateur peut modifier. Un
+logiciel malveillant sans droits pourrait donc devenir administrateur en modifiant ces
+fichiers. Sur un PC personnel c'est un risque accepté ; avant une diffusion large, il faut
+soit installer le helper dans un dossier protégé, soit se passer d'élévation (index de
+Windows Search, par exemple).
+
+**Pas relu** : le décodage binaire du journal USN (`mikata/files/usn.py`), qui demande des
+essais avec élévation, le pilotage des applications (`mikata/uia/`) et le port macOS.
+
+```powershell
+git fetch origin
+git checkout phase-14f-audit
+uv sync
+uv run ruff check . ; uv run ruff format --check . ; uv run pytest
+uv run python -m mikata --ask "ouvre example.com dans ton navigateur et dis-moi le titre de la page" --no-audio
+```
+
+Attendu : tout en `passed` ; la dernière commande répond « Example Domain » sans qu'aucune
+fenêtre n'apparaisse.

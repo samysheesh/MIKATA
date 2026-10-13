@@ -64,6 +64,9 @@ def dump_all(share_dir: Path) -> int:
 
 
 _DUMP_REUSE_S = 600.0  # un dump de moins de 10 min est réutilisé tel quel
+# Un journal illisible déclenche un nouveau dump complet (lourd : toute la MFT). S'il reste
+# illisible, on abandonne le volume au lieu de rescanner le disque toutes les 3 secondes.
+_MAX_JOURNAL_FAILURES = 3
 
 
 def watch(share_dir: Path) -> None:
@@ -96,6 +99,7 @@ def watch(share_dir: Path) -> None:
                 "Journal USN de {} inactif ({}) — lance fsutil usn createjournal.", volume, exc
             )
     pending: list[str] = []
+    failures: dict[str, int] = {}
     while True:
         for volume, (journal_id, start_usn) in list(journal_ids.items()):
             try:
@@ -103,6 +107,17 @@ def watch(share_dir: Path) -> None:
                     volume, start_usn, journal_id, timeout_s=0.0
                 )
             except Exception as exc:
+                failures[volume] = failures.get(volume, 0) + 1
+                if failures[volume] > _MAX_JOURNAL_FAILURES:
+                    logger.error(
+                        "Journal de {} illisible {} fois de suite ({}) : volume abandonné "
+                        "jusqu'au prochain démarrage du helper.",
+                        volume,
+                        failures[volume],
+                        exc,
+                    )
+                    del journal_ids[volume]
+                    continue
                 logger.warning("Journal de {} illisible : {} — nouveau dump.", volume, exc)
                 dump_all(share_dir)
                 try:
@@ -111,6 +126,7 @@ def watch(share_dir: Path) -> None:
                     del journal_ids[volume]
                 continue
             journal_ids[volume] = (journal_id, next_usn)
+            failures.pop(volume, None)
             for event in events_list:
                 if usn.relevant(event.reason):
                     pending.append(events.event_line(volume, event))

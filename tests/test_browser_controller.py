@@ -237,6 +237,8 @@ def test_own_profile_launches_a_minimized_dedicated_profile(
         arg.startswith("--user-data-dir=") and "brave_profile" in arg for arg in launches[0]["argv"]
     )
     assert "--autoplay-policy=no-user-gesture-required" in launches[0]["argv"]
+    # Le port de contrôle ne s'ouvre à aucune origine web (audit de la phase 14f).
+    assert not any(arg.startswith("--remote-allow-origins") for arg in launches[0]["argv"])
     assert "--disable-backgrounding-occluded-windows" in launches[0]["argv"]
     assert minimized["n"] >= 2  # re-cachée à chaque commande (entrée + après attache)
     if _sys.platform == "win32":

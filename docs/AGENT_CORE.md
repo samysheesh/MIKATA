@@ -407,7 +407,9 @@ réussite sur trois essais.
 
 Reste à faire en D : tâches de fond avec accusé de réception, chemin « exploration » borné.
 Reste à faire en E : compétences (programmes vérifiés, rejeu local), qui remplaceront
-`mikata/skills/`. L'audit de `browser/`, `uia/` et `files/` prévu en phase A n'est pas fait.
+`mikata/skills/`. L'audit prévu en phase A est fait pour `browser/` et `files/` (branche
+`phase-14f-audit` : deux corrections, et une limite connue sur le helper élevé de l'index) ;
+`uia/` et le décodage du journal USN restent à relire.
 
 ## 6. Décisions prises (13/10/2026)
 
