@@ -19,7 +19,7 @@ Oui, c'est viable 24h/24. Au repos, MIKATA ne fait qu'écouter le micro et faire
 | Wake word | Le moins de faux positifs possible et détection rapide : détecteur sur mesure + vérificateur de ta voix + benchmark sur tes données (section 4) |
 | Transcription | Meilleur modèle local rapide, sur GPU, chargé h24, ≤ 2 Go de VRAM, aucune bascule CPU |
 | LLM | Tout passe par le LLM cloud : DeepSeek « flash » via ton abonnement CommandCode, pas de routeur local |
-| Autonomie | Toutes les actions sans confirmation, sauf la suppression définitive, interdite |
+| Autonomie | Toutes les actions sans confirmation, sauf la suppression définitive, interdite. Depuis la phase 14c, ce réglage s'appelle « accès complet » (`guard.full_access`) et il est désactivé par défaut : sans lui, une action conséquente qui dépend d'un contenu lu demande un « oui » |
 | Implémentation | Claude Code en sessions cloud, validation de chaque phase sur ton PC |
 | Plateformes | Windows 11 et macOS pris en charge ; Linux seulement pour les tests (STT Parakeet/CPU). Toute la logique de plateforme est centralisée dans `mikata/plat.py` |
 | Port macOS (Option B) | Implémenté et couvert par les tests : les moteurs par plateforme sont choisis par les propriétés `backend` de la config, décidées dans `mikata/plat.py` (STT Parakeet/MLX, pilotage AX, index Spotlight) |
@@ -148,10 +148,10 @@ Bonne nouvelle côté matériel : avec un casque fermé, le son du jeu ne revien
 
 ## 6. LLM cloud et boucle agent
 
-> **Refonte en cours (phase 14)** : les sections 6 et 7 sont remplacées, phase par phase,
-> par [`AGENT_CORE.md`](AGENT_CORE.md) (boucle unique, code comme action, provenance et
-> politiques, compétences vérifiées, banc d'essai). Tant qu'une phase n'est pas fusionnée,
-> ce qui suit décrit le code en place.
+> **Phase 14** : le cœur agent (tout ce qui suit la transcription) est décrit en détail
+> dans [`AGENT_CORE.md`](AGENT_CORE.md), avec les mesures et ce qui reste à faire. Les
+> sections 6 et 7 ci-dessous en donnent le résumé à jour ; en cas d'écart, `AGENT_CORE.md`
+> fait foi pour ce périmètre.
 
 **Tout passe par le LLM : DeepSeek « flash » via ton abonnement CommandCode.** Client unique compatible OpenAI (`openai.AsyncOpenAI` sur un `httpx.AsyncClient` persistant), avec `base_url`, `api_key` et `model` dans la config : le nom exact du modèle est celui que CommandCode expose. Si un jour le fournisseur change, c'est une ligne de config.
 
@@ -162,7 +162,8 @@ Bonne nouvelle côté matériel : avec un casque fermé, le son du jeu ne revien
 1. Construire les messages : prompt système fixe + définitions d'outils fixes (toujours en tête, pour le cache) + contexte dynamique + historique de session + texte transcrit.
 2. Appeler le LLM en **streaming** avec `tools` (schémas JSON générés depuis les modèles Pydantic des outils).
 3. Chaque fragment de texte terminé part immédiatement au TTS (section 2, technique 3).
-4. Appels d'outils : exécution après passage par le garde-fou (section 7). Plusieurs appels indépendants dans la même réponse s'exécutent **en parallèle** (`asyncio.gather`).
+4. Appels d'outils : exécution après passage par les politiques et le garde-fou (section 7). Plusieurs appels indépendants dans la même réponse s'exécutent **en parallèle** (`asyncio.gather`).
+   - **Programmes (phase 14d)** : pour une demande en plusieurs étapes dépendantes, le LLM appelle l'outil `script` avec un court programme Python. L'interpréteur maison (`action/interp.py`) l'exécute d'une traite : mêmes outils, sous les mêmes noms, plus `extract` (lecture d'un contenu par un appel LLM sans outil), `expect`, `parallel`, `ask`. Une phrase rendue par le programme est dite telle quelle ; une donnée revient au LLM ; une erreur revient avec ce qui est déjà fait. `agent.scripts: false` désactive cette voie.
 5. **Outil terminal réussi et aucun autre appel en attente** : on joue « C'est fait » en cache et la boucle s'arrête, sans second appel LLM. Sinon, résultat (tronqué à \~2 000 caractères) ajouté en message `tool`, et on relance.
 6. Limites : 8 tours d'outils max, timeout 20 s par appel, 60 s par requête. Au-delà, phrase d'excuse courte.
 7. Erreur réseau / API : un retry immédiat, puis « Je n'arrive pas à joindre le serveur » (en cache, fonctionne hors ligne).
@@ -182,13 +183,22 @@ Bonne nouvelle côté matériel : avec un casque fermé, le son du jeu ne revien
 - **Court terme** : historique en RAM, remis à zéro après 10 min sans interaction ou sur « nouvelle conversation ». Plafond \~6 000 tokens, les échanges les plus anciens sautent en premier.
 - **Long terme** : outils `remember` / `forget` qui écrivent dans `data/memory.json` (≤ 30 faits), injectés dans le prompt système. Pas de base vectorielle en v1.
 - **Procédurale** (phase 12c) : les commandes multi-étapes réussies sont distillées en savoir-faire (`data/skills/skills.json`) — rejoués sans appel LLM quand ils collent, donnés comme plan quand ils ont des paramètres, désactivés après des échecs répétés (§7, famille `skills`).
-- **Cache de prompt** : prompt système + outils identiques et en tête à chaque appel ; les faits mémorisés juste après ; le contexte dynamique en dernier. Moins cher et plus rapide.
+- **Leçons** (phase 14e) : `data/playbook.json`, de courtes leçons tirées d'un échec corrigé ou d'une correction de l'utilisateur, jointes au contexte quand elles se rapportent à la demande (`learn/playbook.py`, `learn/reflect.py`). Les tours qui ont agi laissent une trace dans `data/traces/`.
+- **Cache de prompt** : prompt système + outils identiques et en tête à chaque appel ; la notice des programmes, fixe, juste après ; puis les faits mémorisés ; le contexte dynamique en dernier. Moins cher et plus rapide.
 
 ## 7. Outils de pilotage et garde-fou
 
 **Règle : toutes les actions s'exécutent sans confirmation, sauf la suppression définitive, qui est interdite.** Le garde-fou est appliqué par le code (`agent/guard.py`), jamais par le LLM, et chaque action est journalisée dans `data/actions.log`.
 
-**Ce que fait le garde-fou :**
+**Politiques d'action (phases 14b à 14d, `action/policy.py`)**, appliquées avant le garde-fou :
+
+- Chaque outil déclare son **effet** (`lire`, `agir`, `conséquent`) et la **confiance** de ce qu'il renvoie (`non fiable` pour une page web, un fichier, le presse-papiers, le texte d'une appli, la sortie d'une commande).
+- Dans un programme, l'interpréteur suit la **provenance** de chaque valeur : ce qui vient d'un contenu lu reste marqué non fiable, y compris quand il ne fait que choisir une branche.
+- Lire et agir de façon réversible sont libres. Une action conséquente qui dépend d'un contenu lu, ou demandée après que le LLM a lu un tel contenu dans le tour, demande un « oui » oral.
+- **Accès complet** (`guard.full_access: true`, case des réglages) : plus aucune confirmation. C'est le réglage « toutes les actions sans confirmation » du tableau des décisions.
+- Refus que l'accès complet ne lève pas : une commande shell ou un souvenir construits à partir d'un contenu lu, et toute action destructive.
+
+**Ce que fait le garde-fou**, derrière les politiques, dans chaque outil :
 
 - **Supprimer = corbeille.** `delete_file` passe toujours par `send2trash`. Aucun outil ne supprime définitivement.
 - **PowerShell filtré.** Avant exécution, `run_powershell` refuse les commandes de suppression ou d'effacement : `Remove-Item` et ses alias (`rm`, `ri`, `del`, `erase`, `rd`, `rmdir`), `Clear-RecycleBin`, `Format-Volume`, `diskpart`, `cipher /w`, `sdelete`, `vssadmin delete`, appels `.Delete()` .NET. Le refus est renvoyé au LLM avec la consigne d'utiliser `delete_file`. C'est une liste noire, donc un filet de sécurité et pas une garantie absolue. Sur macOS, la liste noire est composée explicitement par `_blacklist_for(platform)` : liste commune + commandes du shell natif (`sudo rm -rf`, `diskutil erase`, base TCC, `nvram`/`csrutil`/`bless`).
