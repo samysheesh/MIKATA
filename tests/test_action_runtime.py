@@ -264,8 +264,10 @@ def test_the_guard_still_refuses_and_the_script_cannot_swallow_it(tmp_path: Path
     world = World(tmp_path, full_access=True)
     code = "try:\n    shell.run('Remove-Item notes.txt')\nexcept Exception:\n    pass\nfiles.write('apres.txt', 'x')"
     outcome = world.run(code)
-    assert outcome.kind == "refus" and "garde-fou" in outcome.error
+    assert outcome.kind == "garde-fou" and "garde-fou" in outcome.error
     assert world.shell.calls == [] and not (world.home / "apres.txt").exists()
+    # Le modèle, lui, peut suivre le conseil du refus (la corbeille) : c'est corrigeable.
+    assert outcome.retryable and "delete_file" in outcome.error
 
 
 def test_a_failure_message_from_untrusted_content_is_redacted(tmp_path: Path) -> None:

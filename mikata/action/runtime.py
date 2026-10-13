@@ -43,6 +43,11 @@ class PolicyDenied(Exception):
     """Appel refusé par une politique ou par le garde-fou : le script s'arrête."""
 
 
+class GuardRefused(Exception):
+    """Le garde-fou d'un outil a refusé (liste noire, dossier interdit...) : le script
+    s'arrête, mais le modèle peut reprendre autrement (le refus dit souvent comment)."""
+
+
 class Cancelled(Exception):
     """L'utilisateur a dit non, ou « stop » : le script s'arrête."""
 
@@ -67,7 +72,7 @@ class ScriptOutcome:
     ok: bool
     value: Any = None
     trust: Trust = Trust.TRUSTED
-    kind: str = ""  # script | attente | outil | refus | annulé | budget
+    kind: str = ""  # script | attente | outil | garde-fou | refus | annulé | budget
     error: str = ""  # message pour le modèle, expurgé si besoin
     prints: list[str] = field(default_factory=list)
     records: list[ActionRecord] = field(default_factory=list)
@@ -78,7 +83,7 @@ class ScriptOutcome:
     @property
     def retryable(self) -> bool:
         """Le modèle peut-il corriger et réessayer ? Jamais après un refus ou un « non »."""
-        return not self.ok and self.kind in ("script", "attente", "outil")
+        return not self.ok and self.kind in ("script", "attente", "outil", "garde-fou")
 
     def text(self) -> str:
         """Valeur de retour en texte (pour la dire, ou la rendre au modèle)."""
@@ -175,7 +180,7 @@ class ScriptRuntime:
         )  # fmt: skip
         if not result.ok:
             if result.status == "refusé":
-                raise PolicyDenied(result.content)
+                raise GuardRefused(result.content)
             if result.status == "annulé":
                 raise Cancelled(result.content)
             tainted = entry.output is Trust.UNTRUSTED or arg_trust is Trust.UNTRUSTED
@@ -278,6 +283,8 @@ class ScriptRuntime:
             outcome = ScriptOutcome(ok=False, kind="outil", error=f"outil en échec : {message}")
         except PolicyDenied as exc:
             outcome = ScriptOutcome(ok=False, kind="refus", error=f"refusé : {exc}")
+        except GuardRefused as exc:
+            outcome = ScriptOutcome(ok=False, kind="garde-fou", error=str(exc))
         except Cancelled as exc:
             outcome = ScriptOutcome(ok=False, kind="annulé", error=str(exc))
         outcome.prints = interpreter.prints

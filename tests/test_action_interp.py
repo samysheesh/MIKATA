@@ -229,6 +229,10 @@ def test_values_cannot_grow_without_bound() -> None:
         "return 9 ** 99",
         "x = 2\nfor i in range(30):\n    x = x * x\nreturn x",
         "return ', '.join(['a' * 100000] * 1000)",
+        "x = 10 ** 60\nreturn x ** 60",
+        "return f'{1:>99999999}'",
+        "x = [0] * 60000\nwhile True:\n    x.extend(x)",
+        "d = {}\nfor i in range(1000):\n    d.update({j + i * 1000: 1 for j in range(1000)})",
     ):
         with pytest.raises(BudgetExceeded):
             run(code)

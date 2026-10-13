@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import re
 import textwrap
 import time
 from collections.abc import Awaitable, Callable, Iterable
@@ -284,6 +285,7 @@ _COMPARE: dict[type, Callable[[Any, Any], bool]] = {
 
 
 VALUE_ERRORS = (ValueError, KeyError, IndexError, TypeError, ZeroDivisionError)
+_DIGITS = re.compile(r"[0-9]+")
 INTERP_FUNCTIONS = frozenset({"expect", "print", "parallel"})  # traitées par l'interpréteur
 
 
@@ -702,7 +704,11 @@ class Interpreter:
         if op is ast.Pow:
             if not isinstance(right.value, (int, float)) or abs(right.value) > 64:
                 raise BudgetExceeded("puissance trop grande", self._line(node))
-            return Val(left.value**right.value, left.trust.join(right.trust))
+            whole = isinstance(left.value, int) and not isinstance(left.value, bool)
+            if whole and left.value.bit_length() * max(abs(int(right.value)), 1) > 4096:
+                raise BudgetExceeded("nombre trop grand", self._line(node))
+            result = left.value**right.value
+            return Val(self._sized(result, node), left.trust.join(right.trust))
         if op not in _BINOPS:
             raise ScriptError("opérateur non permis", self._line(node))
         if op is ast.Mult:
@@ -733,6 +739,8 @@ class Interpreter:
             spec = ""
             if part.format_spec is not None:
                 spec = str((await self._eval(part.format_spec)).value)
+                if any(len(digits) > 4 for digits in _DIGITS.findall(spec)):
+                    raise BudgetExceeded("largeur de format trop grande", self._line(node))
             if isinstance(text, (str, int, float, bool)) or text is None:
                 parts.append(format(text, spec) if spec else str(text))
             else:
@@ -795,6 +803,7 @@ class Interpreter:
         if isinstance(target, _Method):
             self._guard_method(target, raw_args, node)
             result = getattr(target.target, target.name)(*raw_args, **raw_kwargs)
+            self._sized(target.target, node)  # extend, update... grossissent sur place
             if target.name in ("keys", "values", "items"):
                 result = [list(item) if isinstance(item, tuple) else item for item in result]
             return Val(self._sized(result, node), trust)

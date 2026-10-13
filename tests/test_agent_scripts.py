@@ -337,3 +337,43 @@ def test_the_strong_model_takes_over_after_two_failed_scripts(tmp_path: Path) ->
     result = bench.respond("ouvre mon logiciel de retouche")
     assert bench.llm.models == [None, None, "grand-modele"]
     assert result.answer == "Steam est ouvert." and result.effort_final == "medium"
+
+
+def test_a_guard_refusal_can_be_followed_by_the_safe_alternative(tmp_path: Path) -> None:
+    """Phase 5 conservée : après un refus du garde-fou (suppression définitive), le modèle
+    garde ses outils et passe par la corbeille, comme le refus le lui conseille."""
+    bench = Bench(
+        tmp_path,
+        [ToolCallReq("a", "run_powershell", {"command": "Remove-Item notes.txt"})],
+        [ToolCallReq("b", "delete_file", {"path": "notes.txt"})],
+        [TextDelta("C'est à la corbeille.")],
+    )
+    (bench.home / "notes.txt").write_text("x", encoding="utf-8")
+    result = bench.respond("supprime notes.txt")
+    assert bench.shell.calls == []  # la commande refusée n'a jamais tourné
+    assert "delete_file" in bench.llm.offered[1]  # les outils restent proposés
+    assert not (bench.home / "notes.txt").exists() and result.outcome == "ok"
+
+
+def test_two_confirmations_are_asked_one_after_the_other(tmp_path: Path) -> None:
+    order: list[str] = []
+    bench = Bench(
+        tmp_path,
+        [ToolCallReq("a", "browser_read", {})],
+        [
+            ToolCallReq("b", "write_file", {"path": "un.txt", "content": "1"}),
+            ToolCallReq("c", "write_file", {"path": "deux.txt", "content": "2"}),
+        ],
+        [TextDelta("C'est fait.")],
+    )
+
+    async def listen(timeout_s: float) -> str:
+        order.append("écoute-début")
+        await asyncio.sleep(0.02)
+        order.append("écoute-fin")
+        return "oui"
+
+    result = asyncio.run(bench.agent.respond("lis et note", bench.sink, listen=listen))
+    assert result.confirmations == 2
+    assert order == ["écoute-début", "écoute-fin", "écoute-début", "écoute-fin"]
+    assert (bench.home / "un.txt").exists() and (bench.home / "deux.txt").exists()

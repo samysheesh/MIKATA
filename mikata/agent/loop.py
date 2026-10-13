@@ -369,6 +369,7 @@ class Agent:
         self.playbook = playbook
         self.traces = traces
         self._last_trace: tuple[TurnTrace, float] | None = None
+        self._confirm_lock = asyncio.Lock()
         self._reflect_task: asyncio.Task[None] | None = None
         # Phase 14d : SDK des programmes, tiré du registre (une fois).
         self._catalog = SdkCatalog(tools.tools, platform()) if tools is not None else None
@@ -952,8 +953,8 @@ class Agent:
             untrusted = res.ok and self._output_trust(res.name) is Trust.UNTRUSTED
             if untrusted:
                 state.trust = Trust.UNTRUSTED  # le modèle va lire un contenu venu d'ailleurs
-            if res.status in ("refusé", "annulé"):
-                state.no_tools = True  # un refus ou un « non » ne se contourne pas
+            if res.status in ("politique", "annulé"):
+                state.no_tools = True  # un refus de politique ou un « non » ne se contourne pas
             short = UNTRUSTED_HISTORY if untrusted else res.content
             if len(short) > HISTORY_TOOL_CHARS:
                 short = short[:HISTORY_TOOL_CHARS] + " […]"
@@ -978,15 +979,16 @@ class Agent:
                 entry, Trust.TRUSTED, turn_trust, full_access=self.config.guard.full_access
             )
             refusal = ""
-            status = "refusé"
+            status = "politique"
             if decision.verdict is Verdict.DENY:
                 refusal = f"refusé : {decision.reason}"
             elif decision.verdict is Verdict.CONFIRM:
                 result.confirmations += 1
                 guard = self.tools.ctx.guard
-                accepted = guard is not None and await guard.confirm(
-                    confirm_question(entry), current_turn()
-                )
+                async with self._confirm_lock:  # une question à la fois, jamais deux voix
+                    accepted = guard is not None and await guard.confirm(
+                        confirm_question(entry), current_turn()
+                    )
                 if not accepted:
                     refusal, status = "l'utilisateur n'a pas confirmé", "annulé"
             if refusal:
@@ -1037,7 +1039,9 @@ class Agent:
         )
         log_action(SCRIPT_TOOL, {"code": code}, "ok" if outcome.ok else outcome.kind, outcome.error)
         if not outcome.ok:
-            status = {"refus": "refusé", "annulé": "annulé"}.get(outcome.kind, "échec")
+            status = {"refus": "politique", "annulé": "annulé", "garde-fou": "refusé"}.get(
+                outcome.kind, "échec"
+            )
             if outcome.retryable:
                 state.script_failures += 1
                 if state.script_failures >= SCRIPT_FAILURES_BEFORE_ESCALATION:
