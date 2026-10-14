@@ -2971,3 +2971,51 @@ uv run python -m mikata --ask "ouvre example.com dans ton navigateur et dis-moi 
 
 Attendu : tout en `passed` ; la dernière commande répond « Example Domain » sans qu'aucune
 fenêtre n'apparaisse.
+
+## Phase 15 — réglages refaits, navigateur de travail, MIKATA plus bavard
+
+**15a — navigateur de travail et sortie audio**
+
+- Le navigateur de travail se gère depuis les réglages (page Accueil) : ses onglets, chacun
+  fermable (le dernier est vidé, le navigateur reste lancé pour la demande suivante), la
+  pause de ce qui joue, et la fenêtre affichée à l'écran ou remise en fond (pour voir ce
+  que fait MIKATA ou se connecter à un compte). Aucun bouton ne le ferme : il tourne en fond.
+- La sortie audio change sans redémarrer MIKATA. Si la nouvelle sortie refuse de s'ouvrir,
+  l'ancienne est rouverte et la fenêtre le dit.
+
+**15b — fenêtre de réglages refaite**
+
+Barre latérale et six pages en cartes au lieu de huit onglets : Accueil, Son et voix,
+Comportement, Apparence, Clés et coût, Journal. Choix en mots (« 1 semaine », « Rapide »),
+interrupteurs, badge seulement pour ce qui attend un redémarrage, Enregistrer (ou Ctrl+S)
+actif seulement s'il y a des modifications. « Accès complet » (`guard.full_access`) est
+enfin réglable dans la fenêtre, et s'applique sans redémarrer. Captures : `docs/ui/`.
+
+**15c — tâches longues commentées** (`agent.narration`, page Comportement)
+
+- `bavard` (défaut) : sur une demande en plusieurs étapes, MIKATA dit en une phrase ce qu'il
+  fait ou ce qu'il a trouvé (« Je cherche sur YouTube. », « J'ai trouvé la vidéo officielle,
+  je la lance. ») ; jamais pour une action simple. S'il n'a rien dit après
+  `agent.narration_after_s` secondes (5), une phrase d'attente selon l'étape en cours
+  (« Je suis sur la page, une seconde. »), en cache et sans appel au modèle.
+- `discret` : seulement le son de réflexion, puis le résultat.
+- Banc (vrai LLM, 2 essais) : enchaînements 3,9 s en médiane dans les deux modes ; premier
+  son à 1,8 s. Comparer : `uv run python scripts/eval_bench.py --tag enchaine --narration discret`.
+
+```powershell
+git fetch origin
+git checkout phase-15c-narration
+uv sync
+uv run ruff check . ; uv run ruff format --check . ; uv run pytest
+uv run python -m mikata.ui --settings
+```
+
+Attendu : tout en `passed`, puis la fenêtre de réglages :
+
+1. Accueil : dire « MIKATA, mets l'opening 27 de One Piece » ; l'onglet apparaît dans la carte
+   « Navigateur de travail » (relu toutes les 3 s). « Pause » arrête la vidéo, « Afficher »
+   montre la fenêtre, « Masquer » la renvoie en fond, « Fermer » sur l'onglet le ferme.
+2. Son et voix : choisir une autre sortie, Enregistrer ; la réponse suivante de MIKATA sort
+   sur le nouveau périphérique, sans redémarrage.
+3. Comportement : « Tâches longues » sur « Discret », Enregistrer, redemander une vidéo :
+   MIKATA ne commente plus les étapes. Le remettre sur « Bavard ».
