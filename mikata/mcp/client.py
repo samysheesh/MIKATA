@@ -63,10 +63,17 @@ class McpServer:
         self._pending: dict[int, asyncio.Future[Any]] = {}
         self._next_id = 0
         self._write_lock = asyncio.Lock()
+        self._restart_lock = asyncio.Lock()
+        self._ended = True  # sortie standard fermée : plus aucune réponse ne viendra
         self.server_info: dict[str, Any] = {}
+
+    @property
+    def alive(self) -> bool:
+        return self._process is not None and self._process.returncode is None and not self._ended
 
     async def start(self) -> None:
         flags = 0x08000000 if sys.platform == "win32" else 0  # sans console
+        self._ended = False
         self._process = await asyncio.create_subprocess_exec(
             self.command,
             *self.args,
@@ -113,7 +120,17 @@ class McpServer:
         return tools
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> tuple[bool, str]:
-        """(réussi, texte rendu par l'outil)."""
+        """(réussi, texte rendu par l'outil). Un serveur arrêté entre-temps (plantage)
+        est relancé une fois avant l'appel."""
+        if not self.alive:
+            async with self._restart_lock:
+                if not self.alive:
+                    logger.info("Serveur MCP « {} » arrêté : relance.", self.name)
+                    await self.close()
+                    try:
+                        await self.start()
+                    except OSError as exc:
+                        raise McpError(f"serveur MCP « {self.name} » arrêté") from exc
         result = await self.request("tools/call", {"name": name, "arguments": arguments})
         parts = []
         for item in result.get("content") or []:
@@ -128,18 +145,23 @@ class McpServer:
     async def request(
         self, method: str, params: dict[str, Any], timeout_s: float | None = None
     ) -> dict[str, Any]:
-        if self._process is None or self._process.returncode is not None:
-            raise McpError(f"serveur MCP « {self.name} » arrêté")
+        stopped = McpError(f"serveur MCP « {self.name} » arrêté")
+        if not self.alive:
+            raise stopped
         self._next_id += 1
         ident = self._next_id
         future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
         self._pending[ident] = future
         try:
+            if self._ended:  # la lecture vient de s'arrêter : rien ne répondra
+                raise stopped
             await self._send({"jsonrpc": "2.0", "id": ident, "method": method, "params": params})
             async with asyncio.timeout(timeout_s or self.timeout_s):
                 message = await future
         except TimeoutError:
             raise McpError(f"« {self.name} » ne répond pas à {method}") from None
+        except OSError as exc:  # tube fermé : le serveur est parti
+            raise stopped from exc
         finally:
             self._pending.pop(ident, None)
         if "error" in message:
@@ -182,6 +204,7 @@ class McpServer:
                 future = self._pending.get(message["id"])
                 if future is not None and not future.done():
                     future.set_result(message)
+        self._ended = True
         for future in self._pending.values():
             if not future.done():
                 future.set_exception(McpError(f"serveur MCP « {self.name} » arrêté"))
@@ -201,14 +224,26 @@ class McpServer:
         )
 
     async def _log_stderr(self) -> None:
+        """Lue jusqu'au bout, toujours : un tube d'erreur plein bloquerait le serveur."""
         assert self._process is not None and self._process.stderr is not None
-        while line := await self._process.stderr.readline():
+        stream = self._process.stderr
+        while True:
+            try:
+                line = await stream.readline()
+            except ValueError:  # ligne trop longue : sautée
+                continue
+            if not line:
+                break
             logger.debug("MCP « {} » : {}", self.name, line.decode("utf-8", "replace").rstrip())
 
     async def close(self) -> None:
         process = self._process
         if process is None:
             return
+        self._ended = True
+        for future in self._pending.values():
+            if not future.done():
+                future.set_exception(McpError(f"serveur MCP « {self.name} » arrêté"))
         if process.stdin is not None:
             with contextlib.suppress(Exception):
                 process.stdin.close()

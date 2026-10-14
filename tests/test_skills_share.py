@@ -34,6 +34,15 @@ def test_export_then_import_arrives_proposed_under_a_free_name(tmp_path: Path) -
     assert imported.call_name in {s.call_name for s in SkillStore(tmp_path / "b").usable()}
 
 
+def test_an_existing_export_is_never_overwritten(tmp_path: Path) -> None:
+    store = SkillStore(tmp_path / "a")
+    skill = store.adopt(_skill())
+    first = store.export(skill.call_name, tmp_path / "partage")
+    before = first.read_bytes()
+    second = store.export(skill.call_name, tmp_path / "partage")
+    assert second.name == "lancer-opening (2).zip" and first.read_bytes() == before
+
+
 def _package(tmp_path: Path, *, patterns: str, code: str, name: str = "x-y") -> Path:
     folder = tmp_path / "src" / name
     folder.mkdir(parents=True)

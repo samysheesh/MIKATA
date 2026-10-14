@@ -546,18 +546,25 @@ class SkillStore:
 
     def export(self, call_name: str, folder: Path) -> Path:
         """Zip de la compétence (SKILL.md et skill.py, au format Agent Skills) dans
-        `folder`, sans l'historique des échecs ni les anciennes versions."""
+        `folder`, sans l'historique des échecs ni les anciennes versions. Un export déjà là
+        n'est jamais écrasé : le nouveau prend un nom libre (« nom (2).zip »)."""
         import zipfile
 
         skill = self.skills.get(call_name)
         if skill is None or skill.path is None:
             raise ValueError(f"compétence inconnue : {call_name}")
         folder.mkdir(parents=True, exist_ok=True)
-        target = folder / f"{skill.name}.zip"
-        with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
-            for name in ("SKILL.md", "skill.py"):
-                archive.write(skill.path / name, f"{skill.name}/{name}")
-        return target
+        for index in range(1, 1000):
+            name = f"{skill.name}.zip" if index == 1 else f"{skill.name} ({index}).zip"
+            try:
+                archive = zipfile.ZipFile(folder / name, "x", zipfile.ZIP_DEFLATED)
+            except FileExistsError:
+                continue
+            with archive:
+                for part in ("SKILL.md", "skill.py"):
+                    archive.write(skill.path / part, f"{skill.name}/{part}")
+            return folder / name
+        raise ValueError(f"trop d'exports de {skill.name} dans {folder}")
 
     def import_package(self, source: Path, actions: set[str] | None = None) -> Skill:
         """Importe une compétence (dossier ou .zip au format Agent Skills). Vérifiée dans le

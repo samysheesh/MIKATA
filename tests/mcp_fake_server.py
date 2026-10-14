@@ -39,6 +39,12 @@ def main() -> None:
     sys.stdin.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
     sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]  (UTF-8 : le protocole)
     print("journal du serveur de test", file=sys.stderr, flush=True)
+    if os.environ.get("FLOOD_STDERR"):
+        # Bien plus que le tampon d'un tube (64 Ko), et une ligne plus longue que la limite
+        # du client : si MIKATA cessait de lire, le serveur resterait bloqué ici.
+        for i in range(3000):
+            print(f"ligne de journal {i} " + "x" * 100, file=sys.stderr)
+        print("y" * (5 * 1024 * 1024), file=sys.stderr, flush=True)
     sys.stdout.write("ligne parasite qui n'est pas du JSON\n")
     sys.stdout.flush()
     for line in sys.stdin:
@@ -72,6 +78,8 @@ def main() -> None:
         elif method == "tools/call":
             name = message["params"]["name"]
             args = message["params"].get("arguments") or {}
+            if name == "planter":
+                os._exit(3)  # plantage en pleine session
             if name == "heure":
                 text, error = (
                     f"Il est 12 h (secret : {os.environ.get('CLE_TEST', 'aucun')}).",

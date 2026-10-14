@@ -170,6 +170,7 @@ class McpBridge:
                 await server.close()
                 continue
             self.servers.append(server)
+            before = len(added)
             for tool in tools[: self.config.max_tools_per_server]:
                 try:
                     instance = tool_class(server, tool)(registry.ctx)
@@ -180,7 +181,7 @@ class McpBridge:
                     continue  # deux outils au même nom une fois nettoyé : le premier reste
                 registry.tools[instance.name] = instance
                 added.append(instance.name)
-            logger.info("Serveur MCP « {} » : {} outil(s).", spec.name, len(tools))
+            logger.info("Serveur MCP « {} » : {} outil(s).", spec.name, len(added) - before)
         return added
 
     async def close(self) -> None:

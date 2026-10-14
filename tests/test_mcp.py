@@ -147,6 +147,63 @@ def test_a_missing_server_is_reported_not_fatal(tmp_path: Path) -> None:
     assert asyncio.run(scenario()) == ["mcp_notes_test_heure", "mcp_notes_test_ajouter_note"]
 
 
+def test_a_crashed_server_is_restarted_on_the_next_call() -> None:
+    from mikata.mcp.client import McpError, McpServer
+
+    async def scenario() -> tuple[str, bool]:
+        server = McpServer("test", sys.executable, [str(SERVER)], timeout_s=10)
+        try:
+            await server.start()
+            try:
+                await server.call_tool("planter", {})
+            except McpError as exc:
+                crash = str(exc)
+            else:
+                crash = ""
+            ok, _ = await server.call_tool("heure", {})  # relancé avant l'appel
+            return crash, ok
+        finally:
+            await server.close()
+
+    crash, ok = asyncio.run(scenario())
+    assert crash == "serveur MCP « test » arrêté" and ok
+
+
+def test_a_server_that_exits_at_once_fails_fast() -> None:
+    import time
+
+    from mikata.mcp.client import McpError, McpServer
+
+    async def scenario() -> str:
+        server = McpServer("bref", sys.executable, ["-c", "import sys; sys.exit(1)"])
+        try:
+            await server.start()
+        except McpError as exc:
+            return str(exc)
+        finally:
+            await server.close()
+        return ""
+
+    start = time.monotonic()
+    assert asyncio.run(scenario()) == "serveur MCP « bref » arrêté"
+    assert time.monotonic() - start < 10  # et non le délai de 180 s du premier lancement
+
+
+def test_a_server_flooding_its_error_output_does_not_block() -> None:
+    from mikata.mcp.client import McpServer
+
+    async def scenario() -> bool:
+        server = McpServer("bavard", sys.executable, [str(SERVER)], env={"FLOOD_STDERR": "1"})
+        try:
+            await server.start()
+            ok, _ = await server.call_tool("heure", {})
+            return ok
+        finally:
+            await server.close()
+
+    assert asyncio.run(asyncio.wait_for(scenario(), 60))
+
+
 def test_schema_to_params_and_names() -> None:
     model = params_model(
         "x",
