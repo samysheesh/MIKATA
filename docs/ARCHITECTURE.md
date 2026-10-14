@@ -428,6 +428,7 @@ agent:
   thinking_sound_after_s: 1.2
   narration: bavard                 # phase 15c : bavard | discret (tâches longues commentées)
   narration_after_s: 5
+  ack_after_s: 2.5                  # phase 16c : accusé quand une action longue part
 learning:                           # phase 14e : ce que MIKATA apprend à l'usage
   enabled: true
   max_lessons: 60                   # carnet de leçons (data/playbook.json)

@@ -3179,3 +3179,16 @@ probable par son numéro.
 git checkout phase-16b-revision
 uv run pytest tests/test_skills.py tests/test_skills_agent.py tests/test_action_runtime.py
 ```
+
+**16c — tâches longues : « tu en es où ? » et accusé selon la durée prévue.** Les demandes
+tournaient déjà en parallèle, et « annule » arrêtait la dernière en cours. Maintenant :
+
+- « tu en es où ? », « ça avance ? », « c'est bientôt fini ? » répondent tout de suite,
+  sans appel au modèle : « Pour « … », je suis sur la page, depuis 8 secondes. » ;
+- une action annoncée par MIKATA au moment où elle part, si sa durée prévue (chaque outil
+  la déclare) dépasse `agent.ack_after_s` (2,5 s) : jamais avant, jamais deux fois, jamais
+  pour un outil qui s'annonce lui-même (« Extinction dans 5 secondes ») ;
+- le modèle ne dit plus ce qu'il va faire, seulement ce qu'il a trouvé (moins bavard).
+
+À vérifier : demander une tâche longue (« cherche les horaires de la piscine de Lyon »),
+puis « MIKATA, tu en es où ? » pendant qu'elle tourne.

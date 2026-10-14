@@ -9,6 +9,7 @@ d'une dizaine d'arguments : son interface reste étroite et stable.
 from __future__ import annotations
 
 import re
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
@@ -267,6 +268,9 @@ class Turn:
     on_phase: Callable[[str], None] | None = None
     follow_up: bool = False
     spoken: list[str] = field(default_factory=list)  # ce qui a été dit, pour la réponse
+    # Phase 16c : ce que fait le tour en ce moment (« tu en es où ? »), depuis quand.
+    activity: str = "thinking"
+    started_at: float = field(default_factory=time.monotonic)
 
     def phase(self, name: str) -> None:
         if self.on_phase is not None:

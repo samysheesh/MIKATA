@@ -303,6 +303,7 @@ class Shutdown(_PowerTool):
     sdk = "system.shutdown"
     effect = Effect.CONSEQUENTIAL
     expected_s = 6.0
+    announces = True  # « Extinction dans 5 secondes... » : pas d'accusé en plus
     description = "Éteint le PC (après 5 s pendant lesquelles « stop » annule)."
     action = "shutdown"
     announce = "Extinction"
@@ -315,6 +316,7 @@ class Restart(_PowerTool):
     sdk = "system.restart"
     effect = Effect.CONSEQUENTIAL
     expected_s = 6.0
+    announces = True  # « Extinction dans 5 secondes... » : pas d'accusé en plus
     description = "Redémarre le PC (après 5 s pendant lesquelles « stop » annule)."
     action = "restart"
     announce = "Redémarrage"
@@ -327,6 +329,7 @@ class Sleep(_PowerTool):
     sdk = "system.sleep"
     effect = Effect.CONSEQUENTIAL
     expected_s = 6.0
+    announces = True  # « Extinction dans 5 secondes... » : pas d'accusé en plus
     description = "Met le PC en veille (après 5 s pendant lesquelles « stop » annule)."
     action = "sleep"
     announce = "Mise en veille"

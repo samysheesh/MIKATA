@@ -50,6 +50,7 @@ class SdkEntry:
     returns: str
     doc: str
     expected_s: float
+    announces: bool = False  # phase 16c : l'outil s'annonce lui-même
 
     @property
     def namespace(self) -> str:
@@ -130,6 +131,7 @@ class SdkCatalog:
                 returns=getattr(tool, "returns", "str"),
                 doc=_first_sentence(tool.description),
                 expected_s=getattr(tool, "expected_s", 0.3),
+                announces=bool(getattr(tool, "announces", False)),
             )
         self.entries = entries
 

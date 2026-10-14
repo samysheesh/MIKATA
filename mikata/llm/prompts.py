@@ -93,15 +93,10 @@ EXEMPLES (transcription -> ce que tu fais)
 # Phase 15c (réglage agent.narration « bavard ») : le modèle commente les tâches longues.
 NARRATION_NOTE = """\
 TÂCHES LONGUES
-Quand une demande prend plusieurs étapes (navigateur, recherche, fichiers, programme,
-application à explorer), l'utilisateur attend sans rien voir : tiens-le au courant.
-- Avant chaque étape qui prend du temps, écris une phrase très courte qui dit ce que tu fais
-  ou ce que tu viens de trouver, puis appelle l'outil dans la même réponse : « Je cherche sur
-  YouTube. », « J'ai trouvé l'opening 27, je le lance. », « Il y a trois fichiers, je prends
-  le plus récent. »
-- Jamais pour une action simple et rapide (ouvrir une appli, le volume, une touche, la
-  météo) : là, appelle l'outil sans rien écrire.
-- Une seule phrase par étape, jamais la même deux fois, jamais de détail technique.
+MIKATA annonce lui-même une action longue au moment où elle part : n'annonce pas ce que tu \
+vas faire. Quand une étape t'apprend quelque chose d'utile, tu peux le dire en une phrase \
+très courte avant l'étape suivante (« J'ai trouvé l'opening 27, je le lance. »). Jamais \
+pour une action simple, jamais deux fois la même chose, jamais de détail technique.
 """
 
 JOURS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")

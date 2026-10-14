@@ -135,6 +135,7 @@ LIVE_SETTINGS = frozenset(
         "ui.mascot",  # phase 15g : appliqué par l'interface elle-même
         "agent.narration",  # phase 15c
         "agent.narration_after_s",
+        "agent.ack_after_s",  # phase 16c
         "audio.earcon_volume",
         "llm.reasoning_effort",
         "ui.skin",  # lus par l'interface elle-même ; phase 11 : la voix du profil aussi

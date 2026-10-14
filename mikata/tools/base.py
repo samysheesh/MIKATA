@@ -67,6 +67,9 @@ class BaseTool(Generic[P]):
     effect: ClassVar[Effect] = Effect.CONSEQUENTIAL
     output: ClassVar[Trust] = Trust.LOCAL  # confiance de ce que l'outil renvoie
     expected_s: ClassVar[float] = 0.3  # durée typique (accusé de réception si c'est long)
+    # Phase 16c : l'outil s'annonce lui-même (« Extinction dans 5 secondes ») : pas
+    # d'accusé de réception en plus, quelle que soit sa durée.
+    announces: ClassVar[bool] = False
     platforms: ClassVar[tuple[str, ...]] = ()  # vide = toutes
     returns: ClassVar[str] = "str"  # forme du résultat reçu par un script
 

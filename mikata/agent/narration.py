@@ -79,6 +79,25 @@ class Narrator:
     def __getattr__(self, name: str) -> Any:  # drain, cancelled... de la vraie destination
         return getattr(self._speech, name)
 
+    def starting(self, activity: str, expected_s: float, threshold_s: float) -> None:
+        """Phase 16c : une action part. Si sa durée prévue dépasse le seuil et que rien
+        n'a encore été dit dans ce tour, MIKATA l'annonce maintenant, en même temps qu'elle
+        part (jamais avant : une phrase d'attente systématique coupe la parole)."""
+        self.activity = activity
+        if expected_s < threshold_s or self._last_said is not None or self.lines:
+            return
+        if self.listening:
+            return
+        key = f"wait_{activity}" if f"wait_{activity}" in PHRASES else "wait_work"
+        logger.info(
+            "Accusé : « {} » (action prévue {:.1f} s, étape : {}).",
+            PHRASES[key],
+            expected_s,
+            activity,
+        )
+        self.lines.append(key)
+        self._say_phrase(self, key)
+
     def due(self, now: float) -> str | None:
         """La phrase d'attente à dire maintenant, ou None."""
         if self.listening or len(self.lines) >= self.MAX_LINES:

@@ -42,6 +42,7 @@ from mikata.agent.learning import Learner
 from mikata.agent.memory import LongTermMemory, ShortTermMemory, is_reset_command
 from mikata.agent.model import ModelCaller
 from mikata.agent.narration import Narrator, activity_of, listening
+from mikata.agent.progress import describe, expected_duration, is_status_question
 from mikata.agent.script_tool import SCRIPT_SCHEMA, script_guide
 from mikata.agent.skill_path import SkillPath, inducible
 from mikata.agent.turn import (
@@ -126,6 +127,7 @@ class Agent:
         self._apps: Sequence[str] = ()
         self._apps_at = float("-inf")
         self._tools_warmed = False
+        self._turns: dict[int, Turn] = {}  # phase 16c : tours en cours (« tu en es où ? »)
         settings = lambda: self.config  # noqa: E731 — relu à chaque usage (réglages à chaud)
         self._say_phrase = PhraseSpeaker(phrases)
         self._model = ModelCaller(llm, settings)
@@ -159,6 +161,7 @@ class Agent:
                     lambda: self.jev,
                     usage,
                     self._say_phrase,
+                    on_start=self._starting,
                 )
                 tools.ctx.skills_capture = self._skill_path.capture  # outil remember_skill
             if tools.ctx.history is None:  # outil set_history_duration
@@ -288,6 +291,12 @@ class Agent:
             self._say_phrase(speech, "reset")
             result.answer, result.outcome = PHRASES["reset"], "reset"
             return result
+        if is_status_question(request.text):  # phase 16c : sans appel au modèle
+            running = [(t.command, t.activity, t.started_at) for t in self._turns.values()]
+            result.answer, result.outcome = describe(running), "status"
+            speech.say(result.answer)
+            logger.info("Où en est MIKATA : {}", result.answer)
+            return result
         narrator: Narrator | None = None
         narrating: asyncio.Task[None] | None = None
         # Fenêtre de suivi : la phrase sera peut-être ignorée, MIKATA ne dit rien d'avance.
@@ -352,6 +361,17 @@ class Agent:
     ) -> None:
         started = time.monotonic()
         turn, lessons = await self._start(command, speech, result, on_phase, listen, follow_up)
+        self._turns[id(turn)] = turn
+        try:
+            await self._rounds(turn, lessons, started, follow_up)
+        finally:
+            self._turns.pop(id(turn), None)
+
+    async def _rounds(
+        self, turn: Turn, lessons: list[Any], started: float, follow_up: bool
+    ) -> None:
+        """Les étapes d'un tour : compétence, appels au modèle, actions."""
+        command, speech, result = turn.command, turn.speech, turn.result
         schemas = self.tools.schemas() if self.tools is not None else []
         if self._script_guide is not None:
             schemas = [*schemas, SCRIPT_SCHEMA]
@@ -403,12 +423,10 @@ class Agent:
                 if not turn.spoken:
                     self._say_phrase(speech, "error")
                 break
-            if isinstance(speech, Narrator):
-                speech.activity = activity_of(reply.calls)
+            self._starting(turn, reply.calls)
             with turn_context(turn.io):  # les outils parlent et écoutent dans cette commande
                 results = await self._actions.run(reply, turn)
-            if isinstance(speech, Narrator):
-                speech.activity = "thinking"
+            self._starting(turn, [])
             tool_spoken = turn.take_tool_speech()  # ex. « Extinction dans 5 secondes... »
             turn.spoken.extend(tool_spoken)
             earlier_failure = any(not r.ok for r in result.direct_results) or any(
@@ -429,6 +447,17 @@ class Agent:
             elif result.rounds >= fallback_steps:
                 result.raise_effort("low", f"plus de {fallback_steps} étape(s)")
         self._finish(turn, lessons, time.monotonic() - started)
+
+    def _starting(self, turn: Turn, calls: list[Any]) -> None:
+        """Une action part (ou le modèle reprend la main, `calls` vide) : l'activité du
+        tour change, et une action longue est annoncée maintenant (phase 16c)."""
+        turn.activity = activity_of(calls) if calls else "thinking"
+        if isinstance(turn.speech, Narrator):
+            if calls:
+                expected = expected_duration(calls, self._catalog)
+                turn.speech.starting(turn.activity, expected, self.config.agent.ack_after_s)
+            else:
+                turn.speech.activity = "thinking"
 
     def _finish(self, turn: Turn, lessons: list[Any], seconds: float) -> None:
         """Historique, trace et leçons, compétences."""

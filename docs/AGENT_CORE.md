@@ -408,7 +408,12 @@ réussite sur trois essais.
 Fait en D (phase 16a) : boucle découpée en composants, prompt système réécrit en
 principes et exemples canoniques (le savoir propre à un outil est passé dans sa
 description) ; banc à deux essais : 98/100 et 164 appels au modèle, contre 99/100 et 169.
-Reste à faire en D : tâches de fond avec accusé de réception, chemin « exploration » borné.
+Fait en D (phase 16c) : « tu en es où ? » répondu sans modèle à partir des tours en
+cours ; accusé de réception quand une action part et que sa durée prévue (déclarée par
+chaque outil) dépasse `agent.ack_after_s`, jamais avant ni pour un outil qui s'annonce
+lui-même ; le modèle ne dit plus ce qu'il va faire, seulement ce qu'il a trouvé. Les
+demandes tournaient déjà en parallèle et « annule » arrêtait la dernière en cours.
+Reste à faire en D : chemin « exploration » borné.
 Fait en E (phase 15e) : compétences (`mikata/learn/skills.py`), qui remplacent
 `mikata/skills/`. Écarts à la section 3.6 : la vérification avant adoption se fait dans le
 code, sans rejouer la demande (rejouer une action sur le PC la referait deux fois) ; la

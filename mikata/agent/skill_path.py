@@ -118,6 +118,7 @@ class SkillPath:
         jev: Callable[[], Any],
         usage: UsageTracker | None,
         say_phrase: PhraseSpeaker,
+        on_start: Callable[[Turn, list[ToolCallReq]], None] | None = None,
     ) -> None:
         self.store = store
         self.actions = actions
@@ -127,6 +128,7 @@ class SkillPath:
         self._jev = jev
         self.usage = usage
         self._say_phrase = say_phrase
+        self._on_start = on_start  # phase 16c : activité du tour, accusé d'une action longue
         self.task: asyncio.Task[None] | None = None  # écriture d'une compétence en cours
         self._last_inducible: tuple[str, str] | None = None
         self._last_uses: tuple[list[str], float] | None = None
@@ -170,8 +172,12 @@ class SkillPath:
         result = turn.result
         call = ToolCallReq("competence", SCRIPT_TOOL, {"code": call_code(skill, values)})
         result.local_skill, result.skill_via = skill.name, via
+        if self._on_start is not None:  # ce que fait le programme de la compétence
+            self._on_start(turn, [ToolCallReq("competence", SCRIPT_TOOL, {"code": skill.code})])
         with turn_context(turn.io):
             results = await self.actions.run(Reply("", [call], ""), turn)
+        if self._on_start is not None:
+            self._on_start(turn, [])
         spoken = turn.take_tool_speech()
         (outcome,) = results
         if outcome.ok and outcome.terminal:
