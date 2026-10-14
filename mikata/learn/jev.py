@@ -188,5 +188,44 @@ class JevRouter:
         )
         return decision
 
+    async def pick(self, question: str, options: list[str]) -> tuple[int, float] | None:
+        """Phase 15l : l'option (indice, probabilité) qui répond le mieux à `question` ;
+        None si Jev ne répond pas. Pas de seuil ici : plusieurs options presque
+        équivalentes (deux envois d'une même vidéo) se partagent la probabilité, et la
+        première reste le bon choix."""
+        body = {
+            "model": JEV_MODEL,
+            "state": {"consigne": question},
+            "questions": {
+                "choix": {
+                    "type": "choice",
+                    "instructions": question,
+                    "criteria": {f"o{i}": f"« {option} »" for i, option in enumerate(options)},
+                }
+            },
+        }
+        start = time.monotonic()
+        try:
+            response = await self._http.post(
+                JEV_URL, json=body, headers={"Authorization": f"Bearer {self._api_key}"}
+            )
+            response.raise_for_status()
+            answer = (response.json().get("answers") or {}).get("choix") or {}
+            label = str(answer.get("choice") or "")
+            index = int(label[1:]) if re.fullmatch(r"o\d+", label) else -1
+            if not 0 <= index < len(options):
+                return None
+            probability = float((answer.get("probabilities") or {}).get(label) or 0)
+        except Exception as exc:
+            logger.info("Jev (choix) sans réponse utilisable : {}", str(exc) or type(exc).__name__)
+            return None
+        logger.info(
+            "Jev (choix) : « {} » (p = {:.2f}, {:.0f} ms).",
+            options[index][:80],
+            probability,
+            (time.monotonic() - start) * 1000,
+        )
+        return index, probability
+
     async def aclose(self) -> None:
         await self._http.aclose()

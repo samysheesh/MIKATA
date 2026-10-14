@@ -194,3 +194,26 @@ def test_a_value_jev_did_not_take_from_the_sentence_is_refused(
     llm = RaceLLM({"competence": 0, "valeurs": {}}, 0.1, ANSWER, 0.4)
     result, _, audio, _ = _run(tmp_path, llm, COMMAND)
     assert audio.volume == 50 and result.answer == "Très bien."
+
+
+def test_pick_returns_the_chosen_option_or_none() -> None:
+    """Phase 15l : choisir dans une liste (les liens d'une page de résultats)."""
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        assert body["questions"]["choix"]["criteria"]["o1"] == "« Opening 27 »"
+        answer = {"choix": {"choice": "o1", "probabilities": {"o0": 0.4, "o1": 0.6}}}
+        return httpx2.Response(200, json={"answers": answer})
+
+    async def scenario() -> tuple[Any, Any]:
+        good, bad = _router(handler), _router(lambda request: httpx2.Response(500))
+        try:
+            return (
+                await good.pick("Le plus récent ?", ["Opening 26", "Opening 27"]),
+                await bad.pick("Le plus récent ?", ["Opening 26", "Opening 27"]),
+            )
+        finally:
+            await good.aclose()
+            await bad.aclose()
+
+    assert asyncio.run(scenario()) == ((1, 0.6), None)

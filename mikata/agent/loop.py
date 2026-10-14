@@ -1311,6 +1311,7 @@ class Agent:
             turn_trust=state.trust,
             extract_effort=self.config.llm.reasoning_effort,
             skills=self._callable_skills(),
+            jev=self.jev,
         )
         outcome = await runtime.run(code, timeout_s=self.config.agent.script_timeout_s)
         result.scripts.append(outcome)

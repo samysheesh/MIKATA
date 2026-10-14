@@ -356,3 +356,50 @@ def test_say_and_ask_go_through_the_turn(tmp_path: Path) -> None:
         ScriptOutcome(ok=True, value={"a": 1}).text() == '{"a": 1}'
         and ScriptOutcome(ok=True).text() == ""
     )
+
+
+# -- pick : choisir dans une liste (phase 15l) -------------------------------------------
+
+
+class _Jev:
+    def __init__(self, answer: tuple[int, float] | None) -> None:
+        self.answer = answer
+        self.asked: list[tuple[str, list[str]]] = []
+
+    async def pick(self, question: str, options: list[str]) -> tuple[int, float] | None:
+        self.asked.append((question, options))
+        return self.answer
+
+
+LINKS = "['Accueil', 'One Piece Opening 27 - Carmine', 'One Piece OP 27 piano']"
+
+
+def test_pick_uses_jev_first(tmp_path: Path) -> None:
+    jev = _Jev((1, 0.6))
+    llm = ScriptedLLM([])  # jamais appelé
+    world = World(tmp_path, llm=llm, jev=jev)
+    outcome = world.run(f"return pick({LINKS}, 'Quel est le dernier opening ?')")
+    assert outcome.ok and outcome.value == "One Piece Opening 27 - Carmine"
+    assert world.runtime.llm_calls == 0 and jev.asked[0][1][0] == "Accueil"
+    assert outcome.trust is L  # une liste écrite dans le programme : locale
+
+
+def test_pick_falls_back_on_the_model_and_keeps_an_option(tmp_path: Path) -> None:
+    llm = ScriptedLLM(['{"choix": "one piece opening 27 - carmine"}'])
+    world = World(tmp_path, llm=llm, jev=_Jev(None))  # Jev sans réponse
+    outcome = world.run(f"return pick({LINKS}, 'Quel est le dernier opening ?')")
+    assert outcome.value == "One Piece Opening 27 - Carmine" and world.runtime.llm_calls == 1
+    world = World(tmp_path, llm=ScriptedLLM(['{"choix": "Naruto Opening 20"}']))
+    outcome = world.run(f"return pick({LINKS}, 'Quel est le dernier opening ?')")
+    assert outcome.kind == "outil" and "aucune option" in outcome.error  # jamais inventé
+
+
+def test_pick_on_page_links_stays_untrusted(tmp_path: Path) -> None:
+    world = World(tmp_path, jev=_Jev((0, 0.9)))
+    world.browser.page = (
+        "Titre : Résultats\nURL : https://youtube.com\nTexte :\nx\nLiens : Opening 27 | Opening 26"
+    )
+    outcome = world.run("page = browser.read()\nreturn pick(page.links, 'le plus récent ?')")
+    assert outcome.ok and outcome.trust is U
+    assert world.run("return pick([], 'x')").kind == "outil"
+    assert world.run("return pick('pas une liste', 'x')").kind == "script"

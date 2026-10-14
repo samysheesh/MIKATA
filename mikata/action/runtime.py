@@ -35,6 +35,7 @@ from mikata.tools.base import current_turn
 
 SKILL_TIMEOUT_S = 40.0  # une compétence appelée depuis un programme
 MAX_CALLS = 60  # appels au SDK par script
+MAX_PICK = 80  # options données à pick()
 MAX_ACTIONS = 25  # dont appels qui agissent
 ASK_TIMEOUT_S = 8.0
 REDACTED = "(détail masqué : il dépend d'un contenu lu ailleurs)"
@@ -108,6 +109,7 @@ class ScriptRuntime:
         turn_trust: Trust = Trust.TRUSTED,
         extract_effort: str | None = "none",
         skills: dict[str, Any] | None = None,
+        jev: Any = None,
     ) -> None:
         self.registry = registry
         self.catalog = catalog
@@ -115,6 +117,7 @@ class ScriptRuntime:
         self.full_access = full_access
         self.turn_trust = turn_trust
         self.extract_effort = extract_effort
+        self.jev = jev  # phase 15l : pick() choisit d'abord avec Jev
         self.skills = skills or {}  # phase 15e : compétences appelables, par nom d'appel
         self.skill_uses: list[tuple[str, bool, str]] = []  # (nom, réussie, erreur)
         self._in_skill = False
@@ -140,7 +143,8 @@ class ScriptRuntime:
     def functions(self) -> set[str]:
         """Fonctions hors espaces de noms : extraction, parole, et chaque outil sous son nom
         d'outil (`set_volume(level=30)` vaut `audio.volume(level=30)`)."""
-        return {"extract", "say", "ask"} | {entry.tool for entry in self.catalog.entries.values()}
+        host = {"extract", "pick", "say", "ask"}
+        return host | {entry.tool for entry in self.catalog.entries.values()}
 
     async def call_sdk(
         self, name: str, args: list[Val], kwargs: dict[str, Val], pc: Trust, line: int
@@ -245,6 +249,8 @@ class ScriptRuntime:
         trust = join(pc, *(a.trust for a in args), *(v.trust for v in kwargs.values()))
         if name == "extract":
             return await self._extract(values, named, trust, line)
+        if name == "pick":
+            return await self._pick(values, named, trust, line)
         turn = current_turn()
         if name == "say":
             text = " ".join(str(v) for v in values).strip()
@@ -256,6 +262,43 @@ class ScriptRuntime:
             answer = await turn.ask(question, ASK_TIMEOUT_S) if turn is not None else None
             return Val(answer or "", Trust.TRUSTED)  # la parole de l'utilisateur
         raise ScriptError(f"fonction inconnue : {name}", line)
+
+    async def _pick(self, values: list[Any], named: dict[str, Any], trust: Trust, line: int) -> Val:
+        """pick(liste, question) : l'élément de la liste qui répond le mieux, recopié tel
+        quel. Jev d'abord (~0,4 s) ; sans lui, ou s'il ne répond pas, un appel LLM
+        d'extraction, dont la réponse doit être l'un des éléments."""
+        items = values[0] if values else named.get("items")
+        question = str(values[1] if len(values) > 1 else named.get("question", "")).strip()
+        if not isinstance(items, list) or not question:
+            raise ScriptError("pick(liste, question)", line)
+        options = [str(item).strip() for item in items if str(item).strip()][:MAX_PICK]
+        if not options:
+            raise ScriptFailure("rien à choisir : la liste est vide")
+        result_trust = join(trust, Trust.LOCAL)
+        if self.jev is not None:
+            picked = await self.jev.pick(question, options)
+            if picked is not None:
+                return Val(options[picked[0]], result_trust)
+        if self.llm is None:
+            raise ScriptFailure("choix impossible (pas de modèle)")
+        self.llm_calls += 1
+        try:
+            result, usage = await extract(
+                self.llm,
+                {"options": options},
+                {"choix": str},
+                f"{question} Réponds par l'une des options, recopiée exactement.",
+                effort=self.extract_effort,
+            )
+        except ExtractionError as exc:
+            raise ScriptFailure(str(exc)) from None
+        if usage is not None:
+            self.usage = usage if self.usage is None else self.usage + usage
+        answer = str(result.get("choix") or "").strip().casefold()
+        for option in options:
+            if answer and (option.casefold() == answer or answer in option.casefold()):
+                return Val(option, result_trust)
+        raise ScriptFailure("aucune option ne répond à la question")
 
     async def _extract(
         self, values: list[Any], named: dict[str, Any], trust: Trust, line: int

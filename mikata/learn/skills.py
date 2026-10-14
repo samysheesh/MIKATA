@@ -212,7 +212,7 @@ def action_calls(code: str, actions: set[str] | None = None) -> list[str]:
     fonction de l'interpréteur compte."""
     from mikata.action.interp import BUILTINS, INTERP_FUNCTIONS
 
-    ignored = set(BUILTINS) | set(INTERP_FUNCTIONS) | {"say", "ask", "extract"}
+    ignored = set(BUILTINS) | set(INTERP_FUNCTIONS) | {"say", "ask", "extract", "pick"}
     calls = called_functions(code)
     if actions is not None:
         return [name for name in calls if name in actions or name.startswith("skills.")]
@@ -529,14 +529,11 @@ deviennent des paramètres ; tout le reste du programme est gardé tel quel.
 l'utilise tel quel. Si le programme a besoin d'une autre forme (« texte » devient « .txt »), \
 cette partie reste fixe : ce n'est pas un paramètre.
 - Une valeur écrite ... a été choisie en lisant le résultat d'un appel précédent (une \
-page, une recherche) : le programme doit la retrouver lui-même dans ce qu'il lit, avec \
-extract(contenu, {"champ": str}, "question"). Par exemple : page = browser_read() ; \
-choix = extract(page, {"titre": str}, "Quel lien est ... ? Recopie exactement son \
-titre.") ; expect(choix.titre, "trouvé") ; browser_click(choix.titre). Demande le titre \
-d'un lien, jamais « le lien » (l'extraction rendrait une adresse). Donne toujours \
-toute la page à extract (page), jamais page.links seul. extract ne devine \
-jamais : sa question demande le candidat le plus probable de la page (« s'il y en a \
-plusieurs, le numéro le plus élevé »), sinon il répond null.
+page, une recherche) : le programme doit la retrouver lui-même dans ce qu'il lit. Pour \
+choisir parmi une liste (les liens d'une page, des fichiers) : choix = pick(liste, \
+"question") rend l'élément tel quel (page = browser_read() ; choix = pick(page.links, \
+"Quel lien est le plus probablement ... ?") ; browser_click(choix)). Pour une autre \
+information : extract(contenu, {"champ": str}, "question").
 - Au plus 4 paramètres, en minuscules_avec_soulignés.
 - "motifs" : 2 à 4 façons courantes de formuler ce genre de demande à l'oral, en \
 minuscules, chaque paramètre écrit {nom} ; la demande d'origine doit coller à l'un d'eux \
@@ -545,8 +542,8 @@ mot pour mot, hormis les valeurs.
 - "description" : une phrase qui dit ce que fait la compétence.
 - "exemple" : la valeur de chaque paramètre dans la demande d'origine, telle qu'elle y est.
 - "programme" : le corps du programme, qui utilise les paramètres comme des variables \
-déjà définies, avec les mêmes fonctions que l'original (plus extract si besoin) et rien \
-de plus.
+déjà définies, avec les mêmes fonctions que l'original (plus pick ou extract si besoin) \
+et rien de plus.
 
 Réponds UNIQUEMENT par un objet JSON : {"nom": "...", "description": "...", \
 "motifs": ["..."], "parametres": ["..."], "exemple": {"...": "..."}, "programme": "..."}. \

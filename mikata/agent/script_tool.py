@@ -54,7 +54,9 @@ enumerate, str, int, float.
 {returns}
 - Tu ne vois pas ce que le programme lit. Pour tirer une information d'un contenu (résultats \
 de recherche, page, fichier, presse-papiers) : info = extract(contenu, {{"champ": str}}, \
-"question précise"), puis info.champ (None s'il est absent).
+"question précise"), puis info.champ (None s'il est absent). Pour choisir un élément \
+d'une liste (un lien, un fichier, un résultat) : choix = pick(liste, "question précise") \
+rend l'élément choisi tel quel, bien plus vite qu'extract.
 - expect(condition, "ce qui devait être vrai") vérifie le résultat ; parallel(a(), b()) lance \
 des lectures indépendantes ensemble ; ask("question courte") demande à l'utilisateur.
 - Termine par return "phrase courte à dire" : elle est lue telle quelle à l'utilisateur. Sans \
@@ -81,10 +83,8 @@ EXEMPLES DE PROGRAMMES
 - « lance le dernier clip de Stromae » :
   browser_open("https://www.youtube.com/results?search_query=Stromae+dernier+clip")
   page = browser_read()
-  question = "Quel lien est le clip officiel le plus récent ? Recopie exactement son titre."
-  choix = extract(page, {{"titre": str}}, question)
-  expect(choix.titre, "un clip a été trouvé")
-  browser_click(choix.titre)
+  choix = pick(page.links, "Quel lien est le clip officiel le plus récent ?")
+  browser_click(choix)
   return "C'est lancé."
 - « où fait-il le plus chaud, Lille ou Nice ? » :
   meteo = parallel(get_weather("Lille"), get_weather("Nice"))

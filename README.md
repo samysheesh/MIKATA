@@ -3138,3 +3138,11 @@ pour une valeur « Bleach et monte le son » ; la phrase va au modèle, qui fait
 ```powershell
 uv run pytest tests/test_jev.py tests/test_skills_route.py
 ```
+
+**15l — pick : choisir dans une liste avec Jev**
+
+`pick(liste, "question")` rend l'élément de la liste qui répond le mieux, recopié tel quel.
+Jev d'abord (environ 0,4 s), un appel LLM en secours (sa réponse doit être l'une des
+options). Mesuré sur de vrais résultats YouTube (5 animes) : la même vidéo que l'appel
+LLM, ou un autre envoi du même opening, en 0,39 à 0,53 s contre 0,9 à 2,1 s. La notice
+des programmes et la consigne d'apprentissage l'emploient pour choisir un lien.
