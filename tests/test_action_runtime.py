@@ -385,13 +385,19 @@ def test_pick_uses_jev_first(tmp_path: Path) -> None:
 
 
 def test_pick_falls_back_on_the_model_and_keeps_an_option(tmp_path: Path) -> None:
-    llm = ScriptedLLM(['{"choix": "one piece opening 27 - carmine"}'])
+    """Sans Jev, un appel LLM rend le numéro de l'option la plus probable ; les options
+    restent des données (jamais des instructions)."""
+    llm = ScriptedLLM(["2"])
     world = World(tmp_path, llm=llm, jev=_Jev(None))  # Jev sans réponse
     outcome = world.run(f"return pick({LINKS}, 'Quel est le dernier opening ?')")
     assert outcome.value == "One Piece Opening 27 - Carmine" and world.runtime.llm_calls == 1
-    world = World(tmp_path, llm=ScriptedLLM(['{"choix": "Naruto Opening 20"}']))
-    outcome = world.run(f"return pick({LINKS}, 'Quel est le dernier opening ?')")
-    assert outcome.kind == "outil" and "aucune option" in outcome.error  # jamais inventé
+    user = llm.calls[0][-1]["content"]
+    assert "<<<DONNÉES>>>\n1. Accueil\n2. One Piece Opening 27 - Carmine" in user
+    assert "jamais des" in llm.calls[0][0]["content"]
+    for answer in ("0", "12", "aucune idée"):  # rien qui convienne, ou hors liste
+        world = World(tmp_path, llm=ScriptedLLM([answer]))
+        outcome = world.run(f"return pick({LINKS}, 'Quel est le dernier opening ?')")
+        assert outcome.kind == "outil" and "aucune option" in outcome.error, answer
 
 
 def test_pick_on_page_links_stays_untrusted(tmp_path: Path) -> None:

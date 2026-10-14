@@ -3155,3 +3155,27 @@ fin. Mesuré sur 8 sites (YouTube, Wikipédia, Le Monde, Google, GitHub, AlloCin
 Reddit) : mêmes liens lus, identique sur 6, 0,24 s et 0,5 s plus tôt sur les 2 autres. Le
 reste du délai d'une page YouTube (1,8 à 2 s) est le temps d'envoi de YouTube lui-même.
 Banc (50 tâches, 2 essais) : 49/50.
+
+## Phase 16 — architecture propre et générale
+
+**16a — boucle en composants, prompt en principes.** La boucle agent (1 483 lignes, sept
+responsabilités) devient l'assemblage d'un tour (`agent/loop.py`, 443 lignes) et des
+composants à interface étroite : `turn`, `model`, `actions`, `skill_path`, `learning`,
+`history`, `narration`. Le prompt système énonce des principes et des exemples canoniques ;
+le savoir propre à un outil (chemins Bureau/Documents, extraits de recherche avant
+`fetch_page`, `open_url` contre `browser_open`) est passé dans la description de l'outil.
+Banc à deux essais : 98/100 et 164 appels au modèle, contre 99/100 et 169.
+
+**16b — les compétences se réparent seules.** Quand une compétence échoue et que la
+demande réussit autrement juste après, un critique isolé (il ne voit que la demande, le
+programme, l'erreur et ce qui a marché) écrit une nouvelle version, vérifiée dans le code.
+L'ancienne est archivée dans `data/skills/<nom>/versions/`, les trois derniers cas d'échec
+dans `failures.json`, et la nouvelle version repart à l'essai. Essai réel (PC simulé) :
+une compétence cassée exprès est réparée après la première demande, et la suivante passe
+par la version révisée. Au passage, le secours de `pick` sans Jev choisit l'option la plus
+probable par son numéro.
+
+```powershell
+git checkout phase-16b-revision
+uv run pytest tests/test_skills.py tests/test_skills_agent.py tests/test_action_runtime.py
+```

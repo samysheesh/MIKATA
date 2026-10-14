@@ -249,3 +249,34 @@ def test_direct_calls_are_learned_like_a_program(tmp_path: Path) -> None:
     _turns(agent, COMMAND)
     assert "set_volume(level=35)" in llm.calls[1][-1]["content"]
     assert store.get("son_et_pause") is not None
+
+
+def test_a_failed_skill_is_revised_from_what_worked_next(tmp_path: Path) -> None:
+    """Phase 16b : la compétence échoue, le modèle réussit autrement juste après ; un
+    critique isolé écrit une nouvelle version, l'ancienne est archivée."""
+    broken = "set_volume(level=int(niveau))\nexpect(False, 'bouton disparu')\nreturn None"
+    fixed = "set_volume(level=int(niveau))\nmedia_control(action='pause')\nreturn None"
+    llm = ScriptedLLM(
+        [
+            ToolCallReq("c1", "set_volume", {"level": 35}),
+            ToolCallReq("c2", "media_control", {"action": "pause"}),
+            Done("tool_calls"),
+        ],
+        [TextDelta("C'est fait, le son est à 35 et c'est en pause."), Done("stop")],
+        [
+            TextDelta(json.dumps({"diagnostic": "le bouton a changé", "programme": fixed})),
+            Done("stop"),
+        ],
+    )
+    agent, store, desktop, audio = _setup(tmp_path, llm, _skill("active", broken))
+    (result,) = _turns(agent, COMMAND)
+    assert result.answer.startswith("C'est fait, le son") and audio.volume == 35
+    assert ("media", "play_pause") in desktop.log  # la reprise du modèle a bien agi
+    critic = llm.calls[2][-1]["content"]
+    assert "bouton disparu" in critic and "set_volume(level=35)" in critic
+    skill = store.get("son_et_pause")
+    assert skill is not None and skill.version == 2 and skill.status == "trial"
+    assert "media_control" in skill.code and skill.failures == 0
+    folder = tmp_path / "skills" / "son-et-pause"
+    assert (folder / "versions" / "v1.py").is_file()
+    assert store.failure_cases("son_et_pause")[0]["erreur"].endswith("bouton disparu")

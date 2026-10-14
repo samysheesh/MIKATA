@@ -19,7 +19,7 @@ from typing import Any
 from loguru import logger
 
 from mikata.action.effects import Effect, Trust, join
-from mikata.action.extract import ExtractionError, extract
+from mikata.action.extract import ExtractionError, choose, extract
 from mikata.action.interp import (
     BudgetExceeded,
     ExpectationFailed,
@@ -265,8 +265,9 @@ class ScriptRuntime:
 
     async def _pick(self, values: list[Any], named: dict[str, Any], trust: Trust, line: int) -> Val:
         """pick(liste, question) : l'élément de la liste qui répond le mieux, recopié tel
-        quel. Jev d'abord (~0,4 s) ; sans lui, ou s'il ne répond pas, un appel LLM
-        d'extraction, dont la réponse doit être l'un des éléments."""
+        quel. Jev d'abord (~0,4 s) ; sans lui, ou s'il ne répond pas, un appel LLM qui
+        rend le numéro de l'option la plus probable (phase 16b : `extract`, qui ne devine
+        jamais, répondait « rien » quand aucune option n'était certaine)."""
         items = values[0] if values else named.get("items")
         question = str(values[1] if len(values) > 1 else named.get("question", "")).strip()
         if not isinstance(items, list) or not question:
@@ -283,22 +284,14 @@ class ScriptRuntime:
             raise ScriptFailure("choix impossible (pas de modèle)")
         self.llm_calls += 1
         try:
-            result, usage = await extract(
-                self.llm,
-                {"options": options},
-                {"choix": str},
-                f"{question} Réponds par l'une des options, recopiée exactement.",
-                effort=self.extract_effort,
-            )
-        except ExtractionError as exc:
-            raise ScriptFailure(str(exc)) from None
+            index, usage = await choose(self.llm, options, question, effort=self.extract_effort)
+        except Exception as exc:  # hors ligne
+            raise ScriptFailure(f"choix impossible : {exc}") from None
         if usage is not None:
             self.usage = usage if self.usage is None else self.usage + usage
-        answer = str(result.get("choix") or "").strip().casefold()
-        for option in options:
-            if answer and (option.casefold() == answer or answer in option.casefold()):
-                return Val(option, result_trust)
-        raise ScriptFailure("aucune option ne répond à la question")
+        if index is None:
+            raise ScriptFailure("aucune option ne répond à la question")
+        return Val(options[index], result_trust)
 
     async def _extract(
         self, values: list[Any], named: dict[str, Any], trust: Trust, line: int

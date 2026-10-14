@@ -33,7 +33,17 @@ from mikata.agent.turn import (
 )
 from mikata.config import Config
 from mikata.learn.reflect import is_correction
-from mikata.learn.skills import Skill, SkillStore, call_code, induce, locate, route, verify
+from mikata.learn.skills import (
+    Skill,
+    SkillStore,
+    call_code,
+    induce,
+    locate,
+    revise,
+    route,
+    verify,
+    verify_revision,
+)
 from mikata.llm.base import LLMClient, ToolCallReq
 from mikata.tools.base import ToolError, turn_context
 from mikata.tts.cache import PHRASES
@@ -61,6 +71,18 @@ def inducible(result: TurnResult) -> str:
             return code
     if result.scripts:
         return ""
+    return steps_as_program(result)
+
+
+def recovery_program(result: TurnResult) -> str:
+    """Phase 16b : ce qui a réussi après l'échec d'une compétence dans ce tour — le dernier
+    programme réussi sans compétence (écrit avant toute lecture non fiable), sinon
+    l'enchaînement des appels directs."""
+    for (code, trusted), outcome in zip(
+        reversed(result.script_sources), reversed(result.scripts), strict=False
+    ):
+        if outcome.ok and trusted and len(outcome.records) >= 2 and "skills." not in code:
+            return code
     return steps_as_program(result)
 
 
@@ -309,8 +331,14 @@ class SkillPath:
             self.store.record(
                 name, ok and turn_ok, error or result.outcome, local=bool(result.local_skill)
             )
+            if not (ok and turn_ok):
+                self.store.note_failure(name, command, error or result.outcome)
         names = [name for name, _, _ in result.skill_uses]
         self._last_uses = (names, now) if names else None
+        failed = [(name, error) for name, ok, error in result.skill_uses if not ok]
+        if failed and turn_ok and config.skills.learn:
+            self._schedule_revision(command, result, *failed[0])
+            return
         code = inducible(result)
         self._last_inducible = (command, code) if code and turn_ok else None
         if (
@@ -325,6 +353,53 @@ class SkillPath:
         self.task = asyncio.create_task(
             self._learn(command, self._last_inducible[1]), name="compétence"
         )
+
+    def _schedule_revision(self, command: str, result: TurnResult, name: str, error: str) -> None:
+        """La compétence a échoué, puis la demande a réussi autrement : on la révise à
+        partir de ce qui a marché (en arrière-plan)."""
+        recovery = recovery_program(result)
+        if not recovery or (self.task is not None and not self.task.done()):
+            return
+        calling = next((code for code, _ in result.script_sources if f"skills.{name}(" in code), "")
+        self.task = asyncio.create_task(
+            self._revise(name, command, error, recovery, calling), name="révision"
+        )
+
+    async def _revise(
+        self, name: str, command: str, error: str, recovery: str, calling: str
+    ) -> Skill | None:
+        """Critique isolé (un appel LLM), vérification dans le code, nouvelle version."""
+        skill = self.store.get(name)
+        if skill is None:
+            return None
+        config = self._config()
+        try:
+            async with asyncio.timeout(config.llm.turn_timeout_s):
+                candidate, usage = await revise(
+                    self.llm,
+                    skill,
+                    command,
+                    error,
+                    recovery,
+                    calling,
+                    self.store.failure_cases(name),
+                    config.skills.learn_effort,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # hors ligne, réponse illisible : la version reste
+            logger.warning("Révision impossible : {}", str(exc) or type(exc).__name__)
+            return None
+        if self.usage is not None:
+            self.usage.record("révision", usage, 1)
+        if not candidate:
+            logger.info("Compétence « {} » : pas de correction proposée.", skill.name)
+            return None
+        code, reason = verify_revision(candidate, skill, recovery, self.actions.action_names())
+        if not code:
+            logger.info("Révision de « {} » refusée à la vérification : {}", skill.name, reason)
+            return None
+        return self.store.revise(skill, code, str(candidate.get("diagnostic", "")).strip())
 
     async def _learn(self, command: str, code: str) -> Skill | None:
         """Écrit la compétence (un appel LLM), la vérifie dans le code, la range à l'essai."""

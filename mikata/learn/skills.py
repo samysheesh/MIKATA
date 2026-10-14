@@ -22,7 +22,12 @@ Cycle de vie (décidé avec l'utilisateur le 14/10) :
 4. **Active** après `skills.promote_after` réussites (3) : une phrase qui colle à un motif
    la rejoue **en local, sans appel LLM**. Un échec la renvoie à l'essai, compteur à zéro ;
    après `skills.max_failures` échecs de suite, elle est désactivée.
-5. **Aiguillage** (phase 15j) : pour toute autre formulation, dans toute langue, un appel
+5. **Révision** (phase 16b) : quand une compétence échoue et que le modèle réussit la
+   demande juste après, un critique isolé (il ne voit que la demande, le programme, l'erreur
+   et ce qui a marché) écrit une nouvelle version du programme, vérifiée dans le code ;
+   l'ancienne est archivée (`versions/`), les derniers cas d'échec gardés
+   (`failures.json`). La nouvelle version repart à l'essai.
+6. **Aiguillage** (phase 15j) : pour toute autre formulation, dans toute langue, un appel
    minuscule part en même temps que l'appel normal et reconnaît la compétence active
    demandée, avec ses valeurs (vérifiées : chacune doit figurer dans la phrase). S'il
    répond avant que MIKATA ait commencé à parler, l'appel normal est coupé et la
@@ -49,6 +54,8 @@ from loguru import logger
 from mikata.llm.base import Done, LLMClient, TextDelta, Usage
 
 SKILLS_DIR = "data/skills"
+FAILURES_FILE = "failures.json"  # phase 16b : derniers cas d'échec, pour la révision
+MAX_FAILURE_CASES = 3
 STATUSES = ("trial", "active", "disabled", "proposed")
 STATUS_LABELS = {
     "trial": "à l'essai",
@@ -478,6 +485,55 @@ class SkillStore:
             skill.status = "disabled"
             logger.info("Compétence « {} » désactivée ({} échecs).", skill.name, skill.failures)
 
+    def note_failure(self, call_name: str, request: str, error: str) -> None:
+        """Garde le cas d'échec (les `MAX_FAILURE_CASES` derniers) pour la révision."""
+        skill = self.skills.get(call_name)
+        if skill is None or skill.path is None:
+            return
+        cases = self.failure_cases(call_name)
+        cases.append(
+            {
+                "le": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "version": skill.version,
+                "demande": request,
+                "erreur": error[:300],
+            }
+        )
+        (skill.path / FAILURES_FILE).write_text(
+            json.dumps(cases[-MAX_FAILURE_CASES:], ensure_ascii=False, indent=1),
+            encoding="utf-8",
+        )
+
+    def failure_cases(self, call_name: str) -> list[dict[str, Any]]:
+        skill = self.skills.get(call_name)
+        if skill is None or skill.path is None:
+            return []
+        try:
+            data = json.loads((skill.path / FAILURES_FILE).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        return data if isinstance(data, list) else []
+
+    def revise(self, skill: Skill, code: str, diagnostic: str) -> Skill:
+        """Nouvelle version du programme : l'ancienne est archivée (`versions/vN.py`), la
+        compétence repart à l'essai, compteurs à zéro."""
+        folder = skill.path or self.root / skill.name
+        versions = folder / "versions"
+        versions.mkdir(parents=True, exist_ok=True)
+        (versions / f"v{skill.version}.py").write_text(
+            render_program(skill.description, skill.params, skill.code), encoding="utf-8"
+        )
+        skill.code = code
+        skill.version += 1
+        skill.status = "trial"
+        skill.successes = skill.failures = 0
+        skill.last_error = ""
+        self.save(skill)
+        logger.info(
+            "Compétence « {} » révisée (version {}) : {}", skill.name, skill.version, diagnostic
+        )
+        return skill
+
     def adopt(self, skill: Skill) -> Skill:
         """Range une compétence vérifiée (nom unique), à l'essai."""
         base, index = skill.name, 2
@@ -579,6 +635,26 @@ def parse_candidate(text: str) -> dict[str, Any]:
     return data if isinstance(data, dict) and data.get("nom") else {}
 
 
+def check_program(
+    code: str, params: list[str], original_code: str, actions: set[str] | None = None
+) -> str:
+    """Raison du refus d'un programme de compétence, ou "" s'il tient debout : au moins
+    deux actions, aucune absente du programme d'origine, pas d'appel de compétence, chaque
+    paramètre utilisé."""
+    calls = action_calls(code, actions)
+    if len(calls) < MIN_CALLS:
+        return "moins de deux appels : une action simple n'a pas besoin de compétence"
+    extra = sorted(set(calls) - set(action_calls(original_code, actions)))
+    if extra:
+        return f"fonctions absentes du programme d'origine : {', '.join(extra)}"
+    if any(call.startswith("skills.") for call in calls):
+        return "une compétence n'en appelle pas d'autre"
+    unused = [p for p in params if p not in _names_used(code)]
+    if unused:
+        return f"paramètres inutilisés : {', '.join(unused)}"
+    return ""
+
+
 def verify(
     candidate: dict[str, Any],
     command: str,
@@ -606,18 +682,9 @@ def verify(
         if len(_literal(PARAM_RE.sub(" ", pattern))) < 2:
             return None, f"motif trop vague : « {pattern} »"
     code = textwrap.dedent(str(candidate.get("programme", ""))).strip()
-    calls = action_calls(code, actions)
-    if len(calls) < MIN_CALLS:
-        return None, "moins de deux appels : une action simple n'a pas besoin de compétence"
-    original = set(action_calls(original_code, actions))
-    extra = sorted(set(calls) - original)
-    if extra:
-        return None, f"fonctions absentes du programme d'origine : {', '.join(extra)}"
-    if any(call.startswith("skills.") for call in calls):
-        return None, "une compétence n'en appelle pas d'autre"
-    unused = [p for p in params if p not in _names_used(code)]
-    if unused:
-        return None, f"paramètres inutilisés : {', '.join(unused)}"
+    reason = check_program(code, params, original_code, actions)
+    if reason:
+        return None, reason
     skill = Skill(
         name=name,
         description=str(candidate.get("description", "")).strip()[:300] or name,
@@ -635,6 +702,86 @@ def verify(
             heard = example.get(param)
             return None, f"{param} : « {values[param]} » dans la demande, pas « {heard} »"
     return skill, ""
+
+
+# -- révision (phase 16b) --------------------------------------------------------------------
+
+REVISE_SYSTEM = """\
+Tu répares une compétence de MIKATA, un assistant vocal qui agit sur un PC Windows. Une \
+compétence est un programme réutilisable. Celle-ci vient d'échouer, puis la demande a \
+réussi autrement, juste après. On te donne ce que doit faire la compétence, ses \
+paramètres, son programme, l'erreur, les échecs précédents et le programme qui a réussi.
+
+Écris le programme corrigé :
+- il fait ce que fait le programme qui a réussi, mais en général : les valeurs propres à \
+cette demande viennent des paramètres, utilisés comme des variables déjà définies ;
+- mêmes fonctions que les programmes donnés, rien de plus ; pour choisir parmi une liste \
+(les liens d'une page) : pick(liste, "question") ; pour une autre information : \
+extract(contenu, {"champ": str}, "question") ;
+- une valeur écrite ... a été choisie en lisant une page : le programme doit la retrouver \
+lui-même, jamais la recopier.
+
+Réponds UNIQUEMENT par un objet JSON : {"diagnostic": "une phrase sur la cause", \
+"programme": "..."}. Si tu ne sais pas corriger, réponds {"programme": ""}."""
+
+
+async def revise(
+    llm: LLMClient,
+    skill: Skill,
+    request: str,
+    error: str,
+    recovery: str,
+    calling_code: str = "",
+    failures: list[dict[str, Any]] | None = None,
+    effort: str | None = "low",
+) -> tuple[dict[str, Any], Usage | None]:
+    """Un appel LLM isolé : le programme corrigé et son diagnostic ({} s'il n'y en a pas)."""
+    previous = "\n".join(
+        f"- « {case.get('demande', '')} » : {case.get('erreur', '')}" for case in failures or []
+    )
+    parts = [
+        f"Compétence : {skill.signature} — {skill.description}",
+        f"Programme actuel :\n{skill.code}",
+        f"Demande : « {request} »",
+    ]
+    if calling_code:
+        parts.append(f"Appel de la compétence dans cette demande :\n{calling_code}")
+    parts += [f"Erreur : {error}", f"Échecs précédents :\n{previous or '(aucun)'}"]
+    parts.append(f"Programme qui a réussi juste après :\n{recovery}")
+    messages = [
+        {"role": "system", "content": REVISE_SYSTEM},
+        {"role": "user", "content": "\n\n".join(parts)},
+    ]
+    chunks: list[str] = []
+    usage: Usage | None = None
+    async for event in llm.stream(messages, [], reasoning_effort=effort):
+        if isinstance(event, TextDelta):
+            chunks.append(event.text)
+        elif isinstance(event, Done):
+            usage = event.usage
+    text = "".join(chunks)
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end <= start:
+        return {}, usage
+    try:
+        data = json.loads(text[start : end + 1])
+    except json.JSONDecodeError:
+        return {}, usage
+    if not isinstance(data, dict) or not str(data.get("programme", "")).strip():
+        return {}, usage
+    return data, usage
+
+
+def verify_revision(
+    candidate: dict[str, Any], skill: Skill, recovery: str, actions: set[str] | None = None
+) -> tuple[str, str]:
+    """(programme, "") si la révision tient debout, sinon ("", raison). Ses fonctions
+    doivent venir du programme qui a réussi ou de l'ancienne version."""
+    code = textwrap.dedent(str(candidate.get("programme", ""))).strip()
+    if not code:
+        return "", "programme vide"
+    reason = check_program(code, skill.params, f"{recovery}\n{skill.code}", actions)
+    return ("", reason) if reason else (code, "")
 
 
 # -- aiguillage (phase 15j) ------------------------------------------------------------------

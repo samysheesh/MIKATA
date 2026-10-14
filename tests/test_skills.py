@@ -231,3 +231,37 @@ def test_politeness_never_eats_a_different_request() -> None:
 def test_a_second_request_is_never_swallowed_as_a_value(command: str) -> None:
     """Phase 15k : la fin de phrase n'est pas avalée par le dernier paramètre."""
     assert bind("lance le dernier opening de {anime}", command) is None
+
+
+# -- révision (phase 16b) -------------------------------------------------------------------
+
+
+def test_revision_archives_the_old_version_and_restarts_the_trial(tmp_path: Path) -> None:
+    store = SkillStore(tmp_path)
+    skill = store.adopt(_skill())
+    skill.status, skill.successes = "active", 5
+    for index in range(4):
+        store.note_failure(skill.call_name, f"demande {index}", f"erreur {index}")
+    cases = store.failure_cases(skill.call_name)
+    assert [case["demande"] for case in cases] == ["demande 1", "demande 2", "demande 3"]
+    old_code = skill.code
+    store.revise(skill, CANDIDATE["programme"].replace("page = ", "lu = "), "lien mal choisi")
+    assert skill.version == 2 and skill.status == "trial" and skill.successes == 0
+    archived = (tmp_path / "lancer-opening" / "versions" / "v1.py").read_text(encoding="utf-8")
+    assert parse_program(archived)[1].strip() == old_code.strip()
+    again = SkillStore(tmp_path).get("lancer_opening")
+    assert again is not None and again.version == 2 and "lu = " in again.code
+
+
+def test_revisions_are_checked_in_code() -> None:
+    from mikata.learn.skills import verify_revision
+
+    skill = _skill()
+    recovery = "browser_open(url='x')\npage = browser_read()\nbrowser_click(text=...)"
+    good = {"programme": CANDIDATE["programme"]}
+    assert verify_revision(good, skill, recovery)[0]
+    sneaky = {"programme": CANDIDATE["programme"] + "\nshutdown(delay_s=0)"}
+    assert "absentes" in verify_revision(sneaky, skill, recovery)[1]
+    assert verify_revision({"programme": ""}, skill, recovery) == ("", "programme vide")
+    lazy = {"programme": "browser_open(url='x')\nbrowser_click(text='Bleach')"}
+    assert "inutilisés" in verify_revision(lazy, skill, recovery)[1]

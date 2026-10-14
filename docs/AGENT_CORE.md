@@ -413,8 +413,11 @@ Fait en E (phase 15e) : compétences (`mikata/learn/skills.py`), qui remplacent
 `mikata/skills/`. Écarts à la section 3.6 : la vérification avant adoption se fait dans le
 code, sans rejouer la demande (rejouer une action sur le PC la referait deux fois) ; la
 première utilisation surveillée par le modèle tient lieu d'essai, et il en faut trois avant
-le rejeu local (décision du 14/10). Pas encore faits : `recover.md`, les cas d'échec gardés
-pour une révision par un critique isolé, l'import de compétences. L'audit prévu en phase A est fait pour `browser/` et `files/` (branche
+le rejeu local (décision du 14/10). Fait en E (phase 16b) : révision par un critique isolé quand une compétence échoue et
+que la demande réussit autrement juste après ; nouvelle version vérifiée dans le code,
+ancienne archivée (`versions/`), trois derniers cas d'échec gardés (`failures.json`,
+plutôt qu'un dossier : rien ne se supprime). Pas encore faits : `recover.md`, l'import
+de compétences. L'audit prévu en phase A est fait pour `browser/` et `files/` (branche
 `phase-14f-audit` : deux corrections, et une limite connue sur le helper élevé de l'index) ;
 `uia/` et le décodage du journal USN restent à relire.
 
