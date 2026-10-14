@@ -472,7 +472,9 @@ page, une recherche) : le programme doit la retrouver lui-même dans ce qu'il li
 extract(contenu, {"champ": str}, "question"). Par exemple : page = browser_read() ; \
 choix = extract(page, {"lien": str}, "Quel lien est ... ? Recopie son texte \
 exact.") ; expect(choix.lien, "trouvé") ; browser_click(choix.lien). Donne toujours \
-toute la page à extract (page), jamais page.links seul.
+toute la page à extract (page), jamais page.links seul. extract ne devine \
+jamais : sa question demande le candidat le plus probable de la page (« s'il y en a \
+plusieurs, le numéro le plus élevé »), sinon il répond null.
 - Au plus 4 paramètres, en minuscules_avec_soulignés.
 - "motifs" : 2 à 4 façons courantes de formuler ce genre de demande à l'oral, en \
 minuscules, chaque paramètre écrit {nom} ; la demande d'origine doit coller à l'un d'eux \
