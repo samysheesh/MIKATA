@@ -278,6 +278,9 @@ class ScriptRuntime:
         rend le numéro de l'option la plus probable (phase 16b : `extract`, qui ne devine
         jamais, répondait « rien » quand aucune option n'était certaine)."""
         items = values[0] if values else named.get("items")
+        if isinstance(items, dict):  # phase 17b : {window, items: [...]} -> sa seule liste
+            lists = [value for value in items.values() if isinstance(value, list)]
+            items = lists[0] if len(lists) == 1 else items
         question = str(values[1] if len(values) > 1 else named.get("question", "")).strip()
         if not isinstance(items, list) or not question:
             raise ScriptError("pick(liste, question)", line)

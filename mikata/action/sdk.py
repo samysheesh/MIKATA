@@ -162,6 +162,21 @@ class SdkCatalog:
                 lines.append(f"{entry.signature()}  # {entry.doc}{marks[entry.effect]}{untrusted}")
         return "\n".join(lines)
 
+    def reference_for(self, code: str) -> str:
+        """Phase 17b : la fiche des fonctions qu'un programme appelle (sous leur nom
+        d'outil, comme dans les programmes appris) : signature, forme du résultat, rôle. Le
+        rédacteur et le réviseur des compétences devinaient sinon la forme des résultats
+        (« pick » sur un objet {window, items: [...]})."""
+        from mikata.learn.skills import called_functions
+
+        wanted = set(called_functions(code))
+        lines = []
+        for entry in self.entries.values():
+            if entry.tool in wanted or entry.name in wanted:
+                args = ", ".join(param.render() for param in entry.params)
+                lines.append(f"{entry.tool}({args}) -> {entry.returns}  # {entry.doc}")
+        return "\n".join(sorted(lines))
+
     def structured_returns(self) -> str:
         """Outils qui rendent un objet à champs dans un programme (les autres : un texte)."""
         rows = [

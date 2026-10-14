@@ -234,6 +234,41 @@ def _allowed(actions: set[str]) -> set[str]:
     return actions | set(BUILTINS) | set(INTERP_FUNCTIONS) | {"say", "ask", "extract", "pick"}
 
 
+def _blind_choice(code: str, params: list[str]) -> str:
+    """Phase 17b : un pick ou un extract dont la question ne cite aucun paramètre (« Quel
+    résultat correspond à la chanson ? ») ne peut pas choisir : nom de la fonction, ou ""."""
+    if not params:
+        return ""
+    try:
+        tree = ast.parse("def _():\n" + textwrap.indent(textwrap.dedent(code), "    "))
+    except SyntaxError:
+        return ""
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and _dotted(node.func) in ("pick", "extract")):
+            continue
+        position = 1 if _dotted(node.func) == "pick" else 2
+        question = (
+            node.args[position]
+            if len(node.args) > position
+            else next((kw.value for kw in node.keywords if kw.arg == "question"), None)
+        )
+        if question is None:
+            continue
+        names = {n.id for n in ast.walk(question) if isinstance(n, ast.Name)}
+        if not names & set(params):
+            return _dotted(node.func)
+    return ""
+
+
+def _has_ellipsis(code: str) -> bool:
+    """Le programme contient-il `...` (une valeur masquée recopiée telle quelle) ?"""
+    try:
+        tree = ast.parse("def _():\n" + textwrap.indent(textwrap.dedent(code), "    "))
+    except SyntaxError:
+        return False
+    return any(isinstance(n, ast.Constant) and n.value is Ellipsis for n in ast.walk(tree))
+
+
 def _dotted(node: ast.expr) -> str:
     if isinstance(node, ast.Name):
         return node.id
@@ -691,12 +726,18 @@ deviennent des paramètres ; tout le reste du programme est gardé tel quel.
 - Un paramètre est un mot ou un groupe de mots dit dans la demande, et le programme \
 l'utilise tel quel. Si le programme a besoin d'une autre forme (« texte » devient « .txt »), \
 cette partie reste fixe : ce n'est pas un paramètre.
-- Une valeur écrite ... a été choisie en lisant le résultat d'un appel précédent (une \
-page, une recherche) : le programme doit la retrouver lui-même dans ce qu'il lit. Pour \
-choisir parmi une liste (les liens d'une page, des fichiers) : choix = pick(liste, \
-"question") rend l'élément tel quel (page = browser_read() ; choix = pick(page.links, \
-"Quel lien est le plus probablement ... ?") ; browser_click(choix)). Pour une autre \
-information : extract(contenu, {"champ": str}, "question").
+- Une valeur écrite ... a été lue à l'écran (une page, une liste d'appli) : ne recopie \
+jamais ... ; le programme la retrouve lui-même dans ce qu'il lit, d'après la forme des \
+résultats donnée dans « Fonctions ». Pour choisir dans une liste : choix = pick(liste, \
+"question") rend l'élément tel quel. Ex. page = browser_read() ; lien = pick(page.links, \
+"Quel lien est le plus probablement ... ?") ; browser_click(lien). Ex. lignes = \
+uia_items(process="X", query=titre)["rows"] ; ligne = pick(lignes, "Quel élément est " \
++ titre + " de " + artiste + " ?") ; bouton = pick(ligne["buttons"], "Quel bouton lance " \
++ titre + " ?") ; uia_click(process="X", item=ligne["name"], control=bouton) : l'ordre \
+des boutons change d'une ligne à l'autre, choisis-le toujours par une question. Pour une \
+autre \
+information : extract(contenu, {"champ": str}, "question"). La question d'un pick ou d'un \
+extract cite toujours ce qu'on cherche (les paramètres) : sans eux, le choix est impossible.
 - Au plus 4 paramètres, en minuscules_avec_soulignés.
 - "motifs" : 2 à 4 façons courantes de formuler ce genre de demande à l'oral, en \
 minuscules, chaque paramètre écrit {nom} ; la demande d'origine doit coller à l'un d'eux \
@@ -714,12 +755,20 @@ Si ce programme n'a rien de réutilisable, réponds {"nom": ""}."""
 
 
 async def induce(
-    llm: LLMClient, command: str, code: str, effort: str | None = "low"
+    llm: LLMClient,
+    command: str,
+    code: str,
+    effort: str | None = "low",
+    reference: str = "",
 ) -> tuple[dict[str, Any], Usage | None]:
-    """Candidat (non vérifié) tiré d'un programme réussi ; {} s'il n'y a rien à garder."""
+    """Candidat (non vérifié) tiré d'un programme réussi ; {} s'il n'y a rien à garder.
+    `reference` : la fiche des fonctions du programme (phase 17b)."""
+    user = f"Demande : « {command} »\n\nProgramme :\n{code}"
+    if reference:
+        user += f"\n\nFonctions (signature -> forme du résultat) :\n{reference}"
     messages = [
         {"role": "system", "content": INDUCE_SYSTEM},
-        {"role": "user", "content": f"Demande : « {command} »\n\nProgramme :\n{code}"},
+        {"role": "user", "content": user},
     ]
     chunks: list[str] = []
     usage: Usage | None = None
@@ -767,6 +816,8 @@ def check_program(
     """Raison du refus d'un programme de compétence, ou "" s'il tient debout : au moins
     deux actions, aucune absente du programme d'origine, pas d'appel de compétence, chaque
     paramètre utilisé."""
+    if _has_ellipsis(code):
+        return "une valeur masquée (...) est recopiée : le programme doit la retrouver"
     calls = action_calls(code, actions)
     if len(calls) < MIN_CALLS:
         return "moins de deux appels : une action simple n'a pas besoin de compétence"
@@ -778,6 +829,9 @@ def check_program(
     unused = [p for p in params if p not in _names_used(code)]
     if unused:
         return f"paramètres inutilisés : {', '.join(unused)}"
+    blind = _blind_choice(code, params)
+    if blind:
+        return f"la question de {blind} ne cite aucun paramètre : le choix serait au hasard"
     return ""
 
 
@@ -852,8 +906,10 @@ async def revise(
     calling_code: str = "",
     failures: list[dict[str, Any]] | None = None,
     effort: str | None = "low",
+    reference: str = "",
 ) -> tuple[dict[str, Any], Usage | None]:
-    """Un appel LLM isolé : le programme corrigé et son diagnostic ({} s'il n'y en a pas)."""
+    """Un appel LLM isolé : le programme corrigé et son diagnostic ({} s'il n'y en a pas).
+    `reference` : la fiche des fonctions en jeu (phase 17b)."""
     previous = "\n".join(
         f"- « {case.get('demande', '')} » : {case.get('erreur', '')}" for case in failures or []
     )
@@ -866,6 +922,8 @@ async def revise(
         parts.append(f"Appel de la compétence dans cette demande :\n{calling_code}")
     parts += [f"Erreur : {error}", f"Échecs précédents :\n{previous or '(aucun)'}"]
     parts.append(f"Programme qui a réussi juste après :\n{recovery}")
+    if reference:
+        parts.append(f"Fonctions (signature -> forme du résultat) :\n{reference}")
     messages = [
         {"role": "system", "content": REVISE_SYSTEM},
         {"role": "user", "content": "\n\n".join(parts)},

@@ -37,6 +37,7 @@ from mikata.learn.skills import (
     Skill,
     SkillStore,
     call_code,
+    fold,
     induce,
     locate,
     revise,
@@ -97,14 +98,26 @@ def steps_as_program(result: TurnResult) -> str:
     if not all(r.ok for r in result.direct_results):
         return ""
     lines = []
+    said = fold(result.command)
     for call, trusted in steps:
         if call.name.endswith("_skill") or call.name == "remember":
             return ""  # apprendre à apprendre ou à retenir : non
         args = ", ".join(
-            f"{key}={value!r}" if trusted else f"{key}=..." for key, value in call.arguments.items()
+            f"{key}={value!r}" if trusted or _from_user(value, said) else f"{key}=..."
+            for key, value in call.arguments.items()
         )
         lines.append(f"{call.name}({args})")
     return "\n".join(lines)
+
+
+def _from_user(value: Any, said: str) -> bool:
+    """Phase 17b : une valeur choisie après une lecture non fiable vient pourtant de
+    l'utilisateur si elle est dans sa demande (« Jet Lag », « Tiakola ») ; un nombre ou un
+    oui/non n'est pas un contenu lu. Seuls les mots pris à l'écran restent masqués."""
+    if isinstance(value, bool | int | float):
+        return True
+    text = fold(str(value)).strip()
+    return bool(text) and text in said
 
 
 class SkillPath:
@@ -390,6 +403,7 @@ class SkillPath:
                     calling,
                     self.store.failure_cases(name),
                     config.skills.learn_effort,
+                    self.actions.catalog.reference_for(f"{skill.code}\n{recovery}"),
                 )
         except asyncio.CancelledError:
             raise
@@ -412,7 +426,13 @@ class SkillPath:
         config = self._config()
         try:
             async with asyncio.timeout(config.llm.turn_timeout_s):
-                candidate, usage = await induce(self.llm, command, code, config.skills.learn_effort)
+                candidate, usage = await induce(
+                    self.llm,
+                    command,
+                    code,
+                    config.skills.learn_effort,
+                    self.actions.catalog.reference_for(code),
+                )
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # hors ligne, réponse illisible : rien n'est appris
