@@ -3290,7 +3290,8 @@ Corrections après tes essais à la voix :
 - `pick` rend l'élément choisi lui-même (un contrôle, un lien), plus son texte ; une
   fonction qui attend un nom accepte l'élément entier.
 
-- **Spotify, l'appli du PC** (outil `spotify_play`) : « lance Jet Lag de Tiakola » ouvre la
+- **Spotify, l'appli du PC** (outil `spotify_play`, remplacé en phase 17 par des gestes
+  appris) : « lance Jet Lag de Tiakola » ouvre la
   recherche dans l'appli (jamais le site, où tu n'es pas connecté), attend les résultats de
   cette recherche, et lance la ligne du morceau qui cite l'artiste, sans vision. Relevé sur
   ton Spotify (appli en anglais) : chaque résultat est une ligne « titre / Song • artistes »
@@ -3312,4 +3313,37 @@ uv run pytest tests/test_spotify.py tests/test_uia_matching.py -q
 # À la voix : « MIKATA, lance Jet Lag de Tiakola » (l'appli Spotify s'ouvre sur la
 # recherche et le morceau part), « MIKATA, mets Tiakola » (l'artiste),
 # « MIKATA, coupe mon micro sur Discord » (réponse dès le clic).
+```
+
+## Phase 17 — MIKATA apprend les applis seul
+
+Retour du 14/10 : « tout ce que t'as dû développer pour Spotify, c'est exactement ce que
+MIKATA doit savoir apprendre pour n'importe quelle application ». L'outil `spotify_play`
+est retiré ; MIKATA a reçu des gestes qui marchent pour toutes les applis, et apprend.
+
+- **Liens d'applis** : `app_links` liste les applis qui s'ouvrent par un lien (découvertes
+  dans Windows : Spotify, Discord, Steam, Epic, les Paramètres...) ; `open_app_link` en ouvre
+  une directement sur la bonne vue (`spotify:search:Jet Lag Tiakola`, `ms-settings:bluetooth`).
+  **En arrière-plan** quand c'est pour agir dedans : l'appli est réduite dès qu'elle passe
+  devant et ta fenêtre revient (vérifié sur ton PC).
+- **Éléments de liste** : `uia_items` lit les lignes d'une appli avec ce qu'elles affichent
+  et leurs boutons ; `uia_click` avec `item` clique le bouton d'une ligne précise ;
+  `uia_wait` attend qu'un texte apparaisse.
+- **Apprentissage** : la première fois, MIKATA découvre comment faire (4 étapes) ; la suite
+  qui a marché devient une compétence, réutilisée avec d'autres titres, puis rejouée sans
+  le modèle après 3 réussites. Mesuré (PC simulé, vrai modèle) : 8 s et 4 appels la 1re
+  fois, 2,4 à 3,8 s ensuite, rejeu direct au 5e tour. Sur ton vrai Spotify (clic à blanc) :
+  la bonne ligne, et la compétence réutilisée pour un autre titre.
+- Les réponses ne sortent plus en anglais (« I'll open... », un tic du modèle).
+
+Ce que tu verras : la première demande de musique dans Spotify prend une dizaine de
+secondes (MIKATA découvre) ; les suivantes vont de plus en plus vite.
+
+```powershell
+cd D:\projects\mikata
+uv run pytest tests/test_uia_items.py tests/test_corrections.py tests/test_skills.py -q
+uv run python scripts/eval_bench.py --tag appli --trials 2
+# À la voix : « MIKATA, lance Jet Lag de Tiakola sur Spotify » (Spotify reste en arrière-plan),
+# puis d'autres titres : de plus en plus rapide ; « MIKATA, ouvre les réglages bluetooth ».
+# Les compétences apprises : data\skills\
 ```

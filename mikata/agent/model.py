@@ -5,6 +5,7 @@ d'outils sont rassemblés. Un retry immédiat sur une erreur réseau avant le pr
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from collections.abc import Callable
 from typing import Any
@@ -35,6 +36,24 @@ def with_reasoning(messages: list[dict[str, Any]], effort: str | None) -> list[d
     return out
 
 
+# Phase 17b : le modèle annonce parfois ce qu'il va faire en anglais (« I'll open the shop
+# and add the headset to the cart. »), malgré la consigne ; MIKATA l'aurait dit tel quel.
+# Seule cette tournure d'annonce est écartée : une traduction demandée reste dite.
+ENGLISH_NARRATION = re.compile(
+    r"\s*(?:I['’]ll|I will|Let me|I['’]m going to|I am going to|(?:Now|First),? I['’]ll)\b"
+    r"[^.!?]*[.!?]?\s*",
+    re.IGNORECASE,
+)
+_SENTENCES = re.compile(r"(?<=[.!?])\s+")
+
+
+def drop_english_narration(text: str) -> str:
+    """Le texte sans ses phrases d'annonce en anglais (« I'll find... »)."""
+    sentences = _SENTENCES.split(text)
+    kept = [s for s in sentences if not ENGLISH_NARRATION.fullmatch(s)]
+    return " ".join(kept).strip() if len(kept) != len(sentences) else text
+
+
 class ModelCaller:
     def __init__(self, llm: LLMClient, config: Callable[[], Config]) -> None:
         self.llm = llm
@@ -55,6 +74,9 @@ class ModelCaller:
 
         def say(fragments: list[str]) -> None:
             for fragment in fragments:
+                if ENGLISH_NARRATION.match(fragment):  # tic du modèle, jamais dit
+                    logger.info("Annonce en anglais non dite : « {} »", fragment.strip())
+                    continue
                 if gate.allow(fragment):
                     speech.say(fragment)
 
@@ -110,7 +132,10 @@ class ModelCaller:
             result.usage = done.usage if result.usage is None else result.usage + done.usage
         _log_call(result.llm_calls, effort, start, first_at, done, calls)
         return Reply(
-            "".join(parts), calls, done.reasoning if done is not None else "", gate.ignored
+            drop_english_narration("".join(parts)),
+            calls,
+            done.reasoning if done is not None else "",
+            gate.ignored,
         )
 
 

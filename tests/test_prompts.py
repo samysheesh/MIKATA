@@ -156,3 +156,14 @@ def test_long_answers_are_spoken_never_written() -> None:
     assert "« raconte-moi une blague » -> aucun outil" in flat
     assert "« explique-moi comment marche un frigo » -> aucun outil" in flat
     assert "show_text" not in flat.split("PARLER", 1)[1].split("N'ouvre jamais")[0]
+
+
+def test_english_narration_is_never_said_but_translations_are() -> None:
+    """Phase 17b : « I'll open the shop... » (tic du modèle) n'est pas dit ; une traduction
+    demandée (« Hello, how are you? ») l'est."""
+    from mikata.agent.model import drop_english_narration
+
+    assert drop_english_narration("I'll find the opening. C'est lancé.") == "C'est lancé."
+    assert drop_english_narration("I'm going to open the shop.") == ""
+    assert drop_english_narration("Hello, how are you?") == "Hello, how are you?"
+    assert drop_english_narration("Illustration du jour.") == "Illustration du jour."

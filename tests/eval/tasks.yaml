@@ -476,14 +476,16 @@
     open_apps: [Spotify]
     controls:
       # Comme le vrai Spotify (relevé le 14/10) : des cartes dont le bouton porte titre et
-      # artiste (playlists, paroles), et la ligne du morceau, nommée par son titre.
+      # artiste (playlists, paroles), et les lignes de résultats, nommées par leur titre,
+      # avec leurs boutons (4e colonne).
       Spotify:
+        - ["What do you want to play?", "liste déroulante", "Jet+Lag+Tiakola"]
         - ["Play Jet Lag Tiakola", "bouton", "playlist d'un utilisateur"]
-        - ["Jet Lag", "élément", "Song • Tiakola, Jorja Smith"]
-        - ["Jet lag (Evasion #2)", "élément", "Song • Autre Artiste"]
-        - ["Play", "bouton", ""]
-  expect: [{ui_clicked: "Jet Lag"}]
-  forbid: [{browser_url: "spotify"}, {ui_clicked: "Play Jet Lag Tiakola"}]
+        - ["Jet Lag", "élément", "Song • Tiakola, Jorja Smith", "More options for Jet Lag, Add to Liked Songs, Play"]
+        - ["Jet lag (Evasion #2)", "élément", "Song • Autre Artiste", "Play Jet lag (Evasion #2)"]
+  # Le bouton pressé est noté avec sa ligne : « Play (Jet Lag) ».
+  expect: [{ui_clicked: "Jet Lag"}, {ui_clicked: "Play"}]
+  forbid: [{browser_url: "spotify"}, {ui_clicked: "Play Jet Lag Tiakola"}, {ui_clicked: "More options"}]
 
 - id: correction_application
   request: "non, Discord"
@@ -508,16 +510,38 @@
 - id: musique_dans_appli
   # Ouvrir l'appli n'est que le début : la musique demandée doit être lancée dedans.
   request: "lance la musique Jet Lag de Tiakola sur Spotify"
-  tags: [ui, enchaine]
+  tags: [ui, enchaine, appli]
   world:
-    open_apps: [Spotify]
     controls:
       # Comme le vrai Spotify (relevé le 14/10) : des cartes dont le bouton porte titre et
-      # artiste (playlists, paroles), et la ligne du morceau, nommée par son titre.
+      # artiste (playlists, paroles), et les lignes de résultats, nommées par leur titre,
+      # avec leurs boutons (4e colonne).
       Spotify:
+        - ["What do you want to play?", "liste déroulante", "Jet+Lag+Tiakola"]
         - ["Play Jet Lag Tiakola", "bouton", "playlist d'un utilisateur"]
-        - ["Jet Lag", "élément", "Song • Tiakola, Jorja Smith"]
-        - ["Jet lag (Evasion #2)", "élément", "Song • Autre Artiste"]
-        - ["Play", "bouton", ""]
-  expect: [{ui_clicked: "Jet Lag"}]
-  forbid: [{browser_url: "spotify"}, {ui_clicked: "Play Jet Lag Tiakola"}]
+        - ["Jet Lag", "élément", "Song • Tiakola, Jorja Smith", "More options for Jet Lag, Add to Liked Songs, Play"]
+        - ["Jet lag (Evasion #2)", "élément", "Song • Autre Artiste", "Play Jet lag (Evasion #2)"]
+  # Le bouton pressé est noté avec sa ligne : « Play (Jet Lag) ».
+  expect: [{ui_clicked: "Jet Lag"}, {ui_clicked: "Play"}]
+  forbid: [{browser_url: "spotify"}, {ui_clicked: "Play Jet Lag Tiakola"}, {ui_clicked: "More options"}]
+
+
+# -- applis par leurs gestes génériques (phase 17a) : rien n'y est propre à une appli ------
+
+- id: reglage_par_lien
+  request: "ouvre les réglages bluetooth"
+  tags: [appli, direct]
+  expect: [{opened: "ms-settings:bluetooth"}]
+
+- id: salon_discord
+  request: "rejoins le salon vocal Général sur Discord"
+  tags: [appli, ui]
+  world:
+    open_apps: [Discord]
+    controls:
+      Discord:
+        - ["Général", "élément", "Salon textuel", "Créer une invitation"]
+        - ["Général", "élément", "Salon vocal • 2 membres", "Rejoindre"]
+        - ["jeux", "élément", "Salon vocal", "Rejoindre"]
+  expect: [{ui_clicked: "Général"}]
+  forbid: [{ui_clicked: "jeux"}]

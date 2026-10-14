@@ -361,6 +361,46 @@ l'applique :
    la suivante du même genre prend le chemin court (OSExpert : environ 80 % de l'écart
    d'efficacité avec un humain comblé par des compétences apprises).
 
+### 3.12 Apprendre une appli seul (phase 17)
+
+Demande de l'utilisateur (14/10) : ce qu'il a fallu coder à la main pour Spotify, MIKATA
+doit savoir l'apprendre lui-même, pour n'importe quelle appli. Appuis :
+
+- **UFO²** (Microsoft, 2025, arXiv 2504.14603) : sous Windows, l'agent passe d'abord par les
+  interfaces natives de l'appli, l'écran en secours, et travaille sans gêner l'utilisateur.
+- **WALT** (Salesforce, ICLR 2026, arXiv 2510.01524) : les fonctions d'un site (recherche,
+  filtre...) sont rétro-conçues en outils réutilisables (`search(requête)`), en remplaçant
+  les suites de clics par des adresses paramétrées ; boucle démontrer, générer, valider.
+- **AppAgentX** (2025, arXiv 2503.02268) : les suites d'actions répétées deviennent des
+  raccourcis de haut niveau tirés de l'historique de l'agent.
+- **ASI** (CMU, COLM 2025, arXiv 2504.06821) : un programme réussi et vérifié devient une
+  compétence ; +23,5 points de réussite sur WebArena, 10 à 15 % d'étapes en moins.
+
+Ce que MIKATA a reçu, rien qui soit propre à une appli :
+
+1. **Les liens d'applis** (`app_links`, `open_app_link`) : les protocoles déclarés dans
+   Windows par les applis installées (51 liens pour 30 applis sur le PC de l'utilisateur),
+   jamais un composant du système ni un protocole à risque (`ms-msdt`, `search-ms`...) ;
+   ouverture en arrière-plan : l'appli est minimisée dès qu'elle passe devant et la fenêtre
+   de l'utilisateur revient (vérifié : Spotify reste pilotable minimisé) ; la vue est prête
+   avant qu'on la lise (le texte du lien apparaît).
+2. **Les éléments de liste** (`uia_items`) : chaque ligne avec ce qu'elle affiche et ses
+   boutons ; **le clic dans une ligne** (`uia_click` avec `item`) ; **l'attente** d'un texte
+   (`uia_wait`).
+3. **L'apprentissage** : la suite d'appels qui a réussi devient une compétence. Le rédacteur
+   et le réviseur reçoivent la fiche des fonctions du programme (forme des résultats) ; une
+   valeur choisie après une lecture à l'écran reste masquée, sauf si l'utilisateur l'a dite ;
+   une compétence qui recopie `...` ou dont un `pick` ne cite pas ce qu'il cherche est
+   refusée ; les boutons se choisissent par une question (leur ordre change).
+
+Mesures. PC simulé, vrai modèle, la même sorte de demande cinq fois avec des titres
+différents : découverte en 4 appels (6 à 8 s), compétence apprise dès le 1er tour, appelée
+aux tours 2 à 4 (2 appels, 2,4 à 3,8 s), active après 3 réussites et rejouée sans le modèle
+au 5e. Vrai Spotify (clic à blanc) : la bonne ligne visée, la fenêtre de l'utilisateur
+restée devant, la compétence réutilisée pour un autre titre. Banc : 56/56 puis 55/56 ;
+nouvelles tâches sur d'autres applis (réglage par `ms-settings:`, salon Discord). L'outil
+`spotify_play` de la phase 16g est retiré : MIKATA apprend ce qu'il faisait.
+
 ## 4. Ce qui part, ce qui reste
 
 | Élément | Décision | Raison |
@@ -427,8 +467,9 @@ n'a pas fait autant d'actions constructives que la demande corrigée. Les préf�
 viennent des seuls mots de l'utilisateur (sa demande et sa correction), même après une
 page web. Le banc rejoue des corrections (`history` : les échanges qui précèdent).
 Une étape qui accomplit conclut la correction ; seule une étape qui prépare (propriété
-`prepares` : ouvrir une appli, mettre une fenêtre devant) continue. Outil `spotify_play`
-(l'appli Spotify par son arbre d'accessibilité, sans navigateur ni vision).
+`prepares` : ouvrir une appli, mettre une fenêtre devant) continue. L'outil
+`spotify_play` de cette phase est remplacé en phase 17 par des gestes génériques appris
+(§3.12).
 Fait en E (phase 15e) : compétences (`mikata/learn/skills.py`), qui remplacent
 `mikata/skills/`. Écarts à la section 3.6 : la vérification avant adoption se fait dans le
 code, sans rejouer la demande (rejouer une action sur le PC la referait deux fois) ; la
