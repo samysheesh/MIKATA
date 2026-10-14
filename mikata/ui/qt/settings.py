@@ -1,13 +1,18 @@
-"""Fenêtre de réglages (ajout phase 8), ouverte depuis l'icône MIKATA, la mascotte (double-
-clic ou clic droit) ou `python -m mikata.ui --settings`.
+"""Fenêtre de réglages (ajout phase 8, refaite phase 15b), ouverte depuis l'icône MIKATA, la
+mascotte (double-clic ou clic droit) ou `python -m mikata.ui --settings`.
 
-Onglets : Audio (micro, sortie, tests), Mot d'activation (seuils), Conversation (réflexion,
-fenêtre de suivi, historique), Coût et clés (coût cumulé, crédit, clés masquées), Mascotte
-(bulle, démarrage), Skins (choix immédiat, import, suppression : `skins_tab`), Journal (log en
-direct).
+Une barre latérale et six pages faites de cartes :
+- **Accueil** : le navigateur de travail (onglets fermables un par un, pause, afficher ou
+  masquer la fenêtre ; il reste lancé en fond), les dépenses, la mascotte ;
+- **Son et voix** : micro, sortie (changée sans redémarrer), tests, mot d'activation ;
+- **Comportement** : réflexion, fenêtre de suivi, historique, accès complet ;
+- **Apparence** : mascotte et personnage (`skins_tab`) ;
+- **Clés et coût** : coût cumulé, crédit, voix ElevenLabs, clés masquées ;
+- **Journal** : log en direct.
 
-Chaque réglage porte un badge : « tout de suite » (MIKATA le relit sans redémarrer) ou « au
-redémarrage ». Enregistrer réécrit config.yaml en gardant commentaires et ordre
+Seuls les réglages pris en compte au redémarrage portent un badge ; les autres s'appliquent
+dès l'enregistrement. Enregistrer (bouton ou Ctrl+S, actif seulement s'il y a des
+modifications) réécrit config.yaml en gardant commentaires et ordre
 (`settings_store.ConfigEditor`, sauvegarde dans data/backups), puis demande à MIKATA de le
 relire (`reload_config`). Les clés restent dans .env et ne sont jamais affichées en clair.
 """
@@ -21,26 +26,29 @@ from typing import Any
 
 import numpy as np
 from loguru import logger
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QFont
+from PySide6.QtCore import QRectF, QSize, Qt, QTimer
+from PySide6.QtGui import QColor, QGuiApplication, QKeySequence, QPainter, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
-    QFormLayout,
+    QFrame,
     QHBoxLayout,
     QInputDialog,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
-    QTabWidget,
+    QScrollArea,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from mikata.ui.qt.skins_tab import SkinsTab
+from mikata.ui.qt.skins_tab import SkinsTab, render_preview
 from mikata.ui.settings_store import (
     BACKUP_DIR,
     SECRET_NAMES,
@@ -57,20 +65,118 @@ from mikata.ui.settings_store import (
     write_secret,
 )
 
-REASONING = ("none", "low", "medium", "high")
+REASONING = {
+    "none": "Rapide (sans réflexion)",
+    "low": "Légère",
+    "medium": "Moyenne",
+    "high": "Approfondie (plus lent)",
+}
+HISTORY_PRESETS = {
+    1: "1 heure",
+    12: "12 heures",
+    24: "1 jour",
+    72: "3 jours",
+    168: "1 semaine",
+    720: "1 mois",
+}
 LOG_LEVELS = {"Tout": 0, "Infos et plus": 1, "Avertissements et erreurs": 2}
 _LEVEL_RANK = {"TRACE": 0, "DEBUG": 0, "INFO": 1, "SUCCESS": 1, "WARNING": 2, "ERROR": 2}
 MAX_LOG_LINES = 2000
 COST_REFRESH_POLLS = 10  # coûts relus toutes les 5 s (relevé toutes les 500 ms)
+TASKS_REFRESH_POLLS = 6  # accueil affiché : onglets du navigateur relus toutes les 3 s
+TAB_TITLE_MAX = 70
+PAGES = ("Accueil", "Son et voix", "Comportement", "Apparence", "Clés et coût", "Journal")
+UNSAVED = "Modifications non enregistrées."
 
-STYLE = """
-QWidget { font-size: 10pt; }
-QLabel#badge_live { background: #dcfce7; color: #166534; border-radius: 8px; padding: 1px 8px; }
-QLabel#badge_restart { background: #ffedd5; color: #9a3412; border-radius: 8px; padding: 1px 8px; }
-QLabel#hint { color: #5b6475; }
-QLabel#status { color: #1f2430; }
-QPushButton#primary { background: #2f7de1; color: white; border-radius: 4px; padding: 5px 16px; }
+ACCENT = "#6d5dfc"
+ICONS = (Path(__file__).resolve().parent / "icons").as_posix()
+STYLE = f"""
+QWidget {{ font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif; font-size: 10pt;
+          color: #1d1f2b; }}
+QWidget#content, QScrollArea, QWidget#page {{ background: #f4f5f9; }}
+QScrollArea {{ border: none; }}
+QWidget#sidebar {{ background: #191a24; }}
+QLabel#brand {{ color: #ffffff; font-size: 15pt; font-weight: 600; }}
+QLabel#brand_sub {{ color: #8b8fa3; font-size: 9pt; }}
+QListWidget#nav {{ background: transparent; border: none; outline: none; color: #c9cbd6;
+                  font-size: 10.5pt; }}
+QListWidget#nav::item {{ padding: 7px 14px; margin: 1px 10px; border-radius: 8px; }}
+QListWidget#nav::item:hover:!selected {{ background: #262836; }}
+QListWidget#nav::item:selected {{ background: {ACCENT}; color: #ffffff; }}
+QLabel#page_title {{ font-size: 18pt; font-weight: 600; }}
+QLabel#page_sub, QLabel#hint {{ color: #6b7083; }}
+QFrame#card {{ background: #ffffff; border: 1px solid #e3e5ee; border-radius: 12px; }}
+QLabel#card_title {{ font-size: 11.5pt; font-weight: 600; }}
+QLabel#row_label {{ font-weight: 600; }}
+QLabel#row_help {{ color: #6b7083; font-size: 9pt; }}
+QFrame#separator {{ background: #eceef4; border: none; }}
+QLabel#badge_restart {{ background: #fff1e6; color: #a1460f; border-radius: 9px;
+                       padding: 1px 9px; font-size: 8.5pt; }}
+QLabel#badge_live {{ background: #e5f8ec; color: #17693a; border-radius: 9px;
+                    padding: 1px 9px; font-size: 8.5pt; }}
+QLabel#badge_idle {{ background: #eef0f5; color: #555a6e; border-radius: 9px;
+                    padding: 1px 9px; font-size: 8.5pt; }}
+QLabel#big_number {{ font-size: 16pt; font-weight: 600; }}
+QLabel#status {{ color: #3a3e50; }}
+QWidget#footer {{ background: #ffffff; border-top: 1px solid #e3e5ee; }}
+QPushButton {{ background: #ffffff; border: 1px solid #d6d9e4; border-radius: 8px;
+              padding: 6px 14px; }}
+QPushButton:hover {{ background: #f2f3f8; }}
+QPushButton:pressed {{ background: #e7e9f1; }}
+QPushButton:disabled {{ color: #a3a7b7; background: #f6f7fa; }}
+QPushButton:checked {{ background: #ece9ff; border-color: {ACCENT}; }}
+QPushButton#primary {{ background: {ACCENT}; color: #ffffff; border: none; padding: 7px 20px;
+                      font-weight: 600; }}
+QPushButton#primary:hover {{ background: #5b4bea; }}
+QPushButton#primary:disabled {{ background: #c9c4f5; color: #ffffff; }}
+QPushButton#ghost {{ border: none; background: transparent; color: #5b4bea; padding: 4px 8px; }}
+QPushButton#ghost:hover {{ background: #f0eeff; }}
+QComboBox, QDoubleSpinBox, QLineEdit {{ background: #ffffff; border: 1px solid #d6d9e4;
+    border-radius: 8px; padding: 5px 8px; min-height: 20px; }}
+QComboBox:focus, QDoubleSpinBox:focus, QLineEdit:focus {{ border-color: {ACCENT}; }}
+QComboBox::drop-down {{ border: none; width: 28px; }}
+QComboBox::down-arrow {{ image: url({ICONS}/chevron-down.svg); width: 12px; height: 12px; }}
+QDoubleSpinBox {{ padding-right: 22px; }}
+QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{ border: none; width: 22px;
+    background: transparent; }}
+QDoubleSpinBox::up-arrow {{ image: url({ICONS}/chevron-up.svg); width: 10px; height: 10px; }}
+QDoubleSpinBox::down-arrow {{ image: url({ICONS}/chevron-down.svg); width: 10px; height: 10px; }}
+QComboBox QAbstractItemView {{ background: #ffffff; selection-background-color: #ece9ff;
+                              selection-color: #1d1f2b; border: 1px solid #d6d9e4; }}
+QProgressBar {{ background: #eceef4; border: none; border-radius: 4px; max-height: 8px; }}
+QProgressBar::chunk {{ background: {ACCENT}; border-radius: 4px; }}
+QPlainTextEdit {{ background: #14151d; color: #d7d9e4; border: none; border-radius: 10px;
+                 padding: 8px; font-family: "Cascadia Mono", Consolas, monospace;
+                 font-size: 9pt; }}
+QListWidget {{ background: #ffffff; border: 1px solid #e3e5ee; border-radius: 10px; }}
 """
+
+
+class Toggle(QCheckBox):
+    """Interrupteur : une case à cocher dessinée comme un bouton glissant."""
+
+    def __init__(self, checked: bool = False) -> None:
+        super().__init__()
+        self.setChecked(checked)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def sizeHint(self) -> QSize:
+        return QSize(44, 24)
+
+    def hitButton(self, pos: Any) -> bool:
+        return self.rect().contains(pos)
+
+    def paintEvent(self, event: Any) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        track = QRectF(1, 2, 42, 20)
+        painter.setBrush(QColor(ACCENT if self.isChecked() else "#cfd2dd"))
+        painter.drawRoundedRect(track, 10, 10)
+        painter.setBrush(QColor("#ffffff"))
+        x = track.right() - 18 if self.isChecked() else track.left() + 2
+        painter.drawEllipse(QRectF(x, track.top() + 2, 16, 16))
+        painter.end()
 
 
 def badge(live: bool) -> QLabel:
@@ -85,7 +191,7 @@ def badge(live: bool) -> QLabel:
 
 
 class AudioTester:
-    """Tests audio de l'onglet Audio (sounddevice, importé à la demande)."""
+    """Tests audio de la page Son et voix (sounddevice, importé à la demande)."""
 
     def __init__(self) -> None:
         self._stream: Any = None
@@ -150,9 +256,13 @@ class SettingsWindow(QWidget):
         tester: AudioTester | None = None,
     ) -> None:
         super().__init__()
+        hints = QGuiApplication.styleHints()
+        if hasattr(hints, "setColorScheme"):  # fenêtre dessinée en clair, même en mode sombre
+            hints.setColorScheme(Qt.ColorScheme.Light)
         self.setWindowTitle("MIKATA — Réglages")
         self.setStyleSheet(STYLE)
-        self.resize(640, 560)
+        self.resize(960, 680)
+        self.setMinimumSize(780, 540)
         self.config_path = config_path
         self.base_dir = base_dir
         self._send = send
@@ -165,78 +275,212 @@ class SettingsWindow(QWidget):
         self.tail = LogTail(self._log_path())
         self._log_lines: list[str] = []
         self._polls = 0
+        self._browser: dict[str, Any] = {}
 
-        self.tabs = QTabWidget()
-        self.tabs.addTab(self._audio_tab(), "Audio")
-        self.tabs.addTab(self._wake_tab(), "Mot d'activation")
-        self.tabs.addTab(self._conversation_tab(), "Conversation")
-        self.tasks_tab_index = 3
-        self.tabs.addTab(self._tasks_tab(), "En cours")  # phase 13f : arrière-plan fermable
-        self.tabs.addTab(self._cost_tab(), "Coût et clés")
-        self.tabs.addTab(self._mascot_tab(), "Mascotte")
+        self.status = QLabel("")
+        self.status.setObjectName("status")
+        self.status.setWordWrap(True)
+        self.nav = QListWidget()
+        self.nav.setObjectName("nav")
+        self.nav.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.pages = QStackedWidget()
         self.skins_tab = SkinsTab(
             base_dir / "assets" / "mascot",
             config_path,
             on_applied=self._skin_applied,
             on_status=lambda text: self.status.setText(text),
         )
-        self.tabs.addTab(self.skins_tab, "Skins")
-        self.tabs.addTab(self._log_tab(), "Journal")
-        self.tabs.currentChanged.connect(self._tab_changed)
+        self._add_page(PAGES[0], "Ce que MIKATA fait en ce moment.", self._home_page())
+        self._add_page(PAGES[1], "Micro, casque et mot d'activation.", self._sound_page())
+        self._add_page(PAGES[2], "Comment MIKATA réfléchit et retient.", self._behavior_page())
+        self._add_page(PAGES[3], "La mascotte et son personnage.", self._look_page())
+        self._add_page(PAGES[4], "Dépenses et clés d'accès.", self._keys_page())
+        self._add_page(PAGES[5], "Ce que MIKATA écrit dans son journal.", self._log_page())
+        self.nav.currentRowChanged.connect(self._page_changed)
 
-        self.status = QLabel("")
-        self.status.setObjectName("status")
-        self.status.setWordWrap(True)
-        save = QPushButton("Enregistrer")
-        save.setObjectName("primary")
-        save.clicked.connect(self.save)
-        close = QPushButton("Fermer")
-        close.clicked.connect(self.close)
+        self.save_button = QPushButton("Enregistrer")
+        self.save_button.setObjectName("primary")
+        self.save_button.setEnabled(False)
+        self.save_button.setToolTip("Ctrl+S")
+        self.save_button.clicked.connect(self.save)
+        shortcut = QShortcut(QKeySequence.StandardKey.Save, self)
+        shortcut.activated.connect(self.save)
         self.restart_button = QPushButton("Redémarrer MIKATA")
         self.restart_button.setToolTip(
             "Arrête MIKATA proprement puis le relance (modèles et réglages rechargés)."
         )
         self.restart_button.clicked.connect(self.restart_mikata)
-        buttons = QHBoxLayout()
+        footer = QWidget()
+        footer.setObjectName("footer")
+        footer.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        buttons = QHBoxLayout(footer)
+        buttons.setContentsMargins(24, 12, 24, 12)
         buttons.addWidget(self.status, 1)
         buttons.addWidget(self.restart_button)
-        buttons.addWidget(close)
-        buttons.addWidget(save)
-        layout = QVBoxLayout(self)
-        layout.addWidget(self.tabs)
-        layout.addLayout(buttons)
+        buttons.addWidget(self.save_button)
+
+        content = QWidget()
+        content.setObjectName("content")
+        content.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        right = QVBoxLayout(content)
+        right.setContentsMargins(0, 0, 0, 0)
+        right.setSpacing(0)
+        right.addWidget(self.pages, 1)
+        right.addWidget(footer)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self._sidebar())
+        layout.addWidget(content, 1)
+        self.nav.setCurrentRow(0)
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._poll)
         self._timer.start(500)
         self._poll()
 
-    # -- construction -----------------------------------------------------------------------
+    # -- charpente --------------------------------------------------------------------------
 
-    def _row(self, form: QFormLayout, key: str, widget: QWidget) -> None:
+    def _sidebar(self) -> QWidget:
+        side = QWidget()
+        side.setObjectName("sidebar")
+        side.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        side.setFixedWidth(210)
+        layout = QVBoxLayout(side)
+        layout.setContentsMargins(0, 22, 0, 16)
+        self.avatar = QLabel()
+        self.avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._refresh_avatar()
+        brand = QLabel("MIKATA")
+        brand.setObjectName("brand")
+        brand.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sub = QLabel("Réglages")
+        sub.setObjectName("brand_sub")
+        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.avatar)
+        layout.addWidget(brand)
+        layout.addWidget(sub)
+        layout.addSpacing(18)
+        layout.addWidget(self.nav, 1)
+        return side
+
+    def _refresh_avatar(self) -> None:
+        skin = self.skins_tab.skins.get(self.skins_tab.current_key())
+        self.avatar.setPixmap(render_preview(skin, 72))
+
+    def _add_page(self, title: str, subtitle: str, body: QWidget) -> None:
+        page = QWidget()
+        page.setObjectName("page")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(14)
+        heading = QLabel(title)
+        heading.setObjectName("page_title")
+        sub = QLabel(subtitle)
+        sub.setObjectName("page_sub")
+        layout.addWidget(heading)
+        layout.addWidget(sub)
+        layout.addSpacing(4)
+        layout.addWidget(body, 1)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(page)
+        self.pages.addWidget(scroll)
+        QListWidgetItem(title, self.nav)
+
+    def page_names(self) -> list[str]:
+        return [self.nav.item(i).text() for i in range(self.nav.count())]
+
+    def show_page(self, name: str) -> None:
+        self.nav.setCurrentRow(self.page_names().index(name))
+
+    def _page_changed(self, index: int) -> None:
+        self.pages.setCurrentIndex(index)
+        self._refresh_tasks()
+
+    def showEvent(self, event: Any) -> None:
+        super().showEvent(event)
+        self._refresh_tasks()
+
+    def _card(self, title: str, subtitle: str = "") -> tuple[QFrame, QVBoxLayout]:
+        card = QFrame()
+        card.setObjectName("card")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(10)
+        heading = QLabel(title)
+        heading.setObjectName("card_title")
+        layout.addWidget(heading)
+        if subtitle:
+            layout.addWidget(self._hint(subtitle))
+        return card, layout
+
+    @staticmethod
+    def _stack(*cards: QWidget) -> QWidget:
+        body = QWidget()
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(14)
+        for card in cards:
+            layout.addWidget(card)
+        layout.addStretch(1)
+        return body
+
+    def _setting(self, layout: QVBoxLayout, key: str, widget: QWidget, help_text: str) -> None:
+        """Une ligne de réglage : libellé et explication à gauche, contrôle à droite ; un
+        badge seulement si le réglage attend le redémarrage."""
         spec = SPECS[key]
         self.fields[key] = widget
-        line = QHBoxLayout()
-        line.addWidget(widget, 1)
-        line.addWidget(badge(spec.live))
-        holder = QWidget()
-        holder.setLayout(line)
-        line.setContentsMargins(0, 0, 0, 0)
+        rows = int(layout.property("rows") or 0)
+        layout.setProperty("rows", rows + 1)
+        if rows:
+            separator = QFrame()
+            separator.setObjectName("separator")
+            separator.setFixedHeight(1)
+            layout.addWidget(separator)
+        text = QVBoxLayout()
+        text.setSpacing(2)
         label = QLabel(spec.label)
-        if spec.help:
-            label.setToolTip(spec.help)
-            widget.setToolTip(spec.help)
-        form.addRow(label, holder)
+        label.setObjectName("row_label")
+        text.addWidget(label)
+        explanation = QLabel(help_text)
+        explanation.setObjectName("row_help")
+        explanation.setWordWrap(True)
+        text.addWidget(explanation)
+        row = QHBoxLayout()
+        row.setSpacing(12)
+        row.addLayout(text, 1)
+        if not spec.live:
+            row.addWidget(badge(False))
+        row.addWidget(widget)
+        layout.addLayout(row)
+        for signal in ("valueChanged", "toggled", "currentIndexChanged", "editTextChanged"):
+            if hasattr(widget, signal):
+                getattr(widget, signal).connect(self._edited)
 
     def _spin(
-        self, key: str, low: float, high: float, step: float, decimals: int
+        self, key: str, low: float, high: float, step: float, decimals: int, suffix: str = ""
     ) -> QDoubleSpinBox:
         spin = QDoubleSpinBox()
         spin.setRange(low, high)
         spin.setSingleStep(step)
         spin.setDecimals(decimals)
         spin.setValue(float(self.editor.get(key) or 0))
+        spin.setSuffix(suffix)
+        spin.setMinimumWidth(110)
         return spin
+
+    def _choice(self, key: str, choices: dict[Any, str]) -> QComboBox:
+        combo = QComboBox()
+        current = self.editor.get(key)
+        if current is not None and current not in choices:  # valeur réglée à la main
+            choices = {**choices, current: str(current)}
+        for value, text in choices.items():
+            combo.addItem(text, value)
+        combo.setCurrentIndex(max(0, combo.findData(current)))
+        combo.setMinimumWidth(220)
+        return combo
 
     def _hint(self, text: str) -> QLabel:
         label = QLabel(text)
@@ -244,147 +488,226 @@ class SettingsWindow(QWidget):
         label.setWordWrap(True)
         return label
 
-    def _audio_tab(self) -> QWidget:
-        page = QWidget()
-        form = QFormLayout(page)
+    # -- pages -------------------------------------------------------------------------------
+
+    def _home_page(self) -> QWidget:
+        card, layout = self._card(
+            "Navigateur de travail",
+            "MIKATA s'en sert pour YouTube, les recherches et les sites. Il reste lancé en fond, "
+            "invisible ; affiche-le pour voir ce qu'il fait ou te connecter à un compte.",
+        )
+        head = QHBoxLayout()
+        self.browser_state = QLabel("…")
+        self.browser_state.setObjectName("badge_idle")
+        head.addWidget(self.browser_state)
+        head.addStretch(1)
+        self.browser_start = QPushButton("Démarrer")
+        self.browser_start.clicked.connect(lambda: self._browser_command("start"))
+        self.browser_pause = QPushButton("Pause")
+        self.browser_pause.setToolTip("Met en pause les vidéos et musiques de tous les onglets.")
+        self.browser_pause.clicked.connect(lambda: self._browser_command("pause"))
+        self.browser_toggle = QPushButton("Afficher")
+        self.browser_toggle.clicked.connect(self._toggle_browser)
+        for button in (self.browser_start, self.browser_pause, self.browser_toggle):
+            head.addWidget(button)
+        layout.addLayout(head)
+        self.browser_empty = self._hint("Aucun onglet ouvert.")
+        layout.addWidget(self.browser_empty)
+        self.browser_tabs = QVBoxLayout()
+        self.browser_tabs.setSpacing(2)
+        layout.addLayout(self.browser_tabs)
+
+        spend, spend_layout = self._card("Dépenses")
+        self.home_cost = QLabel("")
+        self.home_cost.setObjectName("big_number")
+        self.home_cost_detail = self._hint("")
+        spend_layout.addWidget(self.home_cost)
+        spend_layout.addWidget(self.home_cost_detail)
+
+        mascot, mascot_layout = self._card("Mascotte")
+        line = QHBoxLayout()
+        line.addWidget(self._hint("Cachée, ou perdue hors de l'écran ?"), 1)
+        show = QPushButton("Afficher la mascotte")
+        show.clicked.connect(self._on_show_mascot)
+        line.addWidget(show)
+        mascot_layout.addLayout(line)
+        self._apply_browser_state()
+        return self._stack(card, spend, mascot)
+
+    def _sound_page(self) -> QWidget:
         inputs, outputs, error = self._devices()
-        for key, names in (("audio.input_device", inputs), ("audio.output_device", outputs)):
-            combo = QComboBox()
-            combo.setEditable(True)  # sous-chaîne du nom acceptée, comme dans config.yaml
-            combo.addItems(names)
-            combo.setCurrentText(str(self.editor.get(key)))
-            self._row(form, key, combo)
+        mic, mic_layout = self._card("Écoute")
+        self._setting(
+            mic_layout,
+            "audio.input_device",
+            self._device_combo("audio.input_device", inputs),
+            "Le micro qu'écoute MIKATA.",
+        )
         self.mic_level = QProgressBar()
         self.mic_level.setRange(0, 100)
         self.mic_level.setTextVisible(False)
         self.mic_button = QPushButton("Tester le micro")
         self.mic_button.setCheckable(True)
         self.mic_button.toggled.connect(self._toggle_mic_test)
-        out_button = QPushButton("Tester la sortie")
-        out_button.clicked.connect(self._test_output)
         tests = QHBoxLayout()
         tests.addWidget(self.mic_button)
         tests.addWidget(self.mic_level, 1)
-        tests.addWidget(out_button)
-        holder = QWidget()
-        holder.setLayout(tests)
-        tests.setContentsMargins(0, 0, 0, 0)
-        form.addRow("Tests", holder)
-        form.addRow(
+        mic_layout.addLayout(tests)
+        mic_layout.addWidget(
             self._hint(
-                error
-                or "Le test du micro l'ouvre en mode partagé : MIKATA continue d'écouter. "
-                "Le test de sortie joue le son du minuteur."
+                error or "Le test ouvre le micro en mode partagé : MIKATA continue d'écouter."
             )
         )
-        return page
 
-    def _wake_tab(self) -> QWidget:
-        page = QWidget()
-        form = QFormLayout(page)
-        self._row(form, "wake.threshold", self._spin("wake.threshold", 0, 1, 0.01, 2))
-        self._row(
-            form, "wake.verifier_threshold", self._spin("wake.verifier_threshold", 0, 1, 0.01, 2)
+        out, out_layout = self._card("Voix de MIKATA")
+        self._setting(
+            out_layout,
+            "audio.output_device",
+            self._device_combo("audio.output_device", outputs),
+            "Où MIKATA parle. Change sans redémarrer ; « default » suit Windows.",
         )
-        model = QLabel(str(self.editor.get("wake.model")))
-        verifier = QLabel(str(self.editor.get("wake.verifier") or "aucun"))
-        form.addRow("Modèle", model)
-        form.addRow("Vérificateur", verifier)
-        form.addRow(
-            self._hint(
-                "Plus haut : moins de faux déclenchements, plus de ratés. Les valeurs "
-                "conseillées sont données par scripts/eval_wakeword.py (README, phase 7)."
-            )
-        )
-        return page
+        out_button = QPushButton("Tester la sortie")
+        out_button.clicked.connect(self._test_output)
+        line = QHBoxLayout()
+        line.addWidget(self._hint("Joue le son du minuteur sur la sortie choisie."), 1)
+        line.addWidget(out_button)
+        out_layout.addLayout(line)
 
-    def _conversation_tab(self) -> QWidget:
-        page = QWidget()
-        form = QFormLayout(page)
+        wake, wake_layout = self._card(
+            "Mot d'activation",
+            "Plus haut : moins de faux déclenchements, mais plus de ratés. Valeurs conseillées : "
+            "scripts/eval_wakeword.py.",
+        )
+        self._setting(
+            wake_layout,
+            "wake.threshold",
+            self._spin("wake.threshold", 0, 1, 0.01, 2),
+            f"Sensibilité à « MIKATA » (modèle {self.editor.get('wake.model')}).",
+        )
+        self._setting(
+            wake_layout,
+            "wake.verifier_threshold",
+            self._spin("wake.verifier_threshold", 0, 1, 0.01, 2),
+            "Ressemblance demandée avec ta voix enregistrée "
+            f"({self.editor.get('wake.verifier') or 'aucun vérificateur'}).",
+        )
+        return self._stack(mic, out, wake)
+
+    def _device_combo(self, key: str, names: list[str]) -> QComboBox:
         combo = QComboBox()
-        combo.addItems(REASONING)
-        combo.setCurrentText(str(self.editor.get("llm.reasoning_effort") or "none"))
-        self._row(form, "llm.reasoning_effort", combo)
-        self._row(form, "agent.follow_up_s", self._spin("agent.follow_up_s", 0, 30, 1, 0))
-        self._row(
-            form, "agent.history_persist_h", self._spin("agent.history_persist_h", 1, 8760, 12, 0)
-        )
-        form.addRow(
-            self._hint(
-                "Durée de l'historique : comme « garde la conversation une semaine » à la voix "
-                "(168 h = 7 jours). « Nouvelle conversation » vide toujours tout."
-            )
-        )
-        return page
+        combo.setEditable(True)  # sous-chaîne du nom acceptée, comme dans config.yaml
+        combo.addItems(names)
+        combo.setCurrentText(str(self.editor.get(key)))
+        combo.setMinimumWidth(300)
+        return combo
 
-    def _cost_tab(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
+    def _behavior_page(self) -> QWidget:
+        answers, answers_layout = self._card("Réponses")
+        self._setting(
+            answers_layout,
+            "llm.reasoning_effort",
+            self._choice("llm.reasoning_effort", REASONING),
+            "« Réfléchis bien » à la voix pousse au maximum pour une seule demande.",
+        )
+        self._setting(
+            answers_layout,
+            "agent.follow_up_s",
+            self._spin("agent.follow_up_s", 0, 30, 1, 0, " s"),
+            "Après une réponse, MIKATA écoute encore sans « MIKATA » (0 : jamais).",
+        )
+        memory, memory_layout = self._card("Mémoire")
+        self._setting(
+            memory_layout,
+            "agent.history_persist_h",
+            self._choice("agent.history_persist_h", HISTORY_PRESETS),
+            "Combien de temps MIKATA se souvient de la conversation. « Nouvelle "
+            "conversation » à la voix efface tout.",
+        )
+        safety, safety_layout = self._card("Sécurité")
+        self._setting(
+            safety_layout,
+            "guard.full_access",
+            Toggle(bool(self.editor.get("guard.full_access"))),
+            "Plus aucune confirmation après une page web ou un fichier lu. Les suppressions "
+            "vont toujours à la corbeille.",
+        )
+        return self._stack(answers, memory, safety)
+
+    def _look_page(self) -> QWidget:
+        mascot, layout = self._card("Mascotte")
+        self._setting(
+            layout,
+            "ui.bubble_s",
+            self._spin("ui.bubble_s", 1, 120, 1, 0, " s"),
+            "Après la dernière phrase. Taille de la mascotte : clic droit dessus.",
+        )
+        self._setting(
+            layout,
+            "ui.mascot",
+            Toggle(bool(self.editor.get("ui.mascot"))),
+            "Sinon, seule l'icône près de l'horloge.",
+        )
+        skins, skins_layout = self._card("Personnage")
+        self.skins_tab.layout().setContentsMargins(0, 0, 0, 0)
+        self.skins_tab.setMinimumHeight(340)
+        skins_layout.addWidget(self.skins_tab)
+        return self._stack(mascot, skins)
+
+    def _keys_page(self) -> QWidget:
+        llm, llm_layout = self._card("Modèle de langage")
         self.cost_label = QLabel("")
-        self.cost_label.setFont(QFont(self.font().family(), 12))
+        self.cost_label.setWordWrap(True)
         self.credit_bar = QProgressBar()
         self.credit_bar.setRange(0, 1000)
-        layout.addWidget(self.cost_label)
-        layout.addWidget(self.credit_bar)
-        layout.addSpacing(12)
+        self.credit_bar.setTextVisible(False)
+        llm_layout.addWidget(self.cost_label)
+        llm_layout.addWidget(self.credit_bar)
+
+        voice, voice_layout = self._card(
+            "Voix ElevenLabs",
+            "Plafond, seuil et coût : section tts.elevenlabs de config.yaml. Sous le seuil, au "
+            "plafond ou sans connexion, MIKATA passe sur sa voix de base (Kokoro).",
+        )
         self.voice_label = QLabel("")  # ajout phase 11 : crédits ElevenLabs
         self.voice_label.setWordWrap(True)
         self.voice_bar = QProgressBar()
         self.voice_bar.setRange(0, 1000)
-        layout.addWidget(self.voice_label)
-        layout.addWidget(self.voice_bar)
-        layout.addWidget(
-            self._hint(
-                "Plafond, seuil et coût : section tts.elevenlabs de config.yaml. Sous le seuil, "
-                "au plafond ou sans connexion, MIKATA passe sur sa voix de base (Kokoro)."
-            )
+        self.voice_bar.setTextVisible(False)
+        voice_layout.addWidget(self.voice_label)
+        voice_layout.addWidget(self.voice_bar)
+
+        keys, keys_layout = self._card(
+            "Clés",
+            "Rangées dans .env, jamais dans config.yaml ni dans le dépôt. Une clé remplacée sert "
+            "au prochain démarrage de MIKATA.",
         )
-        layout.addSpacing(12)
-        form = QFormLayout()
         self.secret_labels: dict[str, QLabel] = {}
         for name, label in SECRET_NAMES.items():
+            text = QVBoxLayout()
+            text.setSpacing(2)
+            title = QLabel(label)
+            title.setObjectName("row_label")
             shown = QLabel("")
+            shown.setObjectName("row_help")
             shown.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+            text.addWidget(title)
+            text.addWidget(shown)
             replace = QPushButton("Remplacer…")
+            replace.setToolTip(f"{name} dans .env")
             replace.clicked.connect(lambda _=False, n=name: self._replace_secret(n))
-            line = QHBoxLayout()
-            line.addWidget(shown, 1)
-            line.addWidget(badge(False))
-            line.addWidget(replace)
-            holder = QWidget()
-            holder.setLayout(line)
-            line.setContentsMargins(0, 0, 0, 0)
-            form.addRow(f"{label} ({name})", holder)
+            row = QHBoxLayout()
+            row.setSpacing(12)
+            row.addLayout(text, 1)
+            row.addWidget(replace)
+            keys_layout.addLayout(row)
             self.secret_labels[name] = shown
-        layout.addLayout(form)
-        layout.addWidget(
-            self._hint("Les clés sont dans .env (jamais dans config.yaml ni dans le dépôt).")
-        )
-        layout.addStretch(1)
         self._refresh_cost()
-        return page
+        return self._stack(llm, voice, keys)
 
-    def _mascot_tab(self) -> QWidget:
-        page = QWidget()
-        form = QFormLayout(page)
-        self._row(form, "ui.bubble_s", self._spin("ui.bubble_s", 1, 120, 1, 0))
-        startup = QCheckBox()
-        startup.setChecked(bool(self.editor.get("ui.mascot")))
-        self._row(form, "ui.mascot", startup)
-        show = QPushButton("Afficher la mascotte")
-        show.clicked.connect(self._on_show_mascot)
-        form.addRow(show)
-        form.addRow(
-            self._hint(
-                "Taille et bulle : clic droit sur la mascotte. Pour cliquer sur ce qu'il y a "
-                "dessous, déplace-la. Changer de personnage : onglet Skins."
-            )
-        )
-        return page
-
-    def _log_tab(self) -> QWidget:
+    def _log_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
         self.log_filter = QComboBox()
         self.log_filter.addItems(LOG_LEVELS)
         self.log_filter.setCurrentIndex(1)
@@ -392,14 +715,11 @@ class SettingsWindow(QWidget):
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
-        mono = QFont("Consolas")
-        mono.setStyleHint(QFont.StyleHint.Monospace)
-        mono.setPointSizeF(9)
-        self.log_view.setFont(mono)
+        self.log_view.setMinimumHeight(380)
         top = QHBoxLayout()
         path = self._log_path()
         shown = path.relative_to(self.base_dir) if path.is_relative_to(self.base_dir) else path
-        top.addWidget(QLabel(shown.as_posix()), 1)
+        top.addWidget(self._hint(shown.as_posix()), 1)
         top.addWidget(self.log_filter)
         layout.addLayout(top)
         layout.addWidget(self.log_view, 1)
@@ -423,6 +743,18 @@ class SettingsWindow(QWidget):
                 out[key] = widget.text().strip()
         return out
 
+    def pending(self) -> list[str]:
+        """Réglages modifiés dans la fenêtre et pas encore enregistrés."""
+        return [key for key, value in self.values().items() if self.editor.get(key) != value]
+
+    def _edited(self, *_: Any) -> None:
+        dirty = bool(self.pending())
+        self.save_button.setEnabled(dirty)
+        if dirty:
+            self.status.setText(UNSAVED)
+        elif self.status.text() == UNSAVED:
+            self.status.setText("")
+
     def save(self) -> list[str]:
         """Écrit les réglages modifiés ; renvoie les clés changées."""
         self.editor = ConfigEditor(self.config_path)  # relu : le fichier a pu changer
@@ -433,15 +765,18 @@ class SettingsWindow(QWidget):
             changed = self.editor.changed()
             if not changed:
                 self.status.setText("Rien à enregistrer.")
+                self.save_button.setEnabled(False)
                 return []
             self.editor.save(self.base_dir / BACKUP_DIR)
         except (EditorError, OSError) as exc:
             self.status.setText(f"Non enregistré : {exc}")
             return []
+        self.editor = ConfigEditor(self.config_path)  # référence des prochaines modifications
+        self.save_button.setEnabled(False)
         live = [k for k in changed if k in SPECS and SPECS[k].live]
         restart = [k for k in changed if k not in live]
         sent = self._send({"type": "reload_config"})
-        text = f"Enregistré dans {self.config_path.name}."
+        text = "Enregistré."
         if live:
             text += f" Tout de suite : {', '.join(SPECS[k].label for k in live)}."
         if restart:
@@ -467,6 +802,7 @@ class SettingsWindow(QWidget):
         prendre la voix du profil (phase 11)."""
         self._on_applied(values)
         self._send({"type": "reload_config"})
+        self._refresh_avatar()
 
     def on_voice(self, message: dict[str, Any]) -> None:
         """Voix de MIKATA changée (secours Kokoro, retour ElevenLabs, profil)."""
@@ -479,63 +815,86 @@ class SettingsWindow(QWidget):
             self.status.setText(f"MIKATA refuse la configuration : {message['error']}")
 
     def on_tasks(self, message: dict[str, Any]) -> None:
-        """Phase 13f : la liste de ce qui tourne en arrière-plan, avec « Fermer »."""
+        """Ce qui tourne en arrière-plan (phase 13f) ; phase 15b : état du navigateur de
+        travail et ses onglets, sur l'accueil."""
         tasks = message.get("tasks")
         if not isinstance(tasks, list):
             return
-        self._rebuild_tasks(tasks)
+        browser = next((t for t in tasks if isinstance(t, dict) and t.get("id") == "browser"), {})
+        self._browser = browser
+        self._apply_browser_state()
 
-    # -- onglet « En cours » (phase 13f) ----------------------------------------------------
-
-    def _tasks_tab(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.addWidget(
-            self._hint("Ce que MIKATA fait tourner en arrière-plan, fermable d'un clic.")
-        )
-        self.tasks_empty = QLabel("Rien ne tourne en arrière-plan.")
-        self.tasks_empty.setObjectName("hint")
-        layout.addWidget(self.tasks_empty)
-        self.tasks_rows = QVBoxLayout()
-        layout.addLayout(self.tasks_rows)
-        layout.addStretch(1)
-        return page
-
-    def _tab_changed(self, index: int) -> None:
-        if index == self.tasks_tab_index:
-            self._send({"type": "list_tasks"})
+    # -- navigateur de travail (accueil) ----------------------------------------------------
 
     def _refresh_tasks(self) -> None:
-        if self.tabs.currentIndex() == self.tasks_tab_index:
-            self._send({"type": "list_tasks"})
+        """Demande l'état du navigateur, seulement quand l'accueil est à l'écran."""
+        if not self.isVisible() or self.nav.currentRow() != 0:
+            return
+        if not self._send({"type": "list_tasks"}):
+            self._browser = {"offline": True}
+            self._apply_browser_state()
 
-    def _rebuild_tasks(self, tasks: list[dict[str, Any]]) -> None:
-        while self.tasks_rows.count():
-            item = self.tasks_rows.takeAt(0)
+    def _browser_command(self, action: str, **fields: Any) -> None:
+        if not self._send({"type": "browser", "action": action, **fields}):
+            self.status.setText("MIKATA n'est pas lancé.")
+
+    def _toggle_browser(self) -> None:
+        self._browser_command("hide" if self._browser.get("visible") else "show")
+
+    def _apply_browser_state(self) -> None:
+        info = self._browser
+        running = bool(info.get("running"))
+        visible = bool(info.get("visible"))
+        tabs = [tab for tab in info.get("tabs") or [] if isinstance(tab, dict)]
+        if info.get("offline"):
+            text, style = "MIKATA n'est pas lancé", "badge_idle"
+        elif not info:
+            text, style = "…", "badge_idle"
+        elif not running:
+            text, style = "en veille, démarre à la première demande", "badge_idle"
+        else:
+            text, style = ("affiché à l'écran" if visible else "actif, en fond"), "badge_live"
+        self.browser_state.setText(text)
+        self.browser_state.setObjectName(style)
+        self.browser_state.style().unpolish(self.browser_state)
+        self.browser_state.style().polish(self.browser_state)
+        self.browser_start.setHidden(not info or running or bool(info.get("offline")))
+        self.browser_toggle.setHidden(not running)
+        self.browser_toggle.setText("Masquer" if visible else "Afficher")
+        self.browser_pause.setHidden(not running)
+        while self.browser_tabs.count():
+            item = self.browser_tabs.takeAt(0)
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
-        active = [task for task in tasks if task.get("running")]
-        self.tasks_empty.setVisible(not active)
-        for task in active:
-            task_id = task.get("id")
-            row = QHBoxLayout()
-            label = QLabel(str(task.get("label", task.get("id", ""))))
-            state = QLabel("actif")
-            state.setObjectName("badge_live")
-            close_button = QPushButton("Fermer")
-            close_button.clicked.connect(
-                lambda _checked=False, task_id=task_id: self._send(
-                    {"type": "close_task", "id": task_id}
-                )
-            )
-            row.addWidget(label, 1)
-            row.addWidget(state)
-            row.addWidget(close_button)
-            holder = QWidget()
-            holder.setLayout(row)
-            row.setContentsMargins(0, 0, 0, 0)
-            self.tasks_rows.addWidget(holder)
+        self.browser_empty.setHidden(not running or bool(tabs))
+        for tab in tabs:
+            self.browser_tabs.addWidget(self._tab_row(tab))
+
+    def _tab_row(self, tab: dict[str, Any]) -> QWidget:
+        title = str(tab.get("title") or tab.get("url") or "Onglet")
+        if len(title) > TAB_TITLE_MAX:
+            title = title[: TAB_TITLE_MAX - 1] + "…"
+        label = QLabel(title)
+        label.setToolTip(str(tab.get("url", "")))
+        label.setMinimumWidth(1)  # un titre long ne pousse jamais la carte hors de la fenêtre
+        close_button = QPushButton("Fermer")
+        close_button.setObjectName("ghost")
+        close_button.setToolTip("Ferme cet onglet ; le navigateur de travail reste prêt.")
+        tab_id = str(tab.get("id", ""))
+
+        def close() -> None:
+            close_button.setEnabled(False)
+            self._browser_command("close_tab", tab=tab_id)
+
+        close_button.clicked.connect(close)
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(label, 1)
+        row.addWidget(close_button)
+        holder = QWidget()
+        holder.setLayout(row)
+        return holder
 
     # -- actions ----------------------------------------------------------------------------
 
@@ -585,7 +944,7 @@ class SettingsWindow(QWidget):
         self._polls += 1
         if self._polls % COST_REFRESH_POLLS == 0:  # compteur ElevenLabs écrit par MIKATA
             self._refresh_cost()
-        if self._polls % 20 == 0:  # toutes les 10 s : onglet « En cours »
+        if self._polls % TASKS_REFRESH_POLLS == 0:
             self._refresh_tasks()
         lines = self.tail.poll()
         if lines:
@@ -615,10 +974,14 @@ class SettingsWindow(QWidget):
         )
         share = usage.remaining_usd / usage.credit_usd if usage.credit_usd else 0.0
         self.credit_bar.setValue(int(1000 * min(max(share, 0.0), 1.0)))
-        text, share = voice_usage_text(self.base_dir / VOICE_USAGE_FILE)
+        self.home_cost.setText(f"{usage.cost_usd:.2f} $")
+        self.home_cost_detail.setText(
+            f"{usage.commands} commande(s){since} · crédit restant ≈ {usage.remaining_usd:.2f} $"
+        )
+        text, voice_share = voice_usage_text(self.base_dir / VOICE_USAGE_FILE)
         self.voice_label.setText(text)
-        self.voice_bar.setVisible(share is not None)
-        self.voice_bar.setValue(int(1000 * (share or 0.0)))
+        self.voice_bar.setVisible(voice_share is not None)
+        self.voice_bar.setValue(int(1000 * (voice_share or 0.0)))
         for name, shown in read_secrets(self.base_dir / ".env").items():
             self.secret_labels[name].setText(shown)
 

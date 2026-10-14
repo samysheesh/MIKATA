@@ -172,9 +172,7 @@ def test_settings_window_has_the_skins_tab_and_switches_the_mascot(
     controller.open_settings()
     settings = controller.settings
     assert settings is not None
-    tabs = [settings.tabs.tabText(i) for i in range(settings.tabs.count())]
-    assert tabs == ["Audio", "Mot d'activation", "Conversation", "En cours", "Coût et clés",
-                    "Mascotte", "Skins", "Journal"]  # fmt: skip
+    assert "Apparence" in settings.page_names()  # les skins sont sur la page Apparence
     assert controller.mascot.painter.skin is not None and controller.mascot.painter.skin.builtin
     settings.skins_tab.list.setCurrentRow(_row(settings.skins_tab, "sakura"))
     assert controller.mascot.painter.skin.key == "sakura"  # tout de suite, sans redémarrer

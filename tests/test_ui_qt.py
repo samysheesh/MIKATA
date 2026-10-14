@@ -371,27 +371,106 @@ def test_settings_show_the_current_values(base: Path) -> None:
     ).wake  # le seuil réglé dans config.yaml (pas une valeur figée)
     assert values["wake.threshold"] == wake.threshold and values["agent.follow_up_s"] == 6
     assert values["audio.input_device"] == "default" and values["llm.reasoning_effort"] == "none"
-    assert "ui.skin" not in values and values["ui.mascot"] is True  # onglet Skins : immédiat
-    assert window.tabs.count() == 8  # + onglet « En cours » (phase 13f)
+    assert "ui.skin" not in values and values["ui.mascot"] is True  # page Apparence : immédiat
+    assert values["guard.full_access"] is False  # phase 15b : enfin réglable dans la fenêtre
+    assert window.page_names() == [
+        "Accueil",
+        "Son et voix",
+        "Comportement",
+        "Apparence",
+        "Clés et coût",
+        "Journal",
+    ]
+    assert not window.save_button.isEnabled()  # rien de modifié
+    window.fields["agent.follow_up_s"].setValue(9)
+    assert window.save_button.isEnabled() and window.pending() == ["agent.follow_up_s"]
+    window.fields["agent.follow_up_s"].setValue(6)
+    assert not window.save_button.isEnabled()  # revenu à la valeur enregistrée
     window.close()
 
 
-def test_tasks_tab_lists_and_closes(base: Path) -> None:
-    from PySide6.QtWidgets import QPushButton
+def test_choices_show_words_and_keep_config_values(base: Path) -> None:
+    window = _settings(base, [])
+    reasoning = window.fields["llm.reasoning_effort"]
+    assert reasoning.currentText().startswith("Rapide")
+    reasoning.setCurrentIndex(reasoning.findData("high"))
+    history = window.fields["agent.history_persist_h"]
+    history.setCurrentIndex(history.findData(720))
+    window.fields["guard.full_access"].setChecked(True)
+    assert window.values()["llm.reasoning_effort"] == "high"
+    assert window.values()["agent.history_persist_h"] == 720
+    assert sorted(window.save()) == [
+        "agent.history_persist_h",
+        "guard.full_access",
+        "llm.reasoning_effort",
+    ]
+    from mikata.config import load_config
+
+    config = load_config(base / "config.yaml")
+    assert config.llm.reasoning_effort == "high" and config.agent.history_persist_h == 720
+    assert config.guard.full_access is True
+    window.close()
+
+
+def test_home_manages_the_work_browser(base: Path) -> None:
+    """Phase 15b : onglets fermables un par un, pause, afficher / masquer ; jamais de
+    bouton pour fermer le navigateur lui-même (il reste lancé en fond)."""
+    from PySide6.QtWidgets import QLabel, QPushButton
 
     sent: list[dict[str, Any]] = []
     window = _settings(base, sent)
+    browser = {"id": "browser", "label": "Navigateur", "running": False, "visible": False}
+    window.on_tasks({"type": "tasks", "tasks": [{**browser, "tabs": []}]})
+    assert "veille" in window.browser_state.text() and not window.browser_start.isHidden()
+    assert window.browser_pause.isHidden() and window.browser_toggle.isHidden()
+    window.browser_start.click()
+    assert sent[-1] == {"type": "browser", "action": "start"}
+
+    tabs = [
+        {"id": "a", "title": "One Piece OP 27", "url": "https://youtube.com/watch?v=1"},
+        {"id": "b", "title": "x" * 200, "url": "https://example.com"},
+    ]
+    window.on_tasks({"type": "tasks", "tasks": [{**browser, "running": True, "tabs": tabs}]})
+    assert window.browser_start.isHidden() and window.browser_empty.isHidden()
+    assert window.browser_toggle.text() == "Afficher"
+    window.browser_pause.click()
+    assert sent[-1] == {"type": "browser", "action": "pause"}
+    window.browser_toggle.click()
+    assert sent[-1] == {"type": "browser", "action": "show"}
+    rows = [window.browser_tabs.itemAt(i).widget() for i in range(window.browser_tabs.count())]
+    assert len(rows) == 2
+    labels = [row.findChildren(QLabel)[0].text() for row in rows]
+    assert labels[0] == "One Piece OP 27" and len(labels[1]) <= 70
+    (close_b,) = rows[1].findChildren(QPushButton)
+    close_b.click()
+    assert sent[-1] == {"type": "browser", "action": "close_tab", "tab": "b"}
+    assert not close_b.isEnabled()  # pas de double clic pendant la fermeture
+
     window.on_tasks(
-        {"type": "tasks", "tasks": [{"id": "browser", "label": "Navigateur", "running": True}]}
+        {"type": "tasks", "tasks": [{**browser, "running": True, "visible": True, "tabs": []}]}
     )
-    assert window.tasks_empty.isHidden()
-    buttons = window.tasks_rows.itemAt(0).widget().findChildren(QPushButton)
-    close_button = next(button for button in buttons if button.text() == "Fermer")
-    close_button.click()
-    assert sent[-1] == {"type": "close_task", "id": "browser"}
-    window.on_tasks({"type": "tasks", "tasks": []})
-    assert not window.tasks_empty.isHidden()
+    assert window.browser_toggle.text() == "Masquer" and not window.browser_empty.isHidden()
+    window.browser_toggle.click()
+    assert sent[-1] == {"type": "browser", "action": "hide"}
+    texts = [button.text() for button in window.findChildren(QPushButton)]
+    assert not any("navigateur" in text.lower() for text in texts)
     window.close()
+
+
+def test_home_asks_for_the_browser_state_only_when_shown(base: Path) -> None:
+    sent: list[dict[str, Any]] = []
+    window = _settings(base, sent)
+    assert sent == []  # fenêtre construite mais pas affichée : rien demandé
+    window.show()
+    assert sent == [{"type": "list_tasks"}]
+    window.show_page("Journal")
+    window._refresh_tasks()
+    assert sent == [{"type": "list_tasks"}]  # hors de l'accueil : rien
+    window.close()
+    offline = _settings(base, [], connected=False)
+    offline.show()
+    assert offline.browser_state.text() == "MIKATA n'est pas lancé"
+    offline.close()
 
 
 def test_save_writes_only_changed_lines_and_reloads_mikata(base: Path) -> None:
@@ -579,7 +658,7 @@ def test_screenshot_script(tmp_path: Path) -> None:
         + [f"reglages_{tab}.png" for tab in script.SETTINGS_TABS]
         + ["skin_detourage.png", "skin_images_etats.png"]
     )
-    assert len(script.SETTINGS_TABS) == 7  # un nom par onglet des réglages
+    assert len(script.SETTINGS_TABS) == 6  # un nom par page des réglages
     from PIL import Image
 
     for path in written:  # une vraie image, pas un rendu vide (une seule couleur)

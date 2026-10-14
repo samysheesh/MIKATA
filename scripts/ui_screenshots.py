@@ -28,14 +28,21 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUT = PROJECT_ROOT / "docs" / "ui"
-SETTINGS_TABS = (
-    "audio",
-    "mot_activation",
-    "conversation",
-    "cout_cles",
-    "mascotte",
-    "skins",
+SETTINGS_TABS = (  # une capture par page des réglages (phase 15b), dans l'ordre
+    "accueil",
+    "son_voix",
+    "comportement",
+    "apparence",
+    "cles_cout",
     "journal",
+)
+_FAKE_TABS = (
+    {
+        "id": "1",
+        "title": "ONE PIECE - Opening 27 « Dear Sunrise » - YouTube",
+        "url": "https://www.youtube.com/",
+    },
+    {"id": "2", "title": "Météo Paris - prévisions à 10 jours", "url": "https://meteo.example/"},
 )
 _FAKE_EVENTS = (
     ("09:12:01.204", "INFO", "MainThread", "run:352", "MIKATA démarré, en attente."),
@@ -226,13 +233,13 @@ def render(out: Path, gif: bool = False) -> list[Path]:
         window = SettingsWindow(
             base / "config.yaml", config.base_dir, lambda m: True, devices=lambda: devices
         )
-        window.resize(700, 560)
-        window.status.setText(
-            "Enregistré dans config.yaml. Tout de suite : Seuil du mot d'activation."
-        )
+        window.resize(960, 680)
+        window.status.setText("Enregistré. Tout de suite : Seuil du mot d'activation.")
         window.skins_tab.refresh()
+        browser = {"id": "browser", "running": True, "visible": False, "tabs": list(_FAKE_TABS)}
+        window.on_tasks({"type": "tasks", "tasks": [browser]})
         for index, name in enumerate(SETTINGS_TABS):
-            window.tabs.setCurrentIndex(index)
+            window.nav.setCurrentRow(index)
             app.processEvents()
             written.append(out / f"reglages_{name}.png")
             window.grab().save(str(written[-1]))

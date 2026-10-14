@@ -53,15 +53,15 @@ SETTINGS: tuple[SettingSpec, ...] = (
     SettingSpec("wake.threshold", "Seuil du mot d'activation", True, "voir eval_wakeword.py"),
     SettingSpec("wake.verifier_threshold", "Seuil du vérificateur de voix", True),
     SettingSpec("llm.reasoning_effort", "Réflexion par défaut", True, "none, low, medium, high"),
-    SettingSpec("agent.follow_up_s", "Fenêtre de suivi (s)", True, "0 : désactivée"),
-    SettingSpec("agent.history_persist_h", "Durée de l'historique (h)", True),
+    SettingSpec("agent.follow_up_s", "Fenêtre de suivi", True, "0 : désactivée"),
+    SettingSpec("agent.history_persist_h", "Durée de l'historique", True),
     SettingSpec("ui.skin", "Skin de la mascotte", True),
-    SettingSpec("ui.bubble_s", "Bulle visible après la dernière phrase (s)", True),
+    SettingSpec("ui.bubble_s", "Durée de la bulle", True),
     SettingSpec("ui.mascot", "Mascotte au démarrage de MIKATA", False),
     SettingSpec(
         "guard.full_access",
         "Accès complet",
-        False,
+        True,  # relu à chaque tour (agent.config) : appliqué sans redémarrer
         "plus aucune confirmation après une page web ou un fichier lu",
     ),
 )
