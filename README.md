@@ -3035,3 +3035,35 @@ uv run pytest tests/test_audio_wait.py
 
 À vérifier : casque éteint, `Start-ScheduledTask -TaskName MIKATA`, puis allumer le casque :
 MIKATA démarre dans les 10 s.
+
+**15e — compétences** (remplacent les savoir-faire des phases 12c et 12e)
+
+Quand une demande en plusieurs étapes réussit, MIKATA en tire en arrière-plan une
+**compétence** : un programme paramétré, rangé dans `data/skills/<nom>/` (`SKILL.md` et
+`skill.py`, lisibles et modifiables à la main). Elle est vérifiée dans le code avant d'être
+gardée, et jamais tirée d'un programme écrit après la lecture d'une page ou d'un fichier.
+
+- **À l'essai** : quand une phrase colle à l'un de ses motifs, elle est proposée au modèle,
+  qui l'appelle ; chaque réussite compte. « Non, c'est pas ça » juste après compte comme un
+  échec.
+- **Active** après 3 réussites (`skills.promote_after`) : la même phrase la rejoue **en
+  local, sans appel au modèle**. Un échec la renvoie à l'essai ; trois échecs de suite la
+  désactivent.
+- À la voix : « quelles compétences tu connais ? », « retiens comment faire ça »,
+  « oublie la compétence ... » (corbeille).
+- Essai réel (vrai modèle, PC simulé) : « range tous les fichiers texte du bureau dans un
+  dossier Notes sur le bureau » apprise au 1er tour, appelée par le modèle aux tours 2 à 4
+  avec d'autres dossiers, rejouée au 5e tour sans appel au modèle.
+- Les anciens savoir-faire (`data/skills/skills.json`) ne sont pas repris ; le fichier reste
+  en place, ignoré.
+
+```powershell
+git checkout phase-15e-competences
+uv run pytest tests/test_skills.py tests/test_skills_agent.py
+```
+
+À vérifier à la voix : dire quatre fois une même demande en plusieurs étapes en changeant
+une valeur (par exemple « range tous les fichiers texte du bureau dans un dossier Notes sur
+le bureau », puis Archives, Brouillons, Vieux) ; `data/skills/` contient la compétence, et
+`data/logs/mikata.log` dit « active après 3 réussites ». La cinquième fois, le journal dit
+« rejouée en local » et la réponse est immédiate.

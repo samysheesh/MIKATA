@@ -53,20 +53,18 @@ from mikata.agent.script_tool import (
 from mikata.config import Config
 from mikata.learn.playbook import Lesson, Playbook, render
 from mikata.learn.reflect import is_correction, reflect, should_reflect
+from mikata.learn.skills import Skill, SkillStore, call_code, induce, verify
 from mikata.learn.trace import TraceStore, TurnTrace, trace_from_result
 from mikata.llm.base import Done, LLMClient, TextDelta, ToolCallReq, Usage
 from mikata.llm.prompts import active_window_title, build_messages, dynamic_context
 from mikata.llm.reasoning import at_least, detect_reasoning
 from mikata.plat import platform
-from mikata.skills.distill import distill
-from mikata.skills.library import bind_slots, compile_pattern
 from mikata.tools.base import ToolError, TurnIO, current_turn, turn_context
 from mikata.tts.cache import PHRASES
 from mikata.tts.normalize import FragmentSplitter
 
 if TYPE_CHECKING:
     from mikata.llm.usage import UsageTracker
-    from mikata.skills.library import Skill, SkillLibrary
     from mikata.tools.registry import ToolRegistry, ToolResult
 
 UNTRUSTED_HISTORY = "(contenu lu ailleurs, non gardé dans l'historique)"
@@ -251,6 +249,11 @@ class TurnResult:
     direct_results: list[ToolResult] = field(default_factory=list)
     tainted: bool = False
     narration: list[str] = field(default_factory=list)  # phase 15c : phrases d'attente dites
+    # Ajouts phase 15e : programmes (code, écrit avant toute lecture non fiable ?), dans
+    # l'ordre de `scripts` ; compétences appelées (nom, réussie, erreur) ; rejeu local.
+    script_sources: list[tuple[str, bool]] = field(default_factory=list)
+    skill_uses: list[tuple[str, bool, str]] = field(default_factory=list)
+    local_skill: str = ""
 
     @property
     def effort_label(self) -> str:
@@ -263,6 +266,8 @@ class TurnResult:
     @property
     def path(self) -> str:
         """Chemin de la requête, pour le log (§10)."""
+        if self.local_skill:
+            return f"compétence « {self.local_skill} » en local, {self.llm_calls} appel(s) LLM"
         if self.scripts:
             calls = sum(len(outcome.records) for outcome in self.scripts)
             end = "direct" if self.shortcut else "reformulé"
@@ -310,38 +315,16 @@ def _with_reasoning(messages: list[dict[str, Any]], effort: str | None) -> list[
     return out
 
 
-# -- rejeu local des savoir-faire (phase 12e) ------------------------------------------
-
-
-def _fill_args(args: dict[str, Any], bindings: dict[str, Any]) -> dict[str, Any] | None:
-    """Remplace les `{param}` des arguments ; None si un paramètre reste non lié."""
-    filled: dict[str, Any] = {}
-    for key, value in args.items():
-        if isinstance(value, str):
-            for name in re.findall(r"\{([a-z_]+)\}", value):
-                if name not in bindings:
-                    return None
-                value = value.replace("{" + name + "}", str(bindings[name]))
-        filled[key] = value
-    return filled
-
-
-def _pick(data: dict[str, Any] | None, path: str) -> Any:
-    """Lit un scalaire dans le payload structuré d'un résultat (« best », « paths.0 »)."""
-    if data is None:
-        return None
-    value: Any = data
-    for part in path.split("."):
-        if isinstance(value, dict):
-            value = value.get(part)
-        elif isinstance(value, list) and part.isdigit():
-            index = int(part)
-            value = value[index] if index < len(value) else None
-        else:
-            return None
-        if value is None:
-            return None
-    return value
+def _inducible(result: TurnResult) -> str:
+    """Le programme de ce tour qui peut devenir une compétence, ou "" : le dernier qui a
+    réussi, écrit avant toute lecture d'un contenu non fiable (un texte piégé ne doit pas
+    pouvoir s'inscrire dans une compétence), avec au moins deux appels, sans compétence."""
+    for (code, trusted), outcome in zip(
+        reversed(result.script_sources), reversed(result.scripts), strict=False
+    ):
+        if outcome.ok and trusted and len(outcome.records) >= 2 and "skills." not in code:
+            return code
+    return ""
 
 
 HISTORY_FILE = "data/history.json"
@@ -445,7 +428,7 @@ class Agent:
         *,
         tools: ToolRegistry | None = None,
         long_memory: LongTermMemory | None = None,
-        skills: SkillLibrary | None = None,
+        skills: SkillStore | None = None,
         usage: UsageTracker | None = None,
         open_apps: Callable[[], Awaitable[Sequence[str]]] | None = None,
         installed_apps: Callable[[], Sequence[str]] | None = None,
@@ -468,8 +451,11 @@ class Agent:
         self._apps_at = float("-inf")
         self._tools_warmed = False
         self._summary_task: asyncio.Task[None] | None = None
+        # Phase 15e : compétences. Dernier programme qui peut en devenir une (demande,
+        # code), compétences du dernier tour (pour une correction), apprentissage en fond.
         self._skill_task: asyncio.Task[None] | None = None
-        self._last_learnable: tuple[str, list[ToolCallReq]] | None = None
+        self._last_inducible: tuple[str, str] | None = None
+        self._last_skill_uses: tuple[list[str], float] | None = None
         # Phase 14e : carnet de leçons, traces, réflexion en arrière-plan.
         self.playbook = playbook
         self.traces = traces
@@ -602,14 +588,12 @@ class Agent:
         follow_up: bool = False,
     ) -> None:
         facts = self.long_memory.facts if self.long_memory is not None else ()
-        matched = self._match_skill(command)
         drain = getattr(speech, "drain", None)
         turn = TurnIO(say=speech.say, listen=listen, **({"drain": drain} if drain else {}))
         installed = self._installed_apps() if self._installed_apps is not None else ()
         context = await self._context()
         if follow_up:
             context = f"{context} {FOLLOW_UP_NOTE}"
-        skills_index = self.skills.index() if self.skills is not None else ()
         lessons = self._lessons_for(command, context)
         started = time.monotonic()
         messages = build_messages(
@@ -618,7 +602,6 @@ class Agent:
             context,
             facts,
             installed,
-            skills=skills_index,
             script_guide=self._script_guide,
             lessons=render(lessons),
             narration=self.config.agent.narration == "bavard",
@@ -631,61 +614,15 @@ class Agent:
         fallback_steps = self.config.llm.reasoning_fallback_steps
         spoken: list[str] = []
         steps: list[dict[str, Any]] = []  # appels d'outils gardés dans l'historique
-        # Savoir-faire (phase 12c) : procédure déjà apprise.
-        if matched is not None and matched.enabled and self.tools is not None:
-
-            async def finish(replayed: bool, local: bool = False) -> bool:
-                """Conclut un rejeu réussi ; False si le rejeu a échoué (les étapes déjà
-                exécutées restent dans messages/steps : la boucle LLM reprend de là)."""
-                spoken.extend(turn.spoken)
-                turn.spoken.clear()
-                if not replayed:
-                    return False
-                result.answer = " ".join(spoken).strip()
-                if not result.answer:
-                    self._say_phrase(speech, "done")
-                    result.answer = PHRASES["done"]
-                self.memory.add(command, result.answer, steps)
-                self._schedule_summary()
-                logger.info(
-                    "Savoir-faire « {} » : rejoué{} ({} étape(s), 0 appel LLM).",
-                    matched.name,
-                    " en local" if local else "",
-                    len(matched.steps),
-                )
-                return True
-
-            if not matched.params:
-                replayed = await self._replay_skill(
-                    matched, result, turn, messages, steps, on_phase
-                )
-                if await finish(replayed):
-                    return
-                # Échec au rejeu : les étapes exécutées sont déjà dans messages/steps,
-                # la boucle LLM reprend de là (auto-guérison).
-            else:
-                # Phase 12e : les paramètres se remplissent-ils sans LLM (mots prononcés +
-                # résultats structurés des étapes) ? Sinon, plan donné au LLM (12c).
-                bindings = None
-                if self.config.skills.local_replay:
-                    pattern = compile_pattern(matched.slots, matched.params)
-                    if pattern is not None:
-                        bindings = bind_slots(pattern, command)
-                if bindings is not None:
-                    replayed = await self._replay_skill(
-                        matched, result, turn, messages, steps, on_phase, bindings
-                    )
-                    if await finish(replayed, local=True):
-                        return
-                    # Rejeu local en échec : auto-guérison par le plan + la boucle LLM.
-                messages.insert(
-                    -1,
-                    {
-                        "role": "system",
-                        "content": f"Procédure connue à adapter :\n{matched.plan_text()}",
-                    },
-                )
-                logger.info("Savoir-faire « {} » : proposé comme plan.", matched.name)
+        # Phase 15e : une compétence active dont un motif colle est rejouée sans LLM ;
+        # sinon les compétences qui correspondent sont signalées au modèle.
+        replayed = await self._skill_first(
+            command, speech, messages, steps, result, turn, state, on_phase
+        )
+        if replayed is not None:
+            spoken.extend(replayed)
+            if result.shortcut:
+                max_rounds = -1  # tout est dit : pas d'appel au modèle
         for round_no in range(max_rounds + 1):
             last = round_no == max_rounds  # dernier appel : sans outils, réponse obligée
             gate = _FollowUpGate(follow_up and round_no == 0)
@@ -745,15 +682,7 @@ class Agent:
             self._schedule_summary()
         result.tainted = state.trust is Trust.UNTRUSTED
         self._after_turn(command, result, lessons, time.monotonic() - started)
-        cfg = self.config.skills
-        if (
-            self.skills is not None
-            and result.rounds >= cfg.auto_learn_min_rounds
-            and result.tool_results
-            and all(r.ok for r in result.tool_results)
-        ):
-            self._last_learnable = (command, list(result.tool_calls))
-        self._maybe_learn_skill(command, result, matched)
+        self._skills_after_turn(command, result)
 
     # -- apprentissage (phase 14e) -----------------------------------------------------
 
@@ -828,157 +757,183 @@ class Agent:
             self.playbook.add(scope, text, source)
 
     async def learning_idle(self) -> None:
-        """Attend la fin de la réflexion en cours (tests, arrêt propre)."""
-        if self._reflect_task is not None:
-            await asyncio.gather(self._reflect_task, return_exceptions=True)
+        """Attend la fin de la réflexion et de l'écriture de compétence en cours (tests,
+        arrêt propre)."""
+        tasks = [t for t in (self._reflect_task, self._skill_task) if t is not None]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
-    # -- savoir-faire (phase 12c) ------------------------------------------------------
+    # -- compétences (phase 15e) -------------------------------------------------------
 
-    def _match_skill(self, command: str) -> Skill | None:
-        if self.skills is None:
-            return None
-        return self.skills.match(command, self.config.skills.confidence)
+    def _skills_on(self) -> bool:
+        return self.skills is not None and self.config.skills.enabled and self.tools is not None
 
-    async def _replay_skill(
+    def _callable_skills(self) -> dict[str, Skill]:
+        if not self._skills_on():
+            return {}
+        assert self.skills is not None
+        return {skill.call_name: skill for skill in self.skills.usable()}
+
+    async def _skill_first(
         self,
-        skill: Skill,
-        result: TurnResult,
-        turn: TurnIO,
+        command: str,
+        speech: SpeechSink,
         messages: list[dict[str, Any]],
         steps: list[dict[str, Any]],
+        result: TurnResult,
+        turn: TurnIO,
+        state: _TurnState,
         on_phase: Callable[[str], None] | None,
-        bindings: dict[str, Any] | None = None,
-    ) -> bool:
-        """Rejoue les étapes d'un savoir-faire sans appel LLM ; True si tout a réussi.
-
-        Chaque étape passe par le registre (validation, délai, garde-fou, journal). Les
-        `{param}` sont remplis depuis `bindings` (phase 12e : mots prononcés + `outputs`
-        des étapes précédentes). Un paramètre non lié, ou une liaison impossible, rend
-        False **sans pénaliser** le savoir-faire : ce n'est pas un échec de la procédure.
-        Un outil qui échoue, lui, est compté. En cas d'échec, les étapes déjà exécutées
-        restent dans `messages` et `steps` : la boucle LLM reprend de là.
-        """
-        assert self.tools is not None
-        cfg = self.config.skills
-        if len(skill.steps) > cfg.max_steps:
-            self.skills.record_failure(skill.name)  # type: ignore[union-attr]
-            return False
-        bindings = dict(bindings or {})
-        for index, step in enumerate(skill.steps):
-            args = _fill_args(step["args"], bindings)
-            if args is None:
-                return False  # paramètre non lié : repli LLM, sans pénalité
-            call = ToolCallReq(f"skill_{index}", step["tool"], args)
-            result.rounds += 1
-            result.tool_calls.append(call)
-            if on_phase is not None:
-                on_phase("acting")
-            assistant: dict[str, Any] = {
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [
-                    {
-                        "id": call.id,
-                        "type": "function",
-                        "function": {
-                            "name": call.name,
-                            "arguments": json.dumps(call.arguments, ensure_ascii=False),
-                        },
-                    }
-                ],
-            }
-            messages.append(assistant)
-            steps.append(assistant)
+    ) -> list[str] | None:
+        """Avant le premier appel au modèle. Compétence active qui colle : rejouée en
+        local (le programme d'une ligne `return skills.<nom>(...)`, par le même chemin
+        qu'un programme du modèle) ; réussie avec une phrase ou rien à dire, le tour est
+        fini sans LLM (`result.shortcut`) ; avec une donnée, le modèle la formule ; en
+        échec, le modèle reprend la demande. Rend les phrases dites, ou None si rien n'a
+        été rejoué."""
+        if not self._skills_on():
+            return None
+        assert self.skills is not None
+        found = self.skills.match(command)
+        if found is not None and found[0].status == "active" and self.config.skills.local_replay:
+            skill, values = found
+            call = ToolCallReq("competence", SCRIPT_TOOL, {"code": call_code(skill, values)})
+            result.local_skill = skill.name
             with turn_context(turn):
-                res = await self.tools.execute(call)
-            result.tool_results.append(res)
-            messages.append({"role": "tool", "tool_call_id": res.call_id, "content": res.content})
-            steps.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": res.call_id,
-                    "content": res.content[:HISTORY_TOOL_CHARS],
-                }
-            )
-            if not res.ok:
-                self.skills.record_failure(skill.name)  # type: ignore[union-attr]
-                return False
-            for param, path in (step.get("outputs") or {}).items():
-                value = _pick(res.data, path)
-                if value is None:
-                    return False  # liaison impossible : repli LLM, sans pénalité
-                bindings[param] = value
-        if skill.verify is not None:
-            vargs = _fill_args(skill.verify.get("args", {}), bindings)
-            if vargs is None:
-                logger.debug(
-                    "Savoir-faire « {} » : vérification sautée (paramètre non lié).",
-                    skill.name,
+                results = await self._run_tools(
+                    _Reply("", [call], ""), messages, steps, result, on_phase, state
                 )
-            else:
-                vcall = ToolCallReq("skill_verify", skill.verify["tool"], vargs)
-                with turn_context(turn):
-                    vres = await self.tools.execute(vcall)
-                result.tool_results.append(vres)
-                result.tool_calls.append(vcall)
-                if not vres.ok:
-                    self.skills.record_failure(skill.name)  # type: ignore[union-attr]
-                    return False
-        self.skills.touch(skill.name)  # type: ignore[union-attr]
-        result.shortcut = True
-        return True
+            spoken = list(turn.spoken)
+            turn.spoken.clear()
+            (outcome,) = results
+            if outcome.ok and outcome.terminal:
+                result.shortcut = True
+                if not spoken:
+                    self._say_phrase(speech, "done")
+                    spoken.append(PHRASES["done"])
+                logger.info("Compétence « {} » rejouée en local : {}.", skill.name, values)
+                return spoken
+            if not outcome.ok:
+                logger.info("Compétence « {} » : échec au rejeu, le modèle reprend.", skill.name)
+                messages.insert(
+                    len(messages) - 2 - len(results),  # avant la demande et le rejeu
+                    {
+                        "role": "system",
+                        "content": f"MIKATA a essayé la compétence {skill.signature}, qui a "
+                        "échoué (voir le résultat). Fais la demande autrement, sans elle.",
+                    },
+                )
+            return spoken
+        hint = self._skill_hint(command, found)
+        if hint:
+            messages.insert(-1, {"role": "system", "content": hint})
+        return None
 
-    def _maybe_learn_skill(self, command: str, result: TurnResult, matched: Skill | None) -> None:
-        """Mémorise en arrière-plan une commande multi-étapes réussie (jamais bloquant)."""
-        cfg = self.config.skills
-        if self.skills is None or not cfg.auto_learn or matched is not None:
+    def _skill_hint(self, command: str, found: tuple[Skill, dict[str, str]] | None) -> str:
+        """Note pour le modèle : la compétence qui colle (avec ses valeurs), sinon les
+        compétences proches. Rien pour une demande sans rapport."""
+        assert self.skills is not None
+        if found is not None:
+            skill, values = found
+            args = ", ".join(f"{k}={v!r}" for k, v in values.items())
+            return (
+                f"Compétence apprise qui correspond : {skill.signature} — {skill.description} "
+                f"Si elle convient, appelle-la dans un programme : "
+                f"`return skills.{skill.call_name}({args})`."
+            )
+        related = self.skills.related(command)
+        if not related:
+            return ""
+        lines = [f"- {s.signature} — {s.description}" for s in related]
+        return (
+            "Compétences apprises proches (appelables dans un programme, si l'une convient "
+            "exactement) :\n" + "\n".join(lines)
+        )
+
+    def _skills_after_turn(self, command: str, result: TurnResult) -> None:
+        """Bilan des compétences utilisées, correction de l'utilisateur, et programme à
+        apprendre. Jamais bloquant : l'écriture d'une compétence part en arrière-plan."""
+        if not self._skills_on():
             return
-        if result.rounds < cfg.auto_learn_min_rounds or not result.tool_results:
-            return
-        if not all(r.ok for r in result.tool_results):
-            return
-        if self._skill_task is not None and not self._skill_task.done():
+        assert self.skills is not None
+        now = time.monotonic()
+        previous = self._last_skill_uses
+        if (
+            previous is not None
+            and now - previous[1] <= self.config.learning.correction_window_s
+            and is_correction(command)
+        ):
+            self.skills.correct(previous[0])
+        turn_ok = result.outcome == "ok"
+        for name, ok, error in result.skill_uses:
+            self.skills.record(
+                name, ok and turn_ok, error or result.outcome, local=bool(result.local_skill)
+            )
+        names = [name for name, _, _ in result.skill_uses]
+        self._last_skill_uses = (names, now) if names else None
+        code = _inducible(result)
+        self._last_inducible = (command, code) if code and turn_ok else None
+        if (
+            self._last_inducible is None
+            or names
+            or not self.config.skills.learn
+            or self.skills.match(command) is not None
+            or (self._skill_task is not None and not self._skill_task.done())
+        ):
             return
         self._skill_task = asyncio.create_task(
-            self._learn_skill(command, list(result.tool_calls)), name="savoir-faire"
+            self._learn_skill(command, self._last_inducible[1]), name="compétence"
         )
 
-    async def _learn_skill(self, command: str, calls: list[ToolCallReq]) -> None:
-        distilled = await distill(self.llm, self.config, command, calls)
-        if distilled is None:
-            return
+    async def _learn_skill(self, command: str, code: str) -> Skill | None:
+        """Écrit la compétence (un appel LLM), la vérifie dans le code, la range à l'essai."""
         assert self.skills is not None
-        skill = self.skills.learn(
-            distilled.name,
-            distilled.description,
-            distilled.trigger,
-            distilled.steps,
-            distilled.params,
-            distilled.verify,
-        )
-        if skill is not None:
-            logger.info("Savoir-faire appris : « {} » ({})", skill.name, skill.description)
+        try:
+            async with asyncio.timeout(self.config.llm.turn_timeout_s):
+                candidate, usage = await induce(
+                    self.llm, command, code, self.config.skills.learn_effort
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # hors ligne, réponse illisible : rien n'est appris
+            logger.warning("Compétence non écrite : {}", exc)
+            return None
+        if self.usage is not None:
+            self.usage.record("compétence", usage, 1)
+        if not candidate:
+            logger.info("Rien de réutilisable dans « {} ».", command)
+            return None
+        actions: set[str] | None = None
+        if self._catalog is not None:
+            entries = self._catalog.entries.values()
+            actions = {e.name for e in entries} | {e.tool for e in entries}
+        skill, reason = verify(candidate, command, code, actions)
+        if skill is None:
+            logger.info("Compétence refusée à la vérification ({}) : {}", command, reason)
+            return None
+        try:
+            return self.skills.adopt(skill)
+        except (OSError, ValueError) as exc:
+            logger.warning("Compétence non rangée : {}", exc)
+            return None
 
     async def _capture_skill(self, description: str) -> str:
-        """Mémorise la dernière commande multi-étapes réussie (outil remember_skill)."""
-        if self._last_learnable is None:
-            raise ToolError("aucune commande récente à mémoriser")
-        command, calls = self._last_learnable
-        distilled = await distill(self.llm, self.config, command, calls, hint=description)
-        if distilled is None:
-            raise ToolError("le modèle n'a pas réussi à distiller la procédure")
-        assert self.skills is not None
-        skill = self.skills.learn(
-            distilled.name,
-            distilled.description,
-            distilled.trigger,
-            distilled.steps,
-            distilled.params,
-            distilled.verify,
-        )
+        """Outil remember_skill : « retiens comment faire ça » sur le dernier programme."""
+        if self._last_inducible is None or self.skills is None:
+            raise ToolError("aucun programme récent à retenir")
+        command, code = self._last_inducible
+        if self._skill_task is not None and not self._skill_task.done():
+            await asyncio.gather(self._skill_task, return_exceptions=True)
+            if self.skills.match(command) is not None:
+                skill = self.skills.match(command)[0]  # type: ignore[index]
+                return f"C'est déjà retenu : {skill.description}"
+        skill = await self._learn_skill(command, code)
         if skill is None:
-            raise ToolError("cette procédure est déjà connue ou invalide")
-        return f"Mémorisé : {skill.description}"
+            raise ToolError("je n'ai pas réussi à en faire une compétence réutilisable")
+        return (
+            f"Retenu : {skill.description} Je la referai sans réfléchir après "
+            f"{self.config.skills.promote_after} réussites."
+        )
 
     def _schedule_summary(self) -> None:
         """Résume en arrière-plan les échanges sortis de l'historique (plafond atteint)."""
@@ -1146,9 +1101,12 @@ class Agent:
             full_access=self.config.guard.full_access,
             turn_trust=state.trust,
             extract_effort=self.config.llm.reasoning_effort,
+            skills=self._callable_skills(),
         )
         outcome = await runtime.run(code, timeout_s=self.config.agent.script_timeout_s)
         result.scripts.append(outcome)
+        result.script_sources.append((code, state.trust is Trust.TRUSTED))
+        result.skill_uses.extend(runtime.skill_uses)
         result.tool_calls.extend(runtime.tool_calls)
         result.tool_results.extend(runtime.tool_results)
         result.llm_calls += runtime.llm_calls

@@ -182,7 +182,7 @@ Bonne nouvelle côté matériel : avec un casque fermé, le son du jeu ne revien
 
 - **Court terme** : historique en RAM, remis à zéro après 10 min sans interaction ou sur « nouvelle conversation ». Plafond \~6 000 tokens, les échanges les plus anciens sautent en premier.
 - **Long terme** : outils `remember` / `forget` qui écrivent dans `data/memory.json` (≤ 30 faits), injectés dans le prompt système. Pas de base vectorielle en v1.
-- **Procédurale** (phase 12c) : les commandes multi-étapes réussies sont distillées en savoir-faire (`data/skills/skills.json`) — rejoués sans appel LLM quand ils collent, donnés comme plan quand ils ont des paramètres, désactivés après des échecs répétés (§7, famille `skills`).
+- **Compétences** (phase 15e, remplacent les savoir-faire 12c / 12e) : un programme réussi devient une compétence paramétrée, paquet lisible au format Agent Skills dans `data/skills/<nom>/` (`SKILL.md` + `skill.py`), vérifiée dans le code avant d'être gardée. À l'essai, elle est proposée au modèle quand une phrase colle ; après `skills.promote_after` réussites surveillées (3), elle est rejouée en local, sans appel LLM. Un échec la renvoie à l'essai ; après `skills.max_failures` échecs de suite, elle est désactivée (`learn/skills.py`, §7 famille `skills`, `docs/AGENT_CORE.md` §3.6).
 - **Leçons** (phase 14e) : `data/playbook.json`, de courtes leçons tirées d'un échec corrigé ou d'une correction de l'utilisateur, jointes au contexte quand elles se rapportent à la demande (`learn/playbook.py`, `learn/reflect.py`). Les tours qui ont agi laissent une trace dans `data/traces/`.
 - **Cache de prompt** : prompt système + outils identiques et en tête à chaque appel ; la notice des programmes, fixe, juste après ; puis les faits mémorisés ; le contexte dynamique en dernier. Moins cher et plus rapide.
 
@@ -223,8 +223,7 @@ Bonne nouvelle côté matériel : avec un casque fermé, le son du jeu ne revien
 - **memory** : `remember`, `forget`.
 - **uia** (phase 12a) : `uia_window` (contrôles d'une fenêtre : noms, types), `uia_read` (texte d'un contrôle ou de la fenêtre), `uia_click` ★ / `uia_set_text` ★ (par nom de contrôle, vérifiés par `check_ui_action` et `check_typed_text`), `uia_state` (état ambiant en cache : présence vocale Discord...). Implémentation : `mikata/uia/controller.py` — `UiController` (signature publique inchangée) choisit une fois à la construction le moteur selon `config.uia.backend` : bibliothèque `uiautomation` (comtypes, Apache-2.0) sous Windows, `macuiauto` (API AX) sous macOS ; fenêtres trouvées par `tools/desktop.py`, appels sur le thread COM dédié des outils. L'état ambiant est relu par un thread à part toutes les `uia.state_poll_s` secondes, mis en pause pendant qu'un outil agit, gardé en RAM seulement (jamais loggé). `mikata/uia/client.py` s'abonne aux événements d'accessibilité au démarrage : `UiaClientsAreListening()` devient vrai et les applications Chromium/Electron exposent leur arbre complet sans drapeau de lancement.
 - **browser** (phase 12b) : `browser_tabs`, `browser_open` (il ne conclut pas la commande : une tâche web continue par `browser_read` puis `browser_click`), `browser_read` (titre, texte, liens, boutons de la page), `browser_click` ★ / `browser_type` ★ (par texte visible / libellé, vérifiés par `check_ui_action`, `check_download` et `check_typed_text`), `browser_back` ★. Implémentation : `mikata/browser/cdp.py` (client DevTools sur WebSocket, bibliothèque `websockets`, testé sous Linux contre un faux serveur) et `mikata/browser/controller.py`. Phase 12f : MIKATA navigue dans **son propre profil Brave** (`--user-data-dir` sous `data/brave_profile/`, fenêtre séparée minimisée en arrière-plan, autoplay autorisé) — le Brave de l'utilisateur n'est jamais touché ni fermé ; mode legacy (`browser.own_profile: false`) : attache paresseuse (port ouvert → attaché ; Brave fermé → lancé avec `--remote-debugging-port` ; Brave ouvert sans le port → refus poli, jamais de fermeture automatique). Le JavaScript envoyé au navigateur est fixe, jamais fourni par le LLM.
-- **skills** (phase 12c) : `list_skills`, `remember_skill` ★, `forget_skill` ★. Mémoire procédurale (`mikata/skills/library.py`, `data/skills/skills.json`) : une commande multi-étapes réussie est distillée (`mikata/skills/distill.py`, un appel LLM en arrière-plan) en procédure ; la commande suivante qui ressemble la rejoue sans appel LLM (étapes rejouées via le registre : garde-fou compris), ou la reçoit comme plan si elle a des paramètres `{x}` à remplir. Échec au rejeu → repli sur le LLM avec les étapes déjà faites, compteur d'échecs, désactivation après `skills.max_failures` ; rejeu réussi → réactivation.
-  - **Rejeu local (phase 12e)** : à la distillation, la commande est généralisée en pattern de slots (`où est {query}`). Si la phrase suivante colle au pattern, les paramètres sont remplis localement — les mots prononcés (regex pliée, insensible aux accents) et les `outputs` des étapes (`ToolResult.data`, payload structuré publié par `ctx.publish_data`, jamais envoyé au LLM : `find_path` → `{"paths", "best", "count"}`). Tout s'exécute en < 1 s, 0 appel LLM ; le plan LLM reste le repli (phrase hors pattern, paramètre non lié, liaison impossible — sans pénalité — ou outil en échec — avec pénalité). `skills.local_replay` coupe le rejeu local.
+- **skills** (phase 12c, refaite en 15e) : `list_skills` (compétences et leur état), `remember_skill` ★ (« retiens comment faire ça » : le dernier programme réussi devient une compétence), `forget_skill` ★ (dossier de la compétence à la corbeille). Une compétence s'appelle aussi depuis un programme : `skills.<nom>(paramètres)` ; elle s'exécute dans le même interpréteur, sous les mêmes politiques, et ne peut pas en appeler une autre. Induction (`learn/skills.py`) : un appel LLM en arrière-plan après un tour dont un programme a réussi au moins deux appels, **jamais** pour un programme écrit après la lecture d'un contenu non fiable ; vérification sans LLM (la phrase d'origine colle à un motif et redonne les valeurs, aucune action absente du programme d'origine, chaque paramètre sert). Rejeu local d'une compétence active : le programme d'une ligne `return skills.<nom>(...)` passe par le même chemin qu'un programme du modèle ; en échec, le modèle reprend la demande. Une correction de l'utilisateur juste après compte comme un échec. Les savoir-faire de la phase 12c (`data/skills/skills.json`) ne sont pas repris.
 
 Plus tard : intégrations ciblées si un besoin précis apparaît (calendrier, Spotify...), mais la généralité vient des primitives ci-dessus, pas d'un catalogue d'applications.
 
@@ -296,7 +295,6 @@ mikata/
     ├─ uia/    controller.py  state.py  client.py  # phase 12a : UiController + adaptateurs
     │                                              # UiaBackend (Windows) / AxBackend (macOS)
     ├─ browser/ cdp.py  controller.py              # phase 12b : navigateur piloté (DevTools)
-    ├─ skills/ library.py  distill.py              # phase 12c : savoir-faire (mémoire procédurale)
     ├─ files/  usn.py  spotlight.py  index.py  events.py  helper.py
     │                                              # phase 12d : index des fichiers (MFT+USN
     │                                              # sous Windows, Spotlight sous macOS)
@@ -306,7 +304,7 @@ mikata/
     │        policy.py  extract.py  runtime.py     # interpréteur de scripts, politiques,
     │                                              # extraction en quarantaine
     ├─ learn/  trace.py  playbook.py  reflect.py   # phase 14e : traces, carnet de leçons,
-    │                                              # réflexion en arrière-plan
+    │        skills.py                             # réflexion ; phase 15e : compétences
     ├─ eval/   sim.py  bench.py  agents.py         # phase 14a : banc d'essai (PC simulé,
     │                                              # correcteurs d'état final)
     └─ ui/     tray.py  notify.py  hotkeys.py
@@ -451,15 +449,14 @@ browser:                            # phase 12b : navigateur piloté (DevTools)
   click_timeout_s: 5
   own_profile: true                 # phase 12f : profil de travail dédié, arrière-plan
   profile_dir: data/brave_profile   # ... jamais le Brave de l'utilisateur
-skills:                             # phase 12c : savoir-faire appris (data/skills/skills.json)
+skills:                             # phase 15e : compétences apprises (data/skills/<nom>/)
   enabled: true
-  max_skills: 30
-  confidence: 70                    # score flou commande -> procédure (0 à 100)
-  auto_learn: true
-  auto_learn_min_rounds: 2
-  max_failures: 3
-  max_steps: 10
-  local_replay: true                # phase 12e : rejeu local des procédures paramétrées
+  learn: true                       # un programme réussi devient une compétence, à l'essai
+  promote_after: 3                  # réussites surveillées avant le rejeu local sans LLM
+  max_failures: 3                   # échecs de suite avant désactivation
+  local_replay: true
+  max_skills: 40
+  learn_effort: low
 files_index:                        # phase 12d : index local des fichiers (MFT + journal USN)
   enabled: true
   db: data/files_index.db           # SQLite WAL, jamais envoyé au LLM

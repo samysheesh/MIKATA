@@ -80,15 +80,14 @@ browser:                           # ajout phase 12b : navigateur piloté (proto
   own_profile: true                # phase 12f : MIKATA navigue dans son propre profil Brave
   profile_dir: data/brave_profile  # ... fenêtre séparée et minimisée, ton Brave intouché
   window_hidden: true              # fenêtre créée cachée (false : minimisée, pour se connecter)
-skills:                            # ajout phase 12c : savoir-faire appris (data/skills/skills.json)
-  enabled: true                    # procédures mémorisées et rejouées
-  max_skills: 30                   # au plus N procédures (les moins utilisées sortent)
-  confidence: 70                   # score de ressemblance commande -> procédure (0 à 100)
-  auto_learn: true                 # mémorise en fond les commandes multi-étapes réussies
-  auto_learn_min_rounds: 2         # ... à partir de N étapes d'outils
-  max_failures: 3                  # échecs au rejeu avant désactivation
-  max_steps: 10                    # étapes rejouées au plus
-  local_replay: true               # phase 12e : rejeu local instantané des procédures paramétrées
+skills:                            # phase 15e : compétences apprises (data/skills/<nom>/)
+  enabled: true                    # compétences utilisées et apprises
+  learn: true                      # un programme réussi devient une compétence, à l'essai
+  promote_after: 3                 # réussites surveillées avant le rejeu local sans LLM
+  max_failures: 3                  # échecs de suite avant désactivation
+  local_replay: true               # compétence active : rejouée sans appel au modèle
+  max_skills: 40
+  learn_effort: low                # réflexion de l'appel qui écrit la compétence
 files_index:                       # ajout phase 12d : index local des fichiers (MFT + journal USN)
   enabled: true                    # find_path / list_folder / open_in_explorer
   db: data/files_index.db          # base SQLite (WAL), jamais envoyée au LLM

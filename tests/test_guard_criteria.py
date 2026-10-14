@@ -419,6 +419,7 @@ def test_send2trash_is_the_only_deletion_path() -> None:
     )
     assert users == [
         os.path.join("mikata", "agent", "guard.py"),
+        os.path.join("mikata", "learn", "skills.py"),  # phase 15e : forget_skill
         os.path.join("mikata", "logging_setup.py"),
         os.path.join("mikata", "maintenance.py"),
         os.path.join("mikata", "ui", "skins.py"),

@@ -290,8 +290,8 @@ class ToolContext:
     uia: UiAutomation | None = None
     # Ajout phase 12b : contrôle du navigateur (protocole DevTools).
     browser: BrowserControl | None = None
-    # Ajout phase 12c : savoir-faire (mikata.skills.library.SkillLibrary) et capture forcée
-    # de la dernière commande réussie (câblée par la boucle agent, comme `history`).
+    # Ajout phase 12c, refait en 15e : compétences (mikata.learn.skills.SkillStore) et
+    # capture forcée du dernier programme réussi (câblée par la boucle agent).
     skills: Any = None
     skills_capture: Callable[[str], Awaitable[str]] | None = None
     # Ajout phase 12d : index local des fichiers (mikata.files.index.FileIndex).
@@ -347,7 +347,7 @@ class ToolContext:
 
     def require_skills(self) -> Any:
         if self.skills is None:
-            raise ToolError("les savoir-faire ne sont pas disponibles ici")
+            raise ToolError("les compétences ne sont pas disponibles ici")
         return self.skills
 
     def require_index(self) -> FileIndexService:

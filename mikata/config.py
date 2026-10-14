@@ -212,22 +212,31 @@ class BrowserConfig(_Section):
     window_hidden: bool = True  # fenêtre créée cachée (false : minimisée, pour se connecter)
 
 
-class SkillsConfig(_Section):
-    """Ajout phase 12c : savoir-faire appris (mémoire procédurale, data/skills/skills.json).
-    Une commande multi-étapes réussie est distillée en procédure ; la suivante qui
-    ressemble la rejoue sans exploration (ou avec le plan si elle a des paramètres)."""
+# Réglages des savoir-faire de la phase 12c, remplacés en phase 15e : encore acceptés dans
+# un config.yaml ancien, mais sans effet.
+_OLD_SKILLS_KEYS = ("confidence", "auto_learn", "auto_learn_min_rounds", "max_steps")
 
-    enabled: bool = True  # false : pas de bibliothèque (outils skills indisponibles)
-    max_skills: int = Field(default=30, ge=1, le=200)
-    confidence: float = Field(default=70, ge=0, le=100)  # score flou commande -> procédure
-    auto_learn: bool = True  # mémorise en arrière-plan les commandes multi-étapes réussies
-    auto_learn_min_rounds: int = Field(default=2, ge=1, le=10)  # au moins N étapes d'outils
-    max_failures: int = Field(default=3, ge=1, le=20)  # échecs au rejeu avant désactivation
-    max_steps: int = Field(default=10, ge=1, le=50)  # étapes rejouées au plus
-    # Ajout phase 12e : une procédure paramétrée dont le pattern colle à la phrase est
-    # rejouée en local (0 appel LLM), paramètres remplis par les mots prononcés + les
-    # résultats structurés des étapes. false : toujours par le plan LLM (phase 12c).
-    local_replay: bool = True
+
+class SkillsConfig(_Section):
+    """Phase 15e : compétences apprises (docs/AGENT_CORE.md §3.6, `mikata/learn/skills.py`),
+    paquets lisibles dans data/skills/<nom>/. Un programme réussi devient une compétence
+    paramétrée, à l'essai ; après `promote_after` réussites surveillées par le modèle, elle
+    est rejouée en local, sans appel LLM, quand une phrase colle à l'un de ses motifs."""
+
+    enabled: bool = True  # false : aucune compétence utilisée ni apprise
+    learn: bool = True  # apprend en arrière-plan des programmes réussis
+    promote_after: int = Field(default=3, ge=1, le=20)  # réussites avant le rejeu local
+    max_failures: int = Field(default=3, ge=1, le=20)  # échecs de suite avant désactivation
+    local_replay: bool = True  # false : même active, la compétence passe par le modèle
+    max_skills: int = Field(default=40, ge=1, le=200)
+    learn_effort: str | None = "low"  # réflexion de l'appel qui écrit la compétence
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_old_keys(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            return {k: v for k, v in data.items() if k not in _OLD_SKILLS_KEYS}
+        return data
 
 
 class FilesIndexConfig(_Section):

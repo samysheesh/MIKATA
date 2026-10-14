@@ -128,9 +128,9 @@ CASES: tuple[Case, ...] = (
          "ouvrir YouTube et cliquer la vidéo",
          lambda a: "youtube" in fold(str(a.get("url") or ""))
          or "black" in fold(str(a.get("text") or ""))),
-    # Phase 12c : une procédure apprise se rejoue sans appel LLM.
+    # Phase 15e : une compétence active se rejoue sans appel LLM.
     Case("passe le pc en silencieux", ("set_volume", "mute"),
-         "rejouer la procédure apprise",
+         "rejouer la compétence apprise",
          lambda a: a.get("level") == 20),
     # Phase 12d : l'index local répond d'abord, puis l'Explorateur s'ouvre dessus.
     Case("où est cyberpunk 2077", ("find_path",),
@@ -417,8 +417,8 @@ async def run_cases(
     from mikata.agent.guard import Guard
     from mikata.agent.loop import Agent
     from mikata.agent.memory import LongTermMemory, ShortTermMemory
+    from mikata.learn.skills import Skill, SkillStore
     from mikata.llm.usage import cost_usd
-    from mikata.skills.library import SkillLibrary
     from mikata.tools.apps import installed_app_names, open_apps
     from mikata.tools.base import ToolContext
     from mikata.tools.registry import ToolRegistry
@@ -429,7 +429,7 @@ async def run_cases(
     with tempfile.TemporaryDirectory(prefix="mikata-eval-") as folder:
         sandbox = Path(folder)
         guard_cfg = config.guard.model_copy(update={"allowed_dirs": [sandbox]})
-        skills_cfg = config.skills.model_copy(update={"auto_learn": False})  # banc figé
+        skills_cfg = config.skills.model_copy(update={"learn": False})  # banc figé
         sandboxed = config.model_copy(update={"guard": guard_cfg, "skills": skills_cfg})
         trashed: list[str] = []
 
@@ -455,15 +455,7 @@ async def run_cases(
             uia=DryRunUi(actions),
             browser=DryRunBrowser(actions),
             index=DryRunIndex(actions),
-            skills=(
-                SkillLibrary(
-                    sandbox / "skills.json",
-                    sandboxed.skills.max_skills,
-                    sandboxed.skills.max_failures,
-                )
-                if sandboxed.skills.enabled
-                else None
-            ),
+            skills=SkillStore(sandbox / "skills") if sandboxed.skills.enabled else None,
         )
 
         async def running() -> list[str]:
@@ -471,28 +463,19 @@ async def run_cases(
 
         registry = ToolRegistry(ctx)
         if ctx.skills is not None:
-            # Deux procédures déjà apprises (comme après quelques jours d'usage).
-            ctx.skills.learn(
-                "pc_silencieux",
-                "mettre le PC en silencieux",
-                "passe le pc en silencieux",
-                [
-                    {"tool": "set_volume", "args": {"level": 20}},
-                    {"tool": "mute", "args": {"mute": True}},
-                ],
+            # Une compétence déjà active (comme après quelques jours d'usage).
+            seeded = ctx.skills.adopt(
+                Skill(
+                    name="pc-silencieux",
+                    description="Met le PC en silencieux.",
+                    patterns=["passe le pc en silencieux"],
+                    params=[],
+                    code="set_volume(level=20)\nmute(mute=True)",
+                    source="passe le pc en silencieux",
+                )
             )
-            ctx.skills.learn(
-                "youtube_recent_video",
-                "chercher et lancer une vidéo récente sur YouTube",
-                "lance le dernier opening de black clover",
-                [
-                    {
-                        "tool": "browser_open",
-                        "args": {"url": "https://youtube.com/results?search_query={query}"},
-                    }
-                ],
-                params=["query"],
-            )
+            seeded.status = "active"
+            ctx.skills.save(seeded)
         agent = Agent(
             llm,
             config,

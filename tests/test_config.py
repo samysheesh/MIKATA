@@ -100,13 +100,10 @@ def test_defaults_match_section_10(config_file: Path) -> None:
     assert config.browser.own_profile is True
     assert config.browser.profile_dir == Path("data/brave_profile")
     assert config.browser.window_hidden is True
-    # ajouts phase 12c
-    assert config.skills.enabled is True and config.skills.max_skills == 30
-    assert config.skills.confidence == 70 and config.skills.auto_learn is True
-    assert config.skills.auto_learn_min_rounds == 2 and config.skills.max_failures == 3
-    assert config.skills.max_steps == 10
-    # ajout phase 12e
-    assert config.skills.local_replay is True
+    # phase 15e : compétences (remplacent les savoir-faire 12c / 12e)
+    assert config.skills.enabled is True and config.skills.learn is True
+    assert config.skills.promote_after == 3 and config.skills.max_failures == 3
+    assert config.skills.local_replay is True and config.skills.max_skills == 40
     # ajouts phase 12d
     assert config.files_index.enabled is True
     assert config.files_index.db == Path("data/files_index.db")
@@ -263,3 +260,13 @@ def test_resolve_config_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
 def test_invalid_fixture_is_invalid() -> None:
     with pytest.raises(ConfigError):
         load_config(PROJECT_ROOT / "tests" / "fixtures" / "config_invalide.yaml")
+
+
+def test_old_skills_keys_are_accepted_and_ignored() -> None:
+    """Un config.yaml d'avant la phase 15e (savoir-faire 12c) se charge toujours."""
+    from mikata.config import SkillsConfig
+
+    old = SkillsConfig.model_validate(
+        {"enabled": True, "confidence": 70, "auto_learn": True, "max_steps": 10}
+    )
+    assert old.enabled is True and not hasattr(old, "confidence")

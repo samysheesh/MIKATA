@@ -33,6 +33,7 @@ from mikata.action.sdk import SdkBindError, SdkCatalog
 from mikata.llm.base import ToolCallReq, Usage
 from mikata.tools.base import current_turn
 
+SKILL_TIMEOUT_S = 40.0  # une compétence appelée depuis un programme
 MAX_CALLS = 60  # appels au SDK par script
 MAX_ACTIONS = 25  # dont appels qui agissent
 ASK_TIMEOUT_S = 8.0
@@ -114,7 +115,9 @@ class ScriptRuntime:
         self.full_access = full_access
         self.turn_trust = turn_trust
         self.extract_effort = extract_effort
-        self.skills = skills or {}
+        self.skills = skills or {}  # phase 15e : compétences appelables, par nom d'appel
+        self.skill_uses: list[tuple[str, bool, str]] = []  # (nom, réussie, erreur)
+        self._in_skill = False
         self.records: list[ActionRecord] = []
         self.tool_calls: list[ToolCallReq] = []
         self.tool_results: list[Any] = []
@@ -130,6 +133,8 @@ class ScriptRuntime:
         spaces: dict[str, set[str]] = {}
         for entry in self.catalog.entries.values():
             spaces.setdefault(entry.namespace, set()).add(entry.function)
+        if self.skills:  # phase 15e : skills.<nom>(...) à côté de skills.list, etc.
+            spaces.setdefault("skills", set()).update(self.skills)
         return spaces
 
     def functions(self) -> set[str]:
@@ -140,6 +145,9 @@ class ScriptRuntime:
     async def call_sdk(
         self, name: str, args: list[Val], kwargs: dict[str, Val], pc: Trust, line: int
     ) -> Val:
+        namespace, _, function = name.partition(".")
+        if namespace == "skills" and function in self.skills:
+            return await self._call_skill(function, args, kwargs, pc, line)
         entry = self.catalog.get(name)
         if entry is None:
             raise ScriptError(f"fonction inconnue : {name}", line)
@@ -190,6 +198,41 @@ class ScriptRuntime:
             self.read_trust = self.read_trust.join(entry.output)
         value = result.data if result.data is not None else result.content
         return Val(value, trust)
+
+    async def _call_skill(
+        self, name: str, args: list[Val], kwargs: dict[str, Val], pc: Trust, line: int
+    ) -> Val:
+        """Phase 15e : exécute une compétence (son programme, avec ses paramètres comme
+        variables) dans le même hôte : mêmes politiques, même budget, même trace."""
+        skill = self.skills[name]
+        if self._in_skill:
+            raise ScriptError("une compétence n'en appelle pas une autre", line)
+        params: list[str] = list(skill.params)
+        if len(args) > len(params):
+            raise ScriptError(f"skills.{name} : {len(params)} paramètre(s) au plus", line)
+        values = dict(zip(params, args, strict=False))
+        for key, value in kwargs.items():
+            if key not in params:
+                raise ScriptError(f"skills.{name} : paramètre inconnu {key}", line)
+            values[key] = value
+        missing = [p for p in params if p not in values]
+        if missing:
+            raise ScriptError(f"skills.{name} : il manque {', '.join(missing)}", line)
+        variables = {k: Val(v.value, join(pc, v.trust)) for k, v in values.items()}
+        interpreter = Interpreter(self, timeout_s=SKILL_TIMEOUT_S, variables=variables)
+        self._in_skill = True
+        try:
+            result = await interpreter.run(skill.code)
+        except ScriptError as exc:
+            self.skill_uses.append((name, False, str(exc)))
+            raise type(exc)(f"compétence {name} : {exc}", line) from None
+        except Exception as exc:
+            self.skill_uses.append((name, False, str(exc)))
+            raise
+        finally:
+            self._in_skill = False
+        self.skill_uses.append((name, True, ""))
+        return result
 
     async def call_function(
         self, name: str, args: list[Val], kwargs: dict[str, Val], pc: Trust, line: int

@@ -1,252 +1,48 @@
-"""Savoir-faire dans la boucle agent (phase 12c) : rejeu sans LLM, repli sur échec,
-plan pour les procédures paramétrées, apprentissage en arrière-plan et capture forcée."""
+"""Phase 15e : les compétences dans la boucle agent (rejeu local, essai, apprentissage)."""
 
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from typing import Any
 
-import pytest
 from test_agent import NOW, Phrases, ScriptedLLM, Sink
-from tool_fakes import FakeAudio, FakeBrowser, FakeDesktop, FakeIndex, make_ctx
+from tool_fakes import FakeAudio, FakeDesktop, make_ctx
 
-from mikata.agent.loop import Agent, TurnResult
-from mikata.llm.base import Done, TextDelta, ToolCallReq, Usage
-from mikata.skills.distill import DistillResult
-from mikata.skills.library import SkillLibrary
-from mikata.tools.registry import ToolRegistry, load_builtin_tools
+from mikata.action.runtime import ScriptOutcome
+from mikata.agent.loop import Agent, TurnResult, _inducible
+from mikata.learn.skills import Skill, SkillStore
+from mikata.llm.base import Done, TextDelta, ToolCallReq
+from mikata.tools.registry import ToolRegistry
 
-
-def _skill_library(tmp_path: Path) -> SkillLibrary:
-    load_builtin_tools()
-    return SkillLibrary(tmp_path / "skills.json", max_skills=30, max_failures=3)
+COMMAND = "mets le son à 35 et pause"
+CODE = "set_volume(level=int(niveau))\nmedia_control(action='pause')\nreturn None"
 
 
-def _learn_silencieux(library: SkillLibrary) -> None:
-    assert library.learn(
-        "pc_silencieux",
-        "mettre le PC en silencieux",
-        "mets le pc en silencieux",
-        [
-            {"tool": "set_volume", "args": {"level": 20}},
-            {"tool": "mute", "args": {"mute": True}},
-        ],
+def _skill(status: str = "trial", code: str = CODE) -> Skill:
+    return Skill(
+        name="son-et-pause",
+        description="Règle le son puis met la lecture en pause.",
+        patterns=["mets le son à {niveau} et pause"],
+        params=["niveau"],
+        code=code,
+        status=status,
+        source=COMMAND,
     )
 
 
-def _agent(
-    tmp_path: Path,
-    llm: ScriptedLLM,
-    skills: SkillLibrary,
-    audio: FakeAudio | None = None,
-    browser: Any = None,
-    index: Any = None,
-    desktop: Any = None,
-    **kwargs: Any,
-) -> Agent:
-    ctx = make_ctx(
-        tmp_path,
-        audio=audio or FakeAudio(),
-        skills=skills,
-        browser=browser,
-        index=index,
-        desktop=desktop,
-    )
-    return Agent(
-        llm,
-        ctx.config,
-        phrases=Phrases(),
-        window_title=lambda: None,
-        clock=lambda: NOW,
-        tools=ToolRegistry(ctx),
-        long_memory=ctx.memory,
-        skills=skills,
-        **kwargs,
-    )
-
-
-def _respond(agent: Agent, command: str, sink: Sink | None = None) -> TurnResult:
-    async def scenario() -> TurnResult:
-        try:
-            return await agent.respond(command, sink or Sink())
-        finally:
-            await agent.aclose()
-
-    return asyncio.run(scenario())
-
-
-def test_no_param_skill_replays_without_llm(tmp_path: Path) -> None:
-    skills = _skill_library(tmp_path)
-    _learn_silencieux(skills)
-    audio = FakeAudio()
-    llm = ScriptedLLM([])  # jamais appelé
-    sink = Sink()
-    result = _respond(_agent(tmp_path, llm, skills, audio=audio), "passe le pc en silencieux", sink)
-
-    assert llm.calls == [] and result.llm_calls == 0  # zéro appel LLM
-    assert audio.volume == 20 and audio.muted  # la chaîne a été rejouée dans l'ordre
-    assert result.shortcut and result.answer == "C'est fait."
-    assert len(sink.audio) == 1  # « C'est fait » en cache
-    assert result.rounds == 2 and len(result.tool_calls) == 2
-    assert skills.get("pc_silencieux").failures == 0  # type: ignore[union-attr]
-
-
-def test_replay_failure_falls_back_to_the_llm(tmp_path: Path) -> None:
-    skills = _skill_library(tmp_path)
-    assert skills.learn(
-        "ouvrir_introuvable",
-        "ouvrir une application introuvable",
-        "ouvre l'application introuvable",
-        [
-            {"tool": "set_volume", "args": {"level": 20}},
-            {"tool": "open_app", "args": {"name": "Introuvable"}},
-        ],
-    )
-    audio = FakeAudio()
-    llm = ScriptedLLM(
-        [TextDelta("Je n'arrive pas à l'ouvrir."), Done("stop", usage=Usage(10, 5, 0))]
-    )
-    result = _respond(_agent(tmp_path, llm, skills, audio=audio), "ouvre l'application introuvable")
-
-    assert result.llm_calls == 1  # le LLM a repris la main
-    assert "Je n'arrive pas" in result.answer and not result.shortcut
-    assert audio.volume == 20  # la première étape a bien été exécutée
-    assert not result.tool_results[1].ok  # la seconde a échoué
-    assert skills.get("ouvrir_introuvable").failures == 1  # type: ignore[union-attr]
-    tool_messages = [m for m in llm.calls[0] if m.get("role") == "tool"]
-    assert len(tool_messages) == 2  # les deux étapes exécutées sont dans le contexte du LLM
-
-
-def test_param_skill_injects_the_plan_and_lets_the_llm_fill_it(tmp_path: Path) -> None:
-    skills = _skill_library(tmp_path)
-    assert skills.learn(
-        "youtube_recent_video",
-        "chercher et lancer une vidéo récente sur YouTube",
-        "lance le dernier opening de black clover",
-        [
-            {
-                "tool": "browser_open",
-                "args": {"url": "https://youtube.com/results?search_query={query}"},
-            }
-        ],
-        params=["query"],
-    )
-    call = ToolCallReq(
-        "c1", "browser_open", {"url": "https://youtube.com/results?search_query=one piece"}
-    )
-    llm = ScriptedLLM(
-        [call, Done("tool_calls", usage=Usage(100, 10, 0))],
-        [TextDelta("C'est fait."), Done("stop", usage=Usage(10, 5, 0))],
-    )
-    result = _respond(
-        _agent(tmp_path, llm, skills, browser=FakeBrowser()),
-        "lance le dernier opening de one piece",
-    )
-
-    plans = [
-        message["content"]
-        for message in llm.calls[0]
-        if message.get("role") == "system" and "Procédure connue" in message.get("content", "")
-    ]
-    assert plans and "{query}" in plans[0]  # le plan avec le trou est donné au LLM
-    assert result.tool_calls == [call] and result.llm_calls == 2
-
-
-# -- phase 12e : rejeu local, paramètres remplis sans LLM -------------------------------
-
-
-def _learn_ouvrir_dossier(skills: SkillLibrary) -> None:
-    assert skills.learn(
-        "ouvrir_dossier",
-        "trouver un dossier et l'ouvrir dans l'explorateur",
-        "où est cyberpunk 2077",
-        [
-            {
-                "tool": "find_path",
-                "args": {"name": "{query}"},
-                "outputs": {"folder_path": "best"},
-            },
-            {"tool": "open_in_explorer", "args": {"path": "{folder_path}"}},
-        ],
-        params=["query", "folder_path"],
-        slots="où est {query}",
-    )
-
-
-def test_local_replay_fills_slots_and_outputs_without_llm(tmp_path: Path) -> None:
-    skills = _skill_library(tmp_path)
-    _learn_ouvrir_dossier(skills)
-    index = FakeIndex()  # trouve toujours D:\Steam\...\Cyberpunk 2077.exe
-    desktop = FakeDesktop()
-    llm = ScriptedLLM([])  # jamais appelé
-    result = _respond(
-        _agent(tmp_path, llm, skills, index=index, desktop=desktop),
-        "où est league of legends",
-        Sink(),
-    )
-
-    assert llm.calls == [] and result.llm_calls == 0  # zéro appel LLM
-    assert result.shortcut and result.answer == "C'est fait."
-    assert index.queries[0][0] == "league of legends"  # les mots prononcés remplissent {query}
-    cyberpunk = "D:\\Steam\\steamapps\\common\\Cyberpunk 2077.exe"
-    assert ("reveal", (cyberpunk, True)) in desktop.log  # {folder_path} lié depuis « best »
-    assert skills.get("ouvrir_dossier").failures == 0  # type: ignore[union-attr]
-
-
-def test_local_replay_unbound_step_falls_back_without_penalty(tmp_path: Path) -> None:
-    skills = _skill_library(tmp_path)
-    _learn_ouvrir_dossier(skills)
-    index = FakeIndex(results=[])  # find_path ne trouve rien : « best » absent
-    llm = ScriptedLLM([TextDelta("Je n'ai rien trouvé."), Done("stop", usage=Usage(10, 5, 0))])
-    result = _respond(
-        _agent(tmp_path, llm, skills, index=index, desktop=FakeDesktop()),
-        "où est league of legends",
-    )
-
-    assert result.llm_calls == 1 and not result.shortcut  # le LLM a repris
-    assert skills.get("ouvrir_dossier").failures == 0  # pas un échec de la procédure
-
-
-def test_phrase_outside_the_pattern_gets_the_plan(tmp_path: Path) -> None:
-    skills = _skill_library(tmp_path)
-    _learn_ouvrir_dossier(skills)
-    llm = ScriptedLLM(
-        [
-            ToolCallReq("c1", "find_path", {"name": "league"}),
-            Done("tool_calls", usage=Usage(100, 10, 0)),
-        ],
-        [TextDelta("C'est fait."), Done("stop", usage=Usage(10, 5, 0))],
-    )
-    result = _respond(
-        _agent(tmp_path, llm, skills, index=FakeIndex(), desktop=FakeDesktop()),
-        "montre-moi le dossier league of legends",
-    )
-
-    plans = [
-        message["content"]
-        for message in llm.calls[0]
-        if message.get("role") == "system" and "Procédure connue" in message.get("content", "")
-    ]
-    assert plans and result.llm_calls >= 1  # plan LLM, pas de rejeu local
-
-
-def test_local_replay_off_goes_straight_to_the_plan(tmp_path: Path) -> None:
-    skills = _skill_library(tmp_path)
-    _learn_ouvrir_dossier(skills)
-    llm = ScriptedLLM(
-        [
-            ToolCallReq("c1", "find_path", {"name": "league"}),
-            Done("tool_calls", usage=Usage(100, 10, 0)),
-        ],
-        [TextDelta("C'est fait."), Done("stop", usage=Usage(10, 5, 0))],
-    )
-    config = make_ctx(tmp_path).config
-    config = config.model_copy(
-        update={"skills": config.skills.model_copy(update={"local_replay": False})}
-    )
-    ctx = make_ctx(tmp_path, skills=skills, index=FakeIndex(), desktop=FakeDesktop())
-    ctx.config = config
+def _setup(
+    tmp_path: Path, llm: ScriptedLLM, skill: Skill | None = None
+) -> tuple[Agent, SkillStore, FakeDesktop, FakeAudio]:
+    desktop, audio = FakeDesktop(), FakeAudio()
+    store = SkillStore(tmp_path / "skills")
+    if skill is not None:
+        status = skill.status
+        store.adopt(skill)
+        skill.status = status
+        store.save(skill)
+    ctx = make_ctx(tmp_path, desktop=desktop, audio=audio, skills=store)
     agent = Agent(
         llm,
         ctx.config,
@@ -255,84 +51,151 @@ def test_local_replay_off_goes_straight_to_the_plan(tmp_path: Path) -> None:
         clock=lambda: NOW,
         tools=ToolRegistry(ctx),
         long_memory=ctx.memory,
-        skills=skills,
+        skills=store,
     )
-    result = _respond(agent, "où est league of legends")
-    assert result.llm_calls >= 1 and not result.shortcut
+    return agent, store, desktop, audio
 
 
-def test_auto_learn_stores_a_distilled_skill(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    skills = _skill_library(tmp_path)
-    agent = _agent(tmp_path, ScriptedLLM([]), skills)
-
-    async def fake_distill(
-        llm: Any, config: Any, command: str, calls: list[Any], hint: str = ""
-    ) -> DistillResult:
-        return DistillResult(
-            name="appris_ici",
-            description="la procédure apprise",
-            trigger=command,
-            steps=[{"tool": "open_url", "args": {"url": "https://example.com"}}],
-            params=[],
-            verify=None,
-        )
-
-    monkeypatch.setattr("mikata.agent.loop.distill", fake_distill)
-    # Deux tours d'outils non terminaux, tous réussis : ça déclenche l'apprentissage.
-    agent.llm = ScriptedLLM(
-        [ToolCallReq("c1", "get_time", {}), Done("tool_calls", usage=Usage(50, 5, 0))],
-        [ToolCallReq("c2", "get_time", {}), Done("tool_calls", usage=Usage(50, 5, 0))],
-        [TextDelta("Voilà."), Done("stop", usage=Usage(10, 5, 0))],
-    )
-
-    async def scenario() -> None:
+def _turns(agent: Agent, *commands: str) -> list[TurnResult]:
+    async def scenario() -> list[TurnResult]:
         try:
-            await agent.respond("quelle heure est-il, deux fois", Sink())
-            task = agent._skill_task
-            assert task is not None
-            await asyncio.wait_for(task, timeout=2)  # la distillation tourne en fond
-            assert [s.name for s in skills.all()] == ["appris_ici"]
+            results = []
+            for command in commands:
+                results.append(await agent.respond(command, Sink()))
+                await agent.learning_idle()
+            return results
         finally:
             await agent.aclose()
 
-    asyncio.run(scenario())
+    return asyncio.run(scenario())
 
 
-def test_remember_skill_captures_the_last_successful_trace(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def _script(code: str) -> list[Any]:
+    return [ToolCallReq("c1", "script", {"code": code}), Done("tool_calls")]
+
+
+def test_an_active_skill_replays_locally_without_the_model(tmp_path: Path) -> None:
+    llm = ScriptedLLM()  # aucun appel attendu : il lèverait
+    agent, store, desktop, audio = _setup(tmp_path, llm, _skill("active"))
+    (result,) = _turns(agent, "Mets le son à 35 et pause.")
+    assert llm.calls == [] and result.llm_calls == 0
+    assert audio.volume == 35 and ("media", "play_pause") in desktop.log
+    assert result.answer == "C'est fait." and result.local_skill == "son-et-pause"
+    assert result.path.startswith("compétence « son-et-pause » en local")
+    skill = store.get("son_et_pause")
+    assert skill is not None and skill.uses == 1 and skill.status == "active"
+
+
+def test_a_failing_active_skill_goes_back_to_trial_and_the_model_takes_over(
+    tmp_path: Path,
 ) -> None:
-    skills = _skill_library(tmp_path)
-    agent = _agent(tmp_path, ScriptedLLM([]), skills)
-
-    async def fake_distill(
-        llm: Any, config: Any, command: str, calls: list[Any], hint: str = ""
-    ) -> DistillResult:
-        assert hint  # la description donnée à la voix arrive bien
-        return DistillResult(
-            name="capture_forcee",
-            description="la procédure capturée",
-            trigger=command,
-            steps=[{"tool": "open_url", "args": {"url": "https://example.com"}}],
-            params=[],
-            verify=None,
-        )
-
-    monkeypatch.setattr("mikata.agent.loop.distill", fake_distill)
-    agent.llm = ScriptedLLM(
-        [ToolCallReq("c1", "get_time", {}), Done("tool_calls", usage=Usage(50, 5, 0))],
-        [ToolCallReq("c2", "get_time", {}), Done("tool_calls", usage=Usage(50, 5, 0))],
-        [TextDelta("Voilà."), Done("stop", usage=Usage(10, 5, 0))],
+    broken = "set_volume(level=int(niveau))\nexpect(False, 'bouton disparu')\nreturn None"
+    llm = ScriptedLLM(
+        [TextDelta("Le son est à 35, mais je n'ai pas pu mettre pause."), Done("stop")]
     )
+    agent, store, _, audio = _setup(tmp_path, llm, _skill("active", broken))
+    (result,) = _turns(agent, COMMAND)
+    assert audio.volume == 35  # la première étape a eu lieu avant l'échec
+    assert result.llm_calls == 1 and result.answer.startswith("Le son est à 35")
+    notes = [m["content"] for m in llm.calls[0] if m["role"] == "system"]
+    assert any("a échoué" in note for note in notes)  # le modèle sait que le rejeu a raté
+    skill = store.get("son_et_pause")
+    assert skill is not None and skill.status == "trial" and skill.failures == 1
+    assert "bouton disparu" in skill.last_error
 
-    async def scenario() -> None:
-        try:
-            await agent.respond("quelle heure est-il, deux fois", Sink())
-            text = await agent._capture_skill("régler le son du PC")
-            assert text == "Mémorisé : la procédure capturée"
-            assert [s.name for s in skills.all()] == ["capture_forcee"]
-        finally:
-            await agent.aclose()
 
-    asyncio.run(scenario())
+def test_a_trial_skill_is_offered_then_promoted_after_three_supervised_successes(
+    tmp_path: Path,
+) -> None:
+    call = "return skills.son_et_pause(niveau='35')"
+    llm = ScriptedLLM(_script(call), _script(call), _script(call))
+    agent, store, _, audio = _setup(tmp_path, llm, _skill("trial"))
+    results = _turns(agent, COMMAND, COMMAND, COMMAND)
+    hint = [m["content"] for m in llm.calls[0] if m["role"] == "system"][-1]
+    assert "skills.son_et_pause(niveau='35')" in hint  # valeurs déjà lues dans la phrase
+    assert all(r.answer == "C'est fait." for r in results) and audio.volume == 35
+    skill = store.get("son_et_pause")
+    assert skill is not None and skill.status == "active" and skill.successes == 3
+    (local,) = _turns(_setup(tmp_path, ScriptedLLM())[0], COMMAND)  # relue sur disque
+    assert local.llm_calls == 0 and local.local_skill == "son-et-pause"
+
+
+def test_a_correction_right_after_counts_as_a_failure(tmp_path: Path) -> None:
+    llm = ScriptedLLM(
+        _script("return skills.son_et_pause(niveau='35')"),
+        [TextDelta("D'accord, je remets le son."), Done("stop")],
+    )
+    agent, store, _, _ = _setup(tmp_path, llm, _skill("trial"))
+    _turns(agent, COMMAND, "non c'est pas ça")
+    skill = store.get("son_et_pause")
+    assert skill is not None and skill.successes == 0 and skill.failures == 1
+
+
+def test_a_successful_program_becomes_a_trial_skill(tmp_path: Path) -> None:
+    original = "set_volume(level=35)\nmedia_control(action='pause')\nreturn None"
+    candidate = {
+        "nom": "son-et-pause",
+        "description": "Règle le son puis met la lecture en pause.",
+        "motifs": ["mets le son à {niveau} et pause", "son à {niveau} puis pause"],
+        "parametres": ["niveau"],
+        "exemple": {"niveau": "35"},
+        "programme": CODE,
+    }
+    llm = ScriptedLLM(_script(original), [TextDelta(json.dumps(candidate)), Done("stop")])
+    agent, store, _, _ = _setup(tmp_path, llm)
+    (result,) = _turns(agent, COMMAND)
+    assert result.answer == "C'est fait." and result.llm_calls == 1
+    skill = store.get("son_et_pause")
+    assert skill is not None and skill.status == "trial" and skill.source == COMMAND
+    assert "Demande : « mets le son à 35 et pause »" in llm.calls[1][-1]["content"]
+    assert (tmp_path / "skills" / "son-et-pause" / "skill.py").is_file()
+
+
+def test_a_bad_candidate_is_not_kept(tmp_path: Path) -> None:
+    original = "set_volume(level=35)\nmedia_control(action='pause')\nreturn None"
+    sneaky = {
+        "nom": "son-et-pause",
+        "description": "x",
+        "motifs": ["mets le son à {niveau} et pause"],
+        "parametres": ["niveau"],
+        "exemple": {"niveau": "35"},
+        "programme": CODE + "\nshutdown(delay_s=0)",  # une action que l'original n'a pas faite
+    }
+    llm = ScriptedLLM(_script(original), [TextDelta(json.dumps(sneaky)), Done("stop")])
+    agent, store, _, _ = _setup(tmp_path, llm)
+    _turns(agent, COMMAND)
+    assert store.all() == []
+
+
+def test_nothing_is_learned_from_a_program_written_after_untrusted_content() -> None:
+    ok = ScriptOutcome(ok=True, records=[object(), object()])  # type: ignore[list-item]
+    result = TurnResult(command="x")
+    result.scripts = [ok]
+    result.script_sources = [("browser_read()\nbrowser_click(text='x')", False)]
+    assert _inducible(result) == ""
+    result.script_sources = [("browser_read()\nbrowser_click(text='x')", True)]
+    assert _inducible(result).startswith("browser_read")
+    result.scripts = [ScriptOutcome(ok=True, records=[object()])]  # type: ignore[list-item]
+    assert _inducible(result) == ""  # une seule action : pas de compétence
+
+
+def test_remember_skill_tool_learns_the_last_program(tmp_path: Path) -> None:
+    original = "set_volume(level=35)\nmedia_control(action='pause')\nreturn None"
+    candidate = {
+        "nom": "son-et-pause",
+        "description": "Règle le son puis met la lecture en pause.",
+        "motifs": ["mets le son à {niveau} et pause"],
+        "parametres": ["niveau"],
+        "exemple": {"niveau": "35"},
+        "programme": CODE,
+    }
+    llm = ScriptedLLM(
+        _script(original),
+        [TextDelta('{"nom": ""}'), Done("stop")],  # apprentissage automatique : rien
+        [ToolCallReq("c2", "remember_skill", {}), Done("tool_calls")],
+        [TextDelta(json.dumps(candidate)), Done("stop")],
+    )
+    agent, store, _, _ = _setup(tmp_path, llm)
+    _, remembered = _turns(agent, COMMAND, "retiens comment faire ça")
+    assert remembered.answer.startswith("Retenu : Règle le son")
+    assert store.get("son_et_pause") is not None

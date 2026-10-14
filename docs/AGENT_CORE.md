@@ -402,12 +402,16 @@ réussite sur trois essais.
 | B. Espace d'action | faite (`phase-14b-action`) | 56 outils avec effet et confiance déclarés |
 | C. Interpréteur et politiques | faite (`phase-14c-interpreteur`) | boucle infinie arrêtée en moins d'1 s ; suite d'injection verte |
 | D. Boucle unique | faite en partie (`phase-14d-boucle`) | 48/49 aux trois essais (47/49 sans programmes) ; enchaînements longs 2,8 s contre 3,7 s |
-| E. Apprentissage | première partie (`phase-14e-apprentissage`) | carnet de leçons et traces ; une leçon fait passer une tâche de 2 appels à 1 |
+| E. Apprentissage | faite (`phase-14e-apprentissage`, `phase-15e-competences`) | carnet de leçons et traces ; une leçon fait passer une tâche de 2 appels à 1 ; une compétence apprise au 1er tour, appelée par le modèle aux tours 2 à 4, est rejouée au 5e sans appel LLM (vrai modèle, PC simulé) |
 | F. Ouverture | à faire | |
 
 Reste à faire en D : tâches de fond avec accusé de réception, chemin « exploration » borné.
-Reste à faire en E : compétences (programmes vérifiés, rejeu local), qui remplaceront
-`mikata/skills/`. L'audit prévu en phase A est fait pour `browser/` et `files/` (branche
+Fait en E (phase 15e) : compétences (`mikata/learn/skills.py`), qui remplacent
+`mikata/skills/`. Écarts à la section 3.6 : la vérification avant adoption se fait dans le
+code, sans rejouer la demande (rejouer une action sur le PC la referait deux fois) ; la
+première utilisation surveillée par le modèle tient lieu d'essai, et il en faut trois avant
+le rejeu local (décision du 14/10). Pas encore faits : `recover.md`, les cas d'échec gardés
+pour une révision par un critique isolé, l'import de compétences. L'audit prévu en phase A est fait pour `browser/` et `files/` (branche
 `phase-14f-audit` : deux corrections, et une limite connue sur le helper élevé de l'index) ;
 `uia/` et le décodage du journal USN restent à relire.
 
