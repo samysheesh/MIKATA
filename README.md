@@ -3093,3 +3093,11 @@ nouvelle sortie.
   YouTube, lis la page, clique la vidéo »), pas seulement d'un programme ; ce qui a été
   choisi en lisant la page n'est jamais recopié, la compétence le retrouve elle-même.
   Essai réel (PC simulé) : apprise au 1er opening, active au 5e.
+
+**15h — liens des pages et choix de la vidéo**
+
+Sur une page de résultats YouTube, les 60 liens lus par MIKATA étaient surtout ceux du menu
+(Accueil, Shorts...) : aucun titre de vidéo, et la compétence « dernier opening » ne
+trouvait rien à cliquer. Les liens du contenu passent maintenant en premier, sans doublon,
+et le choix de la vidéo se fait sur toute la page lue. Une compétence n'est plus apprise en
+double quand une voisine existe déjà.

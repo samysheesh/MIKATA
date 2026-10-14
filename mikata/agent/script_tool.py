@@ -82,7 +82,7 @@ EXEMPLES DE PROGRAMMES
   browser_open("https://www.youtube.com/results?search_query=Stromae+dernier+clip")
   page = browser_read()
   question = "Quel lien est le clip officiel le plus récent ? Recopie son texte exact."
-  choix = extract(page.links, {{"lien": str}}, question)
+  choix = extract(page, {{"lien": str}}, question)
   expect(choix.lien, "un clip a été trouvé")
   browser_click(choix.lien)
   return "C'est lancé."

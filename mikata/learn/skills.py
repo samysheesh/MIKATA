@@ -470,8 +470,9 @@ cette partie reste fixe : ce n'est pas un paramètre.
 - Une valeur écrite ... a été choisie en lisant le résultat d'un appel précédent (une \
 page, une recherche) : le programme doit la retrouver lui-même dans ce qu'il lit, avec \
 extract(contenu, {"champ": str}, "question"). Par exemple : page = browser_read() ; \
-choix = extract(page.links, {"lien": str}, "Quel lien est ... ? Recopie son texte \
-exact.") ; browser_click(choix.lien).
+choix = extract(page, {"lien": str}, "Quel lien est ... ? Recopie son texte \
+exact.") ; expect(choix.lien, "trouvé") ; browser_click(choix.lien). Donne toujours \
+toute la page à extract (page), jamais page.links seul.
 - Au plus 4 paramètres, en minuscules_avec_soulignés.
 - "motifs" : 2 à 4 façons courantes de formuler ce genre de demande à l'oral, en \
 minuscules, chaque paramètre écrit {nom} ; la demande d'origine doit coller à l'un d'eux \

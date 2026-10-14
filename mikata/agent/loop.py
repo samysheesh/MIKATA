@@ -906,6 +906,7 @@ class Agent:
             or names
             or not self.config.skills.learn
             or self.skills.match(command) is not None
+            or self.skills.related(command)  # une voisine existe : pas de doublon
             or (self._skill_task is not None and not self._skill_task.done())
         ):
             return
@@ -924,7 +925,7 @@ class Agent:
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # hors ligne, réponse illisible : rien n'est appris
-            logger.warning("Compétence non écrite : {}", exc)
+            logger.warning("Compétence non écrite : {}", str(exc) or type(exc).__name__)
             return None
         if self.usage is not None:
             self.usage.record("compétence", usage, 1)

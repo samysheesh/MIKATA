@@ -41,13 +41,22 @@ ARG_TEXT = "__MIKATA_ARG_TEXT__"
 ARG_NTH = "__MIKATA_ARG_NTH__"
 ARG_FIELD = "__MIKATA_ARG_FIELD__"
 
-# Lecture structurée de la page : titre, URL, texte, liens et boutons visibles.
+# Lecture structurée de la page : titre, URL, texte, liens et boutons visibles. Phase 15h :
+# les liens du contenu d'abord, ceux des menus (barre latérale de YouTube...) en dernier,
+# sans doublon : avant, les 60 premiers liens d'une page de résultats YouTube étaient le
+# menu, et aucun titre de vidéo n'y figurait.
 _READ_JS = """(() => {
   const text = document.body ? document.body.innerText.slice(0, 8000) : "";
-  const links = [...document.querySelectorAll("a[href]")]
-    .map(a => (a.innerText || "").trim())
-    .filter(t => t && t.length < 120)
-    .slice(0, 60);
+  const menu = "nav, header, footer, aside, [role=navigation], #guide, ytd-guide-renderer, "
+    + "ytd-mini-guide-renderer, tp-yt-app-drawer";
+  const anchors = [...document.querySelectorAll("a[href]")];
+  const inMenu = a => a.closest(menu) !== null;
+  const ordered = [...anchors.filter(a => !inMenu(a)), ...anchors.filter(inMenu)];
+  const seen = new Set();
+  const links = ordered
+    .map(a => (a.innerText || a.getAttribute("title") || "").trim().replace(/\\s+/g, " "))
+    .filter(t => t && t.length < 200 && !seen.has(t) && seen.add(t))
+    .slice(0, 80);
   const buttons = [...document.querySelectorAll("button, [role=button], input[type=submit]")]
     .map(b => (b.innerText || b.value || b.getAttribute("aria-label") || "").trim())
     .filter(t => t && t.length < 120)
@@ -497,7 +506,7 @@ class BrowserController:
             lines.append(f"Texte :\n{text}")
         links = page.get("links") or []
         if links:
-            lines.append("Liens : " + " | ".join(links[:40]))
+            lines.append("Liens : " + " | ".join(links[:60]))
         buttons = page.get("buttons") or []
         if buttons:
             lines.append("Boutons : " + " | ".join(buttons[:40]))
