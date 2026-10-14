@@ -128,3 +128,59 @@ def test_parse_step_tolerates_prose() -> None:
         "reponse": "ok",
     }
     assert parse_step("rien") is None
+
+
+def test_actions_that_finish_the_goal_need_no_extra_step(tmp_path: Path) -> None:
+    """Un bouton qui fait exactement ce qui est demandé : « fait » avec l'action, et rien
+    de plus après sa réussite (avant : relecture de la fenêtre et une étape de plus, ~2,5 s,
+    pour constater ce que le clic venait de faire)."""
+    ui = FakeUi(controls=CONTROLS)
+    llm = ScriptedLLM(
+        _explore_call(),
+        _step(
+            fait=True,
+            reponse="Ton micro est coupé.",
+            actions=[{"outil": "uia_click", "args": {"control": "Rendre muet"}}],
+        ),
+    )
+    result = _run(tmp_path, llm, ui)
+    assert ("click", ("Discord", "Rendre muet", None, 1)) in ui.log
+    assert result.answer == "Ton micro est coupé." and result.shortcut
+    assert result.llm_calls == 2  # un appel principal, une seule étape d'exploration
+    assert [entry[0] for entry in ui.log].count("controls") == 1  # aucune relecture
+
+
+def test_a_final_action_that_fails_lets_the_exploration_go_on(tmp_path: Path) -> None:
+    ui = FakeUi(controls=CONTROLS)
+    ui.fail.add("click")
+    llm = ScriptedLLM(
+        _explore_call(),
+        _step(
+            fait=True,
+            reponse="Ton micro est coupé.",
+            actions=[{"outil": "uia_click", "args": {"control": "Rendre muet"}}],
+        ),
+        _step(fait=True, reponse="Je n'ai pas pu couper ton micro."),
+    )
+    result = _run(tmp_path, llm, ui)
+    assert result.answer == "Je n'ai pas pu couper ton micro."  # pas « coupé » sur un échec
+    assert "échec simulé de click" in llm.calls[2][1]["content"]
+
+
+def test_an_unreadable_window_is_read_again_once(tmp_path: Path) -> None:
+    """Juste après une action, la fenêtre se redessine : une lecture ratée est refaite."""
+
+    class Flaky(FakeUi):
+        reads = 0
+
+        def controls(self, window: Any, max_controls: int) -> list[Any]:
+            Flaky.reads += 1
+            if Flaky.reads == 1:
+                raise RuntimeError("fenêtre en train de se redessiner")
+            return super().controls(window, max_controls)
+
+    ui = Flaky(controls=CONTROLS)
+    llm = ScriptedLLM(_explore_call(), _step(fait=True, reponse="Ton micro est déjà coupé."))
+    _run(tmp_path, llm, ui)
+    assert Flaky.reads == 2
+    assert "Rendre muet [bouton]" in llm.calls[1][1]["content"]  # le modèle a vu l'état

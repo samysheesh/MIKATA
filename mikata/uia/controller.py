@@ -194,11 +194,21 @@ class UiaBackend(_BackendBase):
         except Exception:
             return []
 
+    @staticmethod
+    def _prop(node: Any, name: str) -> str:
+        """Propriété texte d'un nœud, "" s'il a disparu entre-temps : juste après un clic,
+        l'application redessine sa fenêtre et un nœud parcouru n'existe plus (COMError
+        0x80040201 relevée sur Discord) ; il est sauté, la lecture continue."""
+        try:
+            return str(getattr(node, name) or "")
+        except Exception:
+            return ""
+
     def node_name(self, node: Any) -> str:
-        return (node.Name or "").strip()
+        return self._prop(node, "Name").strip()
 
     def node_kind(self, node: Any) -> str:
-        return self._KINDS.get(node.ControlTypeName, "contrôle")
+        return self._KINDS.get(self._prop(node, "ControlTypeName"), "contrôle")
 
     @staticmethod
     def _pattern(node: Any, name: str) -> Any:
@@ -222,11 +232,11 @@ class UiaBackend(_BackendBase):
                 return text.DocumentRange.GetText(-1)
             except Exception:
                 pass
-        return node.Name or ""
+        return self._prop(node, "Name")
 
     def document_text(self, root: Any) -> str:
         for node in [root, *self.walk(root, 200)]:
-            if node.ControlTypeName == "DocumentControl":
+            if self._prop(node, "ControlTypeName") == "DocumentControl":
                 text = self._pattern(node, "Text")
                 if text is not None:
                     try:
@@ -238,9 +248,11 @@ class UiaBackend(_BackendBase):
     def visible_text(self, root: Any) -> str:
         parts: list[str] = []
         for node in self.walk(root, _MAX_VISITED):
-            if node.ControlTypeName == "TextControl" and node.Name:
-                parts.append(node.Name.strip())
-            elif node.ControlTypeName == "EditControl":
+            kind = self._prop(node, "ControlTypeName")
+            name = self._prop(node, "Name").strip()
+            if kind == "TextControl" and name:
+                parts.append(name)
+            elif kind == "EditControl":
                 value = self._pattern(node, "Value")
                 if value is not None:
                     try:
@@ -572,12 +584,15 @@ def _discord_voice_from(nodes: list[Any]) -> tuple[str | None, list[str]]:
     connectés sont des boutons « <nom> (salon vocal) » sans membres : ignorés.
     """
     for node in nodes:
-        if getattr(node, "ControlTypeName", None) is not None:
-            is_link = node.ControlTypeName == "HyperlinkControl"
-            name = (node.Name or "").strip()
-        else:
-            is_link = AxBackend._ax_role(node) == "AXLink"
-            name = AxBackend._ax_name(node)
+        try:
+            if getattr(node, "ControlTypeName", None) is not None:
+                is_link = node.ControlTypeName == "HyperlinkControl"
+                name = (node.Name or "").strip()
+            else:
+                is_link = AxBackend._ax_role(node) == "AXLink"
+                name = AxBackend._ax_name(node)
+        except Exception:  # nœud disparu pendant la lecture : sauté
+            continue
         if not is_link:
             continue
         folded = fold(name)

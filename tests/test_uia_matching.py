@@ -88,3 +88,33 @@ def test_an_ax_click_that_fails_is_reported_as_a_failure() -> None:
 
     with pytest.raises(ToolError, match="n'a pas répondu au clic"):
         AxBackend(FakeDesktop()).click(Node(), "Envoyer")  # type: ignore[arg-type]
+
+
+def test_a_node_that_vanishes_during_the_read_is_skipped() -> None:
+    """Juste après un clic, Discord redessine sa fenêtre : un nœud déjà parcouru n'existe
+    plus et lire son nom lève une erreur COM (0x80040201, relevée le 14/10). Il est sauté :
+    la lecture de la fenêtre continue au lieu d'échouer."""
+    from mikata.uia.controller import UiaBackend, _discord_voice_from
+
+    class Gone:
+        @property
+        def Name(self) -> str:
+            raise OSError(-2147220991, "Un événement n'a pu invoquer aucun des abonnés.")
+
+        ControlTypeName = Name
+
+        def GetChildren(self) -> list[Any]:
+            return []
+
+    class Node:
+        def __init__(self, name: str, kind: str, children: list[Any]) -> None:
+            self.Name, self.ControlTypeName, self._children = name, kind, children
+
+        def GetChildren(self) -> list[Any]:
+            return self._children
+
+    root = Node("Discord", "WindowControl", [Gone(), Node("Rendre muet", "TextControl", [])])
+    backend = UiaBackend(FakeDesktop())  # type: ignore[arg-type]
+    assert backend.node_name(Gone()) == "" and backend.node_kind(Gone()) == "contrôle"
+    assert backend.visible_text(root) == "Rendre muet"
+    assert _discord_voice_from([Gone()]) == (None, [])
