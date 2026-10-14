@@ -3270,3 +3270,35 @@ uv run pytest tests/test_uia_state.py tests/test_uia_tools.py tests/test_prompts
 # CPU au repos : comparer les lignes « CPU du processus » de data\logs\mikata.log
 Select-String -Path data\logs\mikata.log -Pattern "CPU du processus" | Select-Object -Last 5
 ```
+
+## Phase 16g — retours du 14/10
+
+Corrections après tes essais à la voix :
+
+- **« Coupe mon micro »** : le micro était coupé en 2 s mais « C'est fait » venait 10 s plus
+  tard. La relecture de la fenêtre échouait (Discord se redessine après le clic : un élément
+  lu n'existe plus) ; un élément disparu est maintenant sauté. L'exploration s'arrête dès
+  que l'action qui termine le but a réussi, sans relire pour le constater, et une relecture
+  ratée est refaite une fois.
+- **« Non, sur Spotify »** fermait YouTube puis disait « C'est fait » sans rien lancer.
+  Une correction refait la demande jusqu'au bout : fermer ne conclut pas, ni une étape qui
+  en fait moins que la demande corrigée. Une correction simple (« non, à 20 ») reste en un
+  appel.
+- **Préférences** : « non, sur Spotify » n'apprenait rien quand la musique avait été lancée
+  sur YouTube (une page lue bloquait l'apprentissage). La préférence vient maintenant de tes
+  deux phrases seules, jamais de ce que MIKATA a lu.
+- `pick` rend l'élément choisi lui-même (un contrôle, un lien), plus son texte ; une
+  fonction qui attend un nom accepte l'élément entier.
+
+Reste : lancer un morceau précis dans l'appli Spotify n'est pas fiable (1 essai sur 6 au
+banc, `musique_dans_appli`) : MIKATA passe par l'interface (recherche, clic). Une vraie
+capacité Spotify (API Web) est la solution ; elle demande ton accord.
+
+```powershell
+cd D:\projects\mikata
+uv run pytest tests/test_corrections.py tests/test_explore.py tests/test_memory_16e.py -q
+uv run python scripts/eval_bench.py --tag correction --trials 2
+# À la voix : « MIKATA, coupe mon micro sur Discord » (réponse dès le clic),
+# « MIKATA, lance Jet Lag de Tiakola » puis « non, sur Spotify »,
+# puis regarder data\preferences.json (musique : Spotify).
+```

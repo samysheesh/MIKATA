@@ -41,6 +41,15 @@ ASK_TIMEOUT_S = 8.0
 REDACTED = "(détail masqué : il dépend d'un contenu lu ailleurs)"
 
 
+def pick_label(item: Any) -> str:
+    """Étiquette d'une option de pick() : le texte d'une valeur simple ; pour un élément
+    structuré (contrôle, lien : {"name": ..., "kind": ...}), ses champs non vides."""
+    if isinstance(item, dict):
+        parts = [str(v).strip() for v in item.values() if isinstance(v, str | int | float)]
+        return " — ".join(part for part in parts if part)
+    return str(item).strip()
+
+
 class PolicyDenied(Exception):
     """Appel refusé par une politique ou par le garde-fou : le script s'arrête."""
 
@@ -272,14 +281,18 @@ class ScriptRuntime:
         question = str(values[1] if len(values) > 1 else named.get("question", "")).strip()
         if not isinstance(items, list) or not question:
             raise ScriptError("pick(liste, question)", line)
-        options = [str(item).strip() for item in items if str(item).strip()][:MAX_PICK]
-        if not options:
+        # Phase 16g : le modèle de choix voit une étiquette lisible, le script reçoit
+        # l'élément lui-même (un contrôle, un lien...), pas sa représentation en texte.
+        kept = [(item, pick_label(item)) for item in items]
+        kept = [(item, label) for item, label in kept if label][:MAX_PICK]
+        if not kept:
             raise ScriptFailure("rien à choisir : la liste est vide")
+        originals, options = [item for item, _ in kept], [label for _, label in kept]
         result_trust = join(trust, Trust.LOCAL)
         if self.jev is not None:
             picked = await self.jev.pick(question, options)
             if picked is not None:
-                return Val(options[picked[0]], result_trust)
+                return Val(originals[picked[0]], result_trust)
         if self.llm is None:
             raise ScriptFailure("choix impossible (pas de modèle)")
         self.llm_calls += 1
@@ -291,7 +304,7 @@ class ScriptRuntime:
             self.usage = usage if self.usage is None else self.usage + usage
         if index is None:
             raise ScriptFailure("aucune option ne répond à la question")
-        return Val(options[index], result_trust)
+        return Val(originals[index], result_trust)
 
     async def _extract(
         self, values: list[Any], named: dict[str, Any], trust: Trust, line: int

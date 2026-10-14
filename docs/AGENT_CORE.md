@@ -418,6 +418,14 @@ demandes tournaient déjà en parallèle et « annule » arrêtait la dernière 
 Fait en D (phase 16d) : exploration bornée (`agent/explore.py`, outil `explore`) :
 observer, demander au modèle jusqu'à trois actions avec un contexte réduit au but et à
 l'état, exécuter sous les politiques, au plus 8 étapes et 30 s. La phase D est complète.
+Fait en D (phase 16g, retours de l'utilisateur) : une exploration dont les actions
+terminent le but (« fait » avec l'action) s'arrête sans relecture ni étape de plus ;
+une relecture ratée (fenêtre en train de se redessiner) est refaite une fois. Une
+correction (« non, sur Spotify ») refait la demande jusqu'au bout : une étape qui ne fait
+que défaire (propriété d'outil `undoes`) ne conclut pas le tour, ni tant que la correction
+n'a pas fait autant d'actions constructives que la demande corrigée. Les préférences
+viennent des seuls mots de l'utilisateur (sa demande et sa correction), même après une
+page web. Le banc rejoue des corrections (`history` : les échanges qui précèdent).
 Fait en E (phase 15e) : compétences (`mikata/learn/skills.py`), qui remplacent
 `mikata/skills/`. Écarts à la section 3.6 : la vérification avant adoption se fait dans le
 code, sans rejouer la demande (rejouer une action sur le PC la referait deux fois) ; la

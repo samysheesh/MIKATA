@@ -409,3 +409,20 @@ def test_pick_on_page_links_stays_untrusted(tmp_path: Path) -> None:
     assert outcome.ok and outcome.trust is U
     assert world.run("return pick([], 'x')").kind == "outil"
     assert world.run("return pick('pas une liste', 'x')").kind == "script"
+
+
+def test_pick_returns_the_element_itself_not_its_text(tmp_path: Path) -> None:
+    """Phase 16g : choisir un contrôle rendait la représentation du dictionnaire
+    (« {'name': 'Jet Lag', ...} ») ; le clic cherchait alors un bouton de ce nom."""
+    jev = _Jev((1, 0.9))
+    world = World(tmp_path, jev=jev)
+    items = "[{'name': 'Accueil', 'kind': 'bouton'}, {'name': 'Jet Lag', 'kind': 'élément'}]"
+    outcome = world.run(f"c = pick({items}, 'le morceau ?')\nreturn c['name']")
+    assert outcome.ok and outcome.value == "Jet Lag"
+    assert jev.asked[0][1] == ["Accueil — bouton", "Jet Lag — élément"]  # étiquettes lisibles
+
+
+def test_an_element_given_where_a_name_is_expected_gives_its_name(tmp_path: Path) -> None:
+    world = World(tmp_path)
+    outcome = world.run("app = {'name': 'Steam', 'kind': 'appli'}\napps.open(name=app)")
+    assert outcome.ok and ("launch", "Steam") in world.desktop.log
