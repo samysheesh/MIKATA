@@ -408,3 +408,126 @@ class ListWindows(BaseTool[NoParams]):
             {"windows": [{"app": w.process, "title": w.title} for w in windows[:30]]}
         )
         return "Fenêtres ouvertes :\n" + "\n".join(lines)
+
+
+# -- liens d'applis (phase 17a) --------------------------------------------------------------
+#
+# Une appli s'ouvre souvent directement sur la bonne vue par son lien (« spotify:search:... »,
+# « steam://rungameid/730 », « ms-settings:bluetooth ») : c'est plus sûr et plus rapide que
+# de cliquer dans son interface (UFO², WALT). Les liens qu'une appli sait ouvrir sont
+# déclarés dans Windows : MIKATA les découvre (app_links), aucune liste écrite à la main.
+
+
+@register_tool
+class AppLinks(BaseTool[NoParams]):
+    name = "app_links"
+    sdk = "apps.links"
+    effect = Effect.READ
+    expected_s = 0.2
+    returns = "{appli: [schémas]}"
+    description = (
+        "Liste les applis installées qui s'ouvrent par un lien (« spotify: », « steam: », "
+        "« discord: », « ms-settings: »...), pour ouvrir une appli directement sur la bonne "
+        "vue avec open_app_link."
+    )
+    params = NoParams
+    terminal = False
+
+    async def run(self, args: NoParams) -> str:
+        links = await self.ctx.run_blocking(self.ctx.require_desktop().link_schemes)
+        by_app: dict[str, list[str]] = {}
+        for scheme, (app, _) in links.items():
+            by_app.setdefault(app, []).append(f"{scheme}:")
+        if not by_app:
+            raise ToolError("aucune appli ne déclare de lien sur ce PC")
+        lines = [f"- {app} : {', '.join(sorted(schemes)[:4])}" for app, schemes in by_app.items()]
+        return "Liens d'applis :\n" + "\n".join(sorted(lines, key=str.casefold))
+
+
+class AppLinkParams(BaseModel):
+    link: str = Field(
+        min_length=4,
+        max_length=500,
+        description="Lien d'appli (« spotify:search:Jet Lag », « steam://rungameid/730 », "
+        "« ms-settings:bluetooth ») ; les espaces et accents sont encodés pour toi",
+    )
+    background: bool = Field(
+        default=False,
+        description="true : ouvrir sans mettre l'appli devant l'utilisateur, pour agir "
+        "dedans (lancer une musique...) ; false : la lui montrer",
+    )
+
+
+def encode_link(link: str) -> tuple[str, str]:
+    """(schéma, lien) : le schéma en minuscules, le reste encodé (espaces, accents) sans
+    toucher à ce qui l'est déjà (« %20 » reste « %20 »)."""
+    from urllib.parse import quote
+
+    scheme, sep, rest = link.strip().partition(":")
+    if not sep or not scheme:
+        raise ToolError(f"pas un lien d'appli : « {link} » (attendu « schéma:... »)")
+    return scheme.casefold(), f"{scheme.casefold()}:{quote(rest, safe=LINK_SAFE)}"
+
+
+LINK_SAFE = "/:?=&%#+@,;!$'()*~"
+LINK_SETTLE_S = 4.0  # attente de la vue demandée, pour un lien ouvert en arrière-plan
+
+
+@register_tool
+class OpenAppLink(BaseTool[AppLinkParams]):
+    name = "open_app_link"
+    prepares = True
+    sdk = "apps.open_link"
+    # Conséquent : un lien peut agir (rejoindre un salon, lancer un jeu) ; après un contenu
+    # non fiable, un « oui » est demandé (sauf accès complet).
+    effect = Effect.CONSEQUENTIAL
+    expected_s = 1.0
+    description = (
+        "Ouvre une appli installée directement sur une vue par son lien (recherche, page, "
+        "réglage) : plus rapide et plus sûr que de cliquer dans l'interface. Les applis à "
+        "liens : app_links. Pour une page web : open_url ou browser_open."
+    )
+    params = AppLinkParams
+    terminal = True
+
+    def concludes(self, args: AppLinkParams) -> bool:
+        return not args.background  # ouverte en arrière-plan : pour agir dedans, une étape
+
+    async def run(self, args: AppLinkParams) -> str:
+        from mikata.tools.desktop import DENIED_SCHEMES
+
+        desktop = self.ctx.require_desktop()
+        scheme, link = encode_link(args.link)
+        if scheme in ("http", "https"):
+            raise ToolError("c'est une page web : open_url ou browser_open")
+        links = await self.ctx.run_blocking(desktop.link_schemes)
+        if scheme in DENIED_SCHEMES or scheme not in links:
+            raise ToolError(f"aucune appli installée n'ouvre les liens « {scheme}: »")
+        app, process = links[scheme]
+        await self.ctx.run_blocking(desktop.open_target, link, args.background, process)
+        if args.background:  # on va agir dedans : la vue doit être celle que l'on a demandée
+            await self._settle(process, link)
+        where = " en arrière-plan" if args.background else ""
+        return f"Lien ouvert dans {app}{where}."
+
+    async def _settle(self, process: str, link: str) -> None:
+        """Attend (au plus LINK_SETTLE_S) que la fenêtre montre ce que le lien demandait :
+        la recherche dans le champ de recherche, « bluetooth » dans les réglages. Sans cela,
+        la lecture suivante pouvait tomber sur la page d'avant, qui contenait parfois déjà
+        le titre cherché (constaté sur Spotify le 14/10). Jamais une erreur."""
+        import time
+        from urllib.parse import unquote
+
+        uia = self.ctx.uia
+        hint = unquote(re.split(r"[:/=]", link)[-1]).replace("+", " ").strip()
+        if uia is None or len(hint) < 3 or not re.search(r"[^\W\d_]", hint):
+            return
+        deadline = time.monotonic() + LINK_SETTLE_S
+        while time.monotonic() < deadline:
+            try:
+                window = await self.ctx.run_blocking(uia.window, None, process)
+                if await self.ctx.run_blocking(uia.find_text, window, hint):
+                    return
+            except ToolError:  # l'appli démarre encore
+                pass
+            await self.ctx.sleep(0.3)

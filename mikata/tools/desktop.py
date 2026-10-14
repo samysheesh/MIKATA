@@ -242,6 +242,114 @@ def _hosted_process(hwnd: int, host_pid: int) -> str:
     return next((name for name in found if name), "")
 
 
+# -- liens d'applis et arrière-plan (phase 17a) --------------------------------------------
+
+# Protocoles jamais ouverts par MIKATA : failles connues ou ouverture de documents distants
+# (ms-msdt : « Follina », search-ms, protocoles Office), ou trop larges (fichiers, scripts).
+DENIED_SCHEMES = frozenset(
+    {
+        "ms-msdt", "search-ms", "search", "ms-officecmd", "ms-appinstaller", "ms-word",
+        "ms-excel", "ms-powerpoint", "ms-visio", "ms-access", "ms-project", "ms-publisher",
+        "ms-spd", "ms-infopath", "ms-cxh", "ms-cxh-full", "file", "javascript", "vbscript",
+        "res", "mk", "its", "ms-its", "mhtml", "hcp", "shell", "ldap", "microsoft-edge",
+        "http", "https", "ftp",
+    }
+)  # fmt: skip
+# Protocoles du système sans programme déclaré dans le registre classique, sûrs et utiles.
+SYSTEM_LINKS = {"ms-settings": ("Paramètres Windows", "SystemSettings")}
+
+
+def _registered_links() -> dict[str, tuple[str, str]]:
+    """Schémas déclarés « URL Protocol » (HKCU puis HKLM) dont le programme est une appli
+    installée : schéma -> (appli, processus). Pas les composants de Windows, ni les
+    navigateurs (leurs pages s'ouvrent par `open_url`), ni les associations internes
+    (« explorer.assocprotocol.search-ms »), ni les crochets de jeux (« discord-1443... »)."""
+    import winreg
+
+    found: dict[str, tuple[str, str]] = dict(SYSTEM_LINKS)
+    windows_dir = os.environ.get("SYSTEMROOT", r"C:\Windows").casefold()
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            classes = winreg.OpenKey(hive, r"Software\Classes")
+        except OSError:
+            continue
+        with classes:
+            index = 0
+            while True:
+                try:
+                    scheme = winreg.EnumKey(classes, index)
+                except OSError:
+                    break
+                index += 1
+                key = scheme.casefold()
+                if key in found or not _linkable(key):
+                    continue
+                try:
+                    with winreg.OpenKey(classes, scheme) as entry:
+                        winreg.QueryValueEx(entry, "URL Protocol")
+                    with winreg.OpenKey(classes, rf"{scheme}\shell\open\command") as cmd:
+                        command = os.path.expandvars(str(winreg.QueryValueEx(cmd, "")[0]))
+                except OSError:
+                    continue
+                match = re.match(r'\s*"([^"]+)"|\s*(\S+)', command)
+                exe = (match.group(1) or match.group(2)) if match else ""
+                stem = Path(exe).stem
+                if (
+                    not exe.casefold().endswith(".exe")
+                    or exe.casefold().startswith(windows_dir)
+                    or stem.casefold() in BROWSER_PROGRAMS
+                ):
+                    continue
+                found[key] = (stem, stem)
+    return found
+
+
+BROWSER_PROGRAMS = frozenset({"brave", "chrome", "msedge", "iexplore", "firefox", "opera"})
+
+
+def _linkable(scheme: str) -> bool:
+    """Un schéma qu'une appli peut déclarer et que MIKATA peut ouvrir."""
+    return (
+        scheme not in DENIED_SCHEMES
+        and re.fullmatch(r"[a-z][a-z0-9+.-]{1,40}", scheme) is not None
+        and "assoc" not in scheme  # associations internes (dont « ...search-ms »)
+        and not any(denied in scheme for denied in ("search-ms", "ms-msdt"))
+        and re.search(r"-\d{6,}$", scheme) is None  # crochets de jeux
+    )
+
+
+def _keep_in_background(process: str, previous: int, timeout_s: float = 10.0) -> None:
+    """L'appli ouverte pour y agir passe devant (Spotify ignore la demande d'ouverture
+    minimisée, constaté le 14/10) : dès qu'une fenêtre de `process` prend le premier plan,
+    elle est minimisée et la fenêtre de l'utilisateur revient devant. L'appli reste
+    pilotable minimisée (arbre d'accessibilité, Invoke : vérifié sur Spotify). Rien d'autre
+    n'est jamais touché : si l'utilisateur change lui-même de fenêtre, on n'agit pas."""
+    import ctypes
+
+    user32 = ctypes.windll.user32  # type: ignore[attr-defined,unused-ignore]
+    wanted = process.casefold()
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        hwnd = user32.GetForegroundWindow()
+        if hwnd and hwnd != previous and _window_process(hwnd).casefold() == wanted:
+            user32.ShowWindow(hwnd, 6)  # SW_MINIMIZE
+            if previous and user32.IsWindow(previous):
+                user32.keybd_event(0x12, 0, 0, 0)  # Alt : lève le verrou de premier plan
+                user32.keybd_event(0x12, 0, 0x0002, 0)
+                user32.SetForegroundWindow(previous)
+            return
+        time.sleep(0.05)
+
+
+def _window_process(hwnd: int) -> str:
+    """Nom du programme d'une fenêtre (« Spotify »), "" si inconnu."""
+    import ctypes
+
+    pid = ctypes.c_ulong()
+    ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))  # type: ignore[attr-defined,unused-ignore]
+    return _process_name(pid.value) if pid.value else ""
+
+
 class WindowsDesktop:
     """Implémentation Windows de `tools.base.Desktop` (API Win32 via ctypes, pyperclip)."""
 
@@ -249,6 +357,7 @@ class WindowsDesktop:
         self._apps: list[AppEntry] = []
         self._apps_at = float("-inf")
         self._apps_lock = threading.Lock()
+        self._links: dict[str, tuple[str, str]] | None = None
 
     # -- applications -----------------------------------------------------------------
 
@@ -279,11 +388,33 @@ class WindowsDesktop:
     def launch(self, app: AppEntry) -> None:
         self.open_target(app.target)
 
-    def open_target(self, target: str) -> None:
+    def open_target(
+        self, target: str, background: bool = False, process: str | None = None
+    ) -> None:
+        """Ouvre une URL, un lien d'appli ou un fichier. `background` (phase 17a) : l'appli
+        `process` est ouverte pour y agir, sans rester devant l'utilisateur."""
+        import ctypes
+
+        previous = ctypes.windll.user32.GetForegroundWindow() if background else 0  # type: ignore[attr-defined,unused-ignore]
         try:
             os.startfile(target)  # type: ignore[attr-defined,unused-ignore]
         except OSError as exc:
             raise ToolError(f"Windows n'a pas pu ouvrir « {target} » : {exc}") from exc
+        if background and process:
+            threading.Thread(
+                target=_keep_in_background,
+                args=(process, previous),
+                name="mikata-arriere-plan",
+                daemon=True,
+            ).start()
+
+    def link_schemes(self) -> dict[str, tuple[str, str]]:
+        """Phase 17a : les liens que savent ouvrir les applis installées (protocoles
+        déclarés dans le registre) : schéma -> (nom de l'appli, nom de son processus)."""
+        with self._apps_lock:
+            if self._links is None:
+                self._links = _registered_links()
+            return dict(self._links)
 
     def open_folder(self, path: str, select: bool = False) -> None:
         """L'Explorateur sur `path` : le dossier s'ouvre, ou le fichier est sélectionné."""
@@ -468,7 +599,12 @@ class MacDesktop:
     def launch(self, app: AppEntry) -> None:
         self.open_target(app.target)
 
-    def open_target(self, target: str) -> None:
+    def link_schemes(self) -> dict[str, tuple[str, str]]:
+        return {}  # phase 17a : découverte des liens d'applis pas encore portée sur macOS
+
+    def open_target(
+        self, target: str, background: bool = False, process: str | None = None
+    ) -> None:
         """Ouvre une appli, un fichier ou une URL avec l'appli par défaut (open(1))."""
         if target.startswith(("http://", "https://")) or Path(target).exists():
             argv = ["open", target]

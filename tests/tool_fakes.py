@@ -17,11 +17,20 @@ from mikata.tools.base import (
     ToolContext,
     ToolError,
     UiControlInfo,
+    UiItemInfo,
     UiWindowInfo,
     WindowInfo,
 )
 
 NOW = datetime(2026, 10, 7, 15, 42, 7)
+
+
+FAKE_LINKS = {
+    "spotify": ("Spotify", "Spotify"),
+    "steam": ("steam", "steam"),
+    "discord": ("Discord", "Discord"),
+    "ms-settings": ("Paramètres Windows", "SystemSettings"),
+}
 
 
 class FakeDesktop:
@@ -71,8 +80,15 @@ class FakeDesktop:
     def launch(self, app: AppEntry) -> None:
         self._record("launch", app.name)
 
-    def open_target(self, target: str) -> None:
+    def open_target(
+        self, target: str, background: bool = False, process: str | None = None
+    ) -> None:
         self._record("open", target)
+        if background:
+            self.log.append(("background", process))
+
+    def link_schemes(self) -> dict[str, tuple[str, str]]:
+        return dict(FAKE_LINKS)
 
     def open_folder(self, path: str, select: bool = False) -> None:
         self._record("reveal", (path, select))
@@ -246,6 +262,19 @@ class FakeUi:
     ) -> str:
         self._record("click_in", (window.title, item, tuple(buttons), tuple(contains or ())))
         return f"« {buttons[0]} » de « {item} » cliqué."
+
+    def items(self, window: UiWindowInfo, query: str | None, limit: int) -> list[UiItemInfo]:
+        self._record("items", (window.title, query, limit))
+        return [
+            UiItemInfo(c.name, (c.text,) if c.text else ())
+            for c in self.scripted_controls
+            if c.kind == "élément" and (query or "").casefold() in f"{c.name} {c.text}".casefold()
+        ][:limit]
+
+    def find_text(self, window: UiWindowInfo, text: str) -> str | None:
+        self._record("find_text", (window.title, text))
+        hits = [c.name for c in self.scripted_controls if text.casefold() in c.name.casefold()]
+        return hits[0] if hits else None
 
     def set_text(self, window: UiWindowInfo, control: str, text: str) -> str:
         self._record("set_text", (window.title, control, text))

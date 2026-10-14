@@ -25,6 +25,7 @@ from mikata.tools.base import (
     ToolContext,
     ToolError,
     UiControlInfo,
+    UiItemInfo,
     UiWindowInfo,
     WindowInfo,
 )
@@ -79,6 +80,15 @@ def find_page(pages: dict[str, Page], url: str) -> Page | None:
     return None
 
 
+# Les liens que déclarent les applis du PC simulé (phase 17a) : schéma -> (appli, processus).
+SIM_LINKS = {
+    "spotify": ("Spotify", "Spotify"),
+    "steam": ("Steam", "steam"),
+    "discord": ("Discord", "Discord"),
+    "ms-settings": ("Paramètres", "SystemSettings"),
+}
+
+
 class SimDesktop:
     """Bureau : lancer une appli ouvre une fenêtre, la fermer la retire."""
 
@@ -88,6 +98,7 @@ class SimDesktop:
         self._handle = 100
         self.clipboard = ""
         self.opened: list[str] = []  # adresses et fichiers ouverts par le programme par défaut
+        self.backgrounded: list[str] = []  # liens ouverts en arrière-plan (phase 17a)
         self.revealed: list[str] = []  # dossiers montrés dans l'explorateur
         self.media: list[str] = []
         self.power_actions: list[str] = []
@@ -108,10 +119,18 @@ class SimDesktop:
     def launch(self, app: AppEntry) -> None:
         self._open_window(app.name)
 
-    def open_target(self, target: str) -> None:
+    def open_target(
+        self, target: str, background: bool = False, process: str | None = None
+    ) -> None:
         self.opened.append(target)
-        if target.startswith("spotify:"):  # le protocole de l'appli l'ouvre (phase 16g)
-            self._open_window("Spotify")
+        scheme = target.split(":", 1)[0].casefold()
+        if scheme in SIM_LINKS:  # le lien d'une appli l'ouvre (phase 17a)
+            self._open_window(SIM_LINKS[scheme][0])
+        if background:
+            self.backgrounded.append(target)
+
+    def link_schemes(self) -> dict[str, tuple[str, str]]:
+        return dict(SIM_LINKS)
 
     def open_folder(self, path: str, select: bool = False) -> None:
         self.revealed.append(path)
@@ -214,8 +233,14 @@ class SimNotifier:
 class SimUi:
     """Arbre d'accessibilité : des contrôles par appli ; un clic est noté."""
 
-    def __init__(self, controls: dict[str, list[tuple[str, str, str]]]) -> None:
+    def __init__(
+        self,
+        controls: dict[str, list[tuple[str, str, str]]],
+        buttons: dict[tuple[str, str], list[str]] | None = None,
+    ) -> None:
         self.controls_by_app = controls
+        # Phase 17a : les boutons d'un élément de liste (4e colonne d'une ligne de contrôles).
+        self.buttons = buttons or {}
         self.clicked: list[tuple[str, str]] = []
         self.texts: list[tuple[str, str, str]] = []
 
@@ -281,10 +306,44 @@ class SimUi:
         for name, _, text in self.controls_by_app.get(window.title, []):
             if name.casefold() != item.casefold():
                 continue
-            if all(c.casefold() in text.casefold() for c in contains or []):
-                self.clicked.append((window.title, name))
-                return f"« {buttons[0]} » de « {name} » cliqué."
+            if not all(c.casefold() in text.casefold() for c in contains or []):
+                continue
+            # Les boutons déclarés de la ligne (4e colonne) : celui demandé, ou refus.
+            own = self.buttons.get((window.title, name))
+            wanted = [b.casefold() for b in buttons]
+            pressed = buttons[0]
+            if own is not None:
+                match = [
+                    b
+                    for b in own
+                    if b.casefold() in wanted
+                    or any(b.casefold().startswith(w + " ") for w in wanted)
+                ]
+                if not match:
+                    raise ToolError(f"pas de bouton « {buttons[0]} » dans « {name} »")
+                pressed = match[0]
+            self.clicked.append((window.title, f"{pressed} ({name})"))
+            return f"« {pressed} » de « {name} » cliqué."
         raise ToolError(f"aucun élément « {item} »")
+
+    def items(self, window: UiWindowInfo, query: str | None, limit: int) -> list[UiItemInfo]:
+        words = (query or "").casefold().split()
+        found = []
+        for name, kind, text in self.controls_by_app.get(window.title, []):
+            if kind != "élément":
+                continue
+            buttons = tuple(self.buttons.get((window.title, name), []))
+            seen = f"{name} {text} {' '.join(buttons)}".casefold()
+            if all(word in seen for word in words):
+                found.append(UiItemInfo(name, (text,) if text else (), buttons))
+        return found[:limit]
+
+    def find_text(self, window: UiWindowInfo, text: str) -> str | None:
+        wanted = text.casefold()
+        for name, _, value in self.controls_by_app.get(window.title, []):
+            if wanted in name.casefold() or wanted in value.replace("+", " ").casefold():
+                return name
+        return None
 
     def set_text(self, window: UiWindowInfo, control: str, text: str) -> str:
         self.texts.append((window.title, control, text))
@@ -557,7 +616,9 @@ class SimWorld:
         self.index = SimIndex(spec.index, self.home)
         self.ui = SimUi(
             {app: [(r[0], r[1], r[2] if len(r) > 2 else "") for r in rows]
-             for app, rows in spec.controls.items()}
+             for app, rows in spec.controls.items()},
+            {(app, r[0]): [b.strip() for b in r[3].split(",") if b.strip()]
+             for app, rows in spec.controls.items() for r in rows if len(r) > 3},
         )  # fmt: skip
         self.trash = _Trash(root / "Corbeille")
         self.spoken: list[str] = []

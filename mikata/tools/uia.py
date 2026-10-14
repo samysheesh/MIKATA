@@ -119,6 +119,11 @@ class UiaClickParams(WindowParams):
         description="Texte de la même ligne, pour choisir parmi des contrôles de même nom "
         "(ex. le bouton « Play » de la ligne où figure « Tiakola »)",
     )
+    item: str | None = Field(
+        default=None,
+        description="Élément de liste (vu par uia_items) dans lequel cliquer le contrôle : "
+        "ex. control « Play », item « Jet Lag », near « Tiakola »",
+    )
 
 
 @register_tool
@@ -140,6 +145,10 @@ class UiaClick(BaseTool[UiaClickParams]):
         await _approve(self.ctx, guard, decision, f"Cliquer « {args.control} »")
         uia = _uia(self.ctx)
         win = await self.ctx.run_blocking(uia.window, args.window, args.process)
+        if args.item:  # phase 17a : le bouton de cet élément-là
+            item, shown = split_item(args.item)
+            contains = [text for text in (shown, args.near) if text]
+            return await self.ctx.run_blocking(uia.click_in, win, item, [args.control], contains)
         return await self.ctx.run_blocking(
             uia.click, win, args.control, args.kind, args.nth, args.near
         )
@@ -199,3 +208,117 @@ class UiaState(BaseTool[UiaStateParams]):
             # n'es pas en vocal », dont le modèle concluait qu'il n'y avait rien à faire.
             raise ToolError("état ambiant vide : rien à lire pour l'instant")
         return summary
+
+
+# -- éléments de liste et attente (phase 17a) -----------------------------------------------
+
+
+def split_item(text: str) -> tuple[str, str]:
+    """(nom, ce qu'il affiche) d'un élément donné tel que uia_items l'a montré :
+    « « Général » — Salon vocal • 2 membres » -> (« Général », « Salon vocal • 2 membres »).
+    Le modèle recopie souvent la ligne entière ; ce qu'elle affiche départage alors deux
+    éléments de même nom (le salon textuel et le salon vocal « Général »)."""
+    name, _, shown = text.partition(" — ")
+    shown = shown.split(" [boutons", 1)[0].split(" | ", 1)[0]
+    return name.strip().strip("«»").strip(), shown.strip()
+
+
+ITEMS_PATIENCE = 6  # ~3 s : des éléments cherchés pas encore affichés
+
+
+class UiaItemsParams(WindowParams):
+    query: str | None = Field(
+        default=None, description="Mots que l'élément doit contenir (titre, artiste...)"
+    )
+    limit: int = Field(default=20, ge=1, le=60, description="Éléments rendus, au plus")
+
+
+@register_tool
+class UiaItems(BaseTool[UiaItemsParams]):
+    name = "uia_items"
+    sdk = "ui.items"
+    effect = Effect.READ
+    output = Trust.UNTRUSTED
+    expected_s = 0.8
+    returns = "{window, rows: [{name, texts, buttons}]}"
+    description = (
+        "Lit les éléments de liste d'une fenêtre (résultats de recherche, salons, fichiers, "
+        "titres...) avec ce que chacun affiche et ses boutons : pour choisir le bon puis "
+        "cliquer dedans (uia_click avec item). Filtrable par des mots (query)."
+    )
+    params = UiaItemsParams
+    terminal = False
+
+    async def run(self, args: UiaItemsParams) -> str:
+        uia = _uia(self.ctx)
+        win = await self.ctx.run_blocking(uia.window, args.window, args.process)
+        items = await self.ctx.run_blocking(uia.items, win, args.query, args.limit)
+        for _ in range(ITEMS_PATIENCE):  # une vue qui vient de s'ouvrir se remplit encore
+            if items or not args.query:
+                break
+            await self.ctx.sleep(0.5)
+            items = await self.ctx.run_blocking(uia.items, win, args.query, args.limit)
+        if not items:
+            where = f" contenant « {args.query} »" if args.query else ""
+            raise ToolError(f"aucun élément de liste{where} dans « {win.title} »")
+        lines = [f"Éléments de « {win.title} » ({len(items)}) :"]
+        for item in items:
+            line = f"- « {item.name} »"
+            if item.texts:
+                line += " — " + " | ".join(item.texts)
+            if item.buttons:
+                line += " [boutons : " + ", ".join(item.buttons) + "]"
+            lines.append(line)
+        self.ctx.publish_data(
+            {
+                "window": win.title,
+                # « rows » et non « items » : `res.items` serait la méthode du dictionnaire.
+                "rows": [
+                    {"name": i.name, "texts": list(i.texts), "buttons": list(i.buttons)}
+                    for i in items
+                ],
+            }
+        )
+        return "\n".join(lines)
+
+
+class UiaWaitParams(WindowParams):
+    text: str = Field(
+        min_length=1, description="Texte attendu (nom d'un élément, contenu d'un champ)"
+    )
+    timeout_s: float = Field(default=8.0, ge=0.5, le=20.0, description="Attente maximale, en s")
+
+
+@register_tool
+class UiaWait(BaseTool[UiaWaitParams]):
+    name = "uia_wait"
+    sdk = "ui.wait"
+    effect = Effect.READ
+    expected_s = 1.5
+    description = (
+        "Attend qu'un texte apparaisse dans une fenêtre (une page qui se charge, un champ "
+        "qui montre la recherche, une appli qui démarre), sans agir. Avant de lire ou de "
+        "cliquer dans une vue qui vient de s'ouvrir."
+    )
+    params = UiaWaitParams
+    terminal = False
+
+    def time_limit(self) -> float:
+        return 25.0
+
+    async def run(self, args: UiaWaitParams) -> str:
+        import time
+
+        uia = _uia(self.ctx)
+        deadline = time.monotonic() + args.timeout_s
+        while True:
+            try:
+                win = await self.ctx.run_blocking(uia.window, args.window, args.process)
+                found = await self.ctx.run_blocking(uia.find_text, win, args.text)
+            except ToolError:  # appli pas encore ouverte, fenêtre en train de changer
+                found = None
+            if found is not None:
+                return f"Affiché : « {found[:120]} »."
+            if time.monotonic() >= deadline:
+                raise ToolError(f"« {args.text} » n'est pas apparu en {args.timeout_s:g} s")
+            await self.ctx.sleep(0.5)

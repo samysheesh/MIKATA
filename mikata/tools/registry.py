@@ -192,6 +192,7 @@ class ToolRegistry:
                 uia.pause_state(True)
             try:
                 args = tool.params.model_validate(call.arguments)
+                terminal = tool.concludes(args)
                 _TOOL_DATA.set(None)
                 async with asyncio.timeout(limit):
                     content, ok = await tool.run(args), True

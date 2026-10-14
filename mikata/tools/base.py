@@ -85,6 +85,12 @@ class BaseTool(Generic[P]):
     async def run(self, args: P) -> str:
         raise NotImplementedError
 
+    def concludes(self, args: P) -> bool:
+        """Phase 17a : l'appel conclut-il la commande (pas de second appel au modèle s'il
+        réussit) ? `terminal` par défaut ; un outil peut en décider selon ses arguments
+        (un lien ouvert en arrière-plan n'est qu'une étape)."""
+        return self.terminal
+
     def time_limit(self) -> float | None:
         """Délai propre à l'outil (phase 5 : confirmation orale, commande de 30 s...) ;
         None = `tools.timeout_s`."""
@@ -186,12 +192,25 @@ class UiControlInfo:
     text: str = ""
 
 
+@dataclass(frozen=True)
+class UiItemInfo:
+    """Phase 17a : un élément de liste (une ligne de résultats, un salon, un fichier...),
+    avec ce qu'il affiche et ses boutons : la bonne granularité pour choisir et agir."""
+
+    name: str
+    texts: tuple[str, ...] = ()
+    buttons: tuple[str, ...] = ()
+
+
 class Desktop(Protocol):
     """Bureau Windows (tools/desktop.py), simulé dans les tests."""
 
     def list_apps(self, refresh: bool = False) -> list[AppEntry]: ...
     def launch(self, app: AppEntry) -> None: ...
-    def open_target(self, target: str) -> None: ...  # URL ou fichier, programme par défaut
+    def open_target(  # URL, lien d'appli ou fichier, programme par défaut
+        self, target: str, background: bool = False, process: str | None = None
+    ) -> None: ...
+    def link_schemes(self) -> dict[str, tuple[str, str]]: ...  # schéma -> (appli, processus)
     def open_folder(self, path: str, select: bool = False) -> None: ...  # Explorateur dessus
     def windows(self) -> list[WindowInfo]: ...
     def foreground_window(self) -> WindowInfo | None: ...  # fenêtre active (phase 5)
@@ -243,6 +262,10 @@ class UiAutomation(Protocol):
         buttons: list[str],
         contains: list[str] | None = None,
     ) -> str: ...
+    def items(  # phase 17a : les éléments de liste, filtrés par des mots
+        self, window: UiWindowInfo, query: str | None, limit: int
+    ) -> list[UiItemInfo]: ...
+    def find_text(self, window: UiWindowInfo, text: str) -> str | None: ...  # phase 17a
     def set_text(self, window: UiWindowInfo, control: str, text: str) -> str: ...
     def state_summary(self) -> str: ...  # état ambiant en cache (Discord...), "" si rien
     def pause_state(self, paused: bool) -> None: ...  # le poller d'état saute ses lectures

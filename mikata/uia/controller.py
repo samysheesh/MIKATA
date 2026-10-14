@@ -29,7 +29,7 @@ from loguru import logger
 from rapidfuzz import fuzz
 
 from mikata.config import Config
-from mikata.tools.base import Desktop, ToolError, UiControlInfo, UiWindowInfo
+from mikata.tools.base import Desktop, ToolError, UiControlInfo, UiItemInfo, UiWindowInfo
 from mikata.uia.client import UiaAccessibilityClient
 from mikata.uia.state import AmbientState, load_uiautomation
 
@@ -159,6 +159,7 @@ class UiaBackend(_BackendBase):
         "TextControl": "texte",
         "DocumentControl": "document",
         "ListItemControl": "élément",
+        "DataItemControl": "élément",  # phase 17a : lignes de grilles (résultats Spotify...)
         "ListControl": "liste",
         "CheckBoxControl": "case",
         "RadioButtonControl": "case",
@@ -647,6 +648,56 @@ class UiController:
                 return done
         mention = f" qui mentionne « {' / '.join(contains or [])} »" if needs else ""
         raise ToolError(f"aucun élément « {item} »{mention} avec un bouton {' / '.join(buttons)}")
+
+    def items(self, window: UiWindowInfo, query: str | None, limit: int) -> list[UiItemInfo]:
+        """Phase 17a : les éléments de liste de la fenêtre (les plus extérieurs : une ligne,
+        pas ses cellules), dans l'ordre, avec leurs textes et leurs boutons ; ceux qui
+        contiennent tous les mots de `query` s'il est donné."""
+        root = self._backend.attach(window)
+        words = fold(query or "").split()
+        found: list[UiItemInfo] = []
+        stack = list(reversed(self._backend.children(root)))
+        visited = 0
+        while stack and visited < _MAX_VISITED and len(found) < limit:
+            node = stack.pop()
+            visited += 1
+            name = self._backend.node_name(node)
+            if name and self._backend.node_kind(node) == "élément":
+                info = self._item(node, name)
+                seen = fold(" ".join([info.name, *info.texts, *info.buttons]))
+                if all(word in seen for word in words):
+                    found.append(info)
+                continue  # ses cellules ne sont pas d'autres éléments
+            with contextlib.suppress(Exception):
+                stack.extend(reversed(self._backend.children(node)))
+        return found
+
+    def _item(self, node: Any, name: str) -> UiItemInfo:
+        texts: list[str] = []
+        buttons: list[str] = []
+        for inner in self._backend.walk(node, _ROW_NODES):
+            label = self._backend.node_name(inner).strip()
+            if not label or label == name:
+                continue
+            target = buttons if self._backend.node_kind(inner) == "bouton" else texts
+            if label not in target and label not in buttons:
+                target.append(label[:_NAME_MAX])
+        return UiItemInfo(name[:_NAME_MAX], tuple(texts[:8]), tuple(buttons[:6]))
+
+    def find_text(self, window: UiWindowInfo, text: str) -> str | None:
+        """Phase 17a : le premier contrôle dont le nom, ou le contenu d'un champ, contient
+        `text` ; None s'il n'y en a pas (encore). S'arrête dès qu'il le trouve."""
+        root = self._backend.attach(window)
+        wanted = fold(text).strip()
+        for node in self._backend.iter_walk(root, _MAX_VISITED):
+            name = self._backend.node_name(node)
+            if wanted in fold(name):
+                return name
+            if self._backend.node_kind(node) in _VALUE_KINDS:
+                value = self._backend.control_text(node)
+                if wanted in fold(value.replace("+", " ")):
+                    return f"{name} : {value}"
+        return None
 
     def _press_in(self, row: Any, names: list[str], needs: list[str]) -> str | None:
         """Le bouton `names` de l'élément `row` s'il mentionne `needs` : cliqué."""

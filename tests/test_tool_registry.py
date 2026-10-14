@@ -37,7 +37,8 @@ PHASE_4_TOOLS = {
     "get_weather",
     # media
     "media_control",
-    "spotify_play",  # phase 16g : l'appli Spotify du PC
+    "app_links",  # phase 17a : liens d'applis, éléments de liste, attente
+    "open_app_link",
     "set_volume",
     "mute",
     "set_output_device",
@@ -77,6 +78,8 @@ PHASE_12A_TOOLS = {  # pilotage fin des applications (arbre d'accessibilité Win
     "uia_click",
     "uia_set_text",
     "uia_state",
+    "uia_items",
+    "uia_wait",
 }
 PHASE_12B_TOOLS = {  # navigateur piloté (protocole DevTools)
     "browser_tabs",
@@ -110,7 +113,7 @@ TERMINAL = {
     "focus_window",
     "open_url",
     "media_control",
-    "spotify_play",
+    "open_app_link",
     "set_volume",
     "mute",
     "set_output_device",
