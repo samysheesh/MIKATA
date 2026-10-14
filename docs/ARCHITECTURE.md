@@ -459,6 +459,9 @@ skills:                             # phase 15e : compétences apprises (data/sk
   learn_effort: low
   route: true                       # phase 15j : aiguillage (toute formulation, toute langue)
   route_timeout_s: 3
+  jev: true                         # phase 15k : Jev d'abord (OPENROUTER_API_KEY), LLM s'il hésite
+  jev_threshold: 0.9
+  jev_timeout_s: 1.5
 files_index:                        # phase 12d : index local des fichiers (MFT + journal USN)
   enabled: true
   db: data/files_index.db           # SQLite WAL, jamais envoyé au LLM

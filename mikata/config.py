@@ -234,6 +234,12 @@ class SkillsConfig(_Section):
     # une compétence active dans n'importe quelle formulation ou langue.
     route: bool = True
     route_timeout_s: float = Field(default=3.0, gt=0, le=20)
+    # Phase 15k : Jev (TypeSafe, via OpenRouter) en premier étage de l'aiguillage, s'il y a
+    # une clé OPENROUTER_API_KEY. Il décide seul au-dessus du seuil ; en dessous, l'appel
+    # LLM de l'aiguillage décide.
+    jev: bool = True
+    jev_threshold: float = Field(default=0.9, gt=0.5, le=1)
+    jev_timeout_s: float = Field(default=1.5, gt=0, le=10)
 
     @model_validator(mode="before")
     @classmethod
@@ -444,8 +450,11 @@ class Secrets(BaseSettings):
     llm_api_key: SecretStr | None = None
     search_api_key: SecretStr | None = None
     elevenlabs_api_key: SecretStr | None = None  # ajout phase 11
+    openrouter_api_key: SecretStr | None = None  # phase 15k : Jev (aiguillage), via OpenRouter
 
-    @field_validator("llm_api_key", "search_api_key", "elevenlabs_api_key", mode="after")
+    @field_validator(
+        "llm_api_key", "search_api_key", "elevenlabs_api_key", "openrouter_api_key", mode="after"
+    )
     @classmethod
     def _empty_is_none(cls, value: SecretStr | None) -> SecretStr | None:
         if value is not None and not value.get_secret_value().strip():

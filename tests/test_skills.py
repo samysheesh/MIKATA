@@ -218,3 +218,16 @@ def test_politeness_never_eats_a_different_request() -> None:
     assert bind(pattern, "lance la dernière vidéo de Squeezie") is None
     assert bind(pattern, "balance le dernier opening de Naruto") is None
     assert bind(pattern, "ferme le dernier opening de Naruto") is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "lance le dernier opening de Bleach et monte le son à 40",
+        "lance le dernier opening de Naruto puis éteins l'écran",
+        "lance le dernier opening de One Piece and turn it up",
+    ],
+)
+def test_a_second_request_is_never_swallowed_as_a_value(command: str) -> None:
+    """Phase 15k : la fin de phrase n'est pas avalée par le dernier paramètre."""
+    assert bind("lance le dernier opening de {anime}", command) is None

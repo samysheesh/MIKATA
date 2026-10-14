@@ -3116,3 +3116,25 @@ récent de Naruto ? », « play the latest Bleach opening », « pon el último 
 Piece », « mets le dernier générique de Fairy Tail » : 8 sur 8, la bonne vidéo, en 1,8 à
 3,7 s au lieu de 6 à 7 s ; « ferme l'opening de Naruto » ne la déclenche jamais.
 Réglages : `skills.route`, `skills.route_timeout_s`.
+
+**15k — Jev en premier étage de l'aiguillage**
+
+[Jev](https://openrouter.ai/docs/guides/community/jev-tutorial) (TypeSafe, via OpenRouter)
+ne génère pas de texte : il choisit parmi des options et rend une probabilité. Une seule
+requête lui demande la compétence (ou « aucune ») et, pour chaque paramètre, lequel des
+morceaux de la phrase en est la valeur : la valeur est forcément un morceau exact de la
+phrase. Au-dessus de `skills.jev_threshold` (0,9), il décide seul ; sinon le petit appel
+LLM de la phase 15j décide (les deux partent ensemble). Clé : `OPENROUTER_API_KEY` dans
+`.env` (sans clé, rien ne change).
+
+Mesures (16 phrases en français, anglais, espagnol et allemand, 3 passages) : cas nets
+à p >= 0,96, cas douteux entre 0,52 et 0,77, aucune erreur au-dessus du seuil ; Jev répond
+en 375 à 391 ms en médiane (contre 1,0 à 1,25 s pour l'appel LLM), environ 0,00004 $ la
+phrase. De bout en bout (vidéo lancée, PC simulé) : 1,4 à 2,3 s au lieu de 6 à 7 s.
+
+Corrigé au passage : « lance le dernier opening de Bleach et monte le son » ne passe plus
+pour une valeur « Bleach et monte le son » ; la phrase va au modèle, qui fait les deux.
+
+```powershell
+uv run pytest tests/test_jev.py tests/test_skills_route.py
+```

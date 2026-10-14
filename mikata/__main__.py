@@ -105,6 +105,7 @@ def log_config_summary(config: Config) -> None:
         ("LLM_API_KEY", config.secrets.llm_api_key),
         ("SEARCH_API_KEY", config.secrets.search_api_key),
         ("ELEVENLABS_API_KEY", config.secrets.elevenlabs_api_key),
+        ("OPENROUTER_API_KEY", config.secrets.openrouter_api_key),
     ):
         logger.info("{} : {}", name, "définie" if value is not None else "absente (.env)")
 
@@ -226,6 +227,20 @@ def _known_folders() -> dict[str, Path]:
         return {}
 
 
+def build_jev(config: Config) -> Any:
+    """Phase 15k : Jev pour l'aiguillage des compétences, s'il y a une clé OpenRouter."""
+    key = config.secrets.openrouter_api_key
+    if not (config.skills.enabled and config.skills.jev) or key is None:
+        return None
+    from mikata.learn.jev import JevRouter
+
+    return JevRouter(
+        key.get_secret_value(),
+        threshold=config.skills.jev_threshold,
+        timeout_s=config.skills.jev_timeout_s,
+    )
+
+
 def build_agent(config: Config, phrases: Any = None, *, tools: bool = True) -> Agent:
     """Client LLM + outils + boucle agent. Refuse (ConfigError) sans clé API ou endpoint."""
     from mikata.agent.loop import Agent
@@ -258,6 +273,7 @@ def build_agent(config: Config, phrases: Any = None, *, tools: bool = True) -> A
         tools=registry,
         long_memory=ctx.memory,
         skills=ctx.skills,
+        jev=build_jev(config),
         usage=usage,
         open_apps=running_apps if desktop is not None else None,
         installed_apps=(

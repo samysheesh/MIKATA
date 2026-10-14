@@ -53,7 +53,7 @@ from mikata.agent.script_tool import (
 from mikata.config import Config
 from mikata.learn.playbook import Lesson, Playbook, render
 from mikata.learn.reflect import is_correction, reflect, should_reflect
-from mikata.learn.skills import Skill, SkillStore, call_code, induce, route, verify
+from mikata.learn.skills import Skill, SkillStore, call_code, induce, locate, route, verify
 from mikata.learn.trace import TraceStore, TurnTrace, trace_from_result
 from mikata.llm.base import Done, LLMClient, TextDelta, ToolCallReq, Usage
 from mikata.llm.prompts import active_window_title, build_messages, dynamic_context
@@ -487,6 +487,7 @@ class Agent:
         installed_apps: Callable[[], Sequence[str]] | None = None,
         playbook: Playbook | None = None,
         traces: TraceStore | None = None,
+        jev: Any = None,
     ) -> None:
         self.llm = llm
         self.config = config
@@ -504,6 +505,7 @@ class Agent:
         self._apps_at = float("-inf")
         self._tools_warmed = False
         self._summary_task: asyncio.Task[None] | None = None
+        self.jev = jev  # phase 15k : premier étage de l'aiguillage (mikata.learn.jev)
         # Phase 15e : compétences. Dernier programme qui peut en devenir une (demande,
         # code), compétences du dernier tour (pour une correction), apprentissage en fond.
         self._skill_task: asyncio.Task[None] | None = None
@@ -539,6 +541,9 @@ class Agent:
         prewarm = getattr(self.llm, "prewarm", None)
         if prewarm is not None:
             jobs.append(prewarm())
+        skills = self.skills.usable() if self.skills is not None else []
+        if self.jev is not None and any(s.status == "active" for s in skills):
+            jobs.append(self.jev.prewarm())  # phase 15k : aiguillage prêt
         await asyncio.gather(*jobs)
 
     def _say_phrase(self, speech: SpeechSink, key: str) -> None:
@@ -942,6 +947,33 @@ class Agent:
         return asyncio.create_task(self._route(command, active), name="aiguillage")
 
     async def _route(
+        self, command: str, active: list[Skill]
+    ) -> tuple[Skill, dict[str, str]] | None:
+        """Aiguillage en deux étages (phase 15k). Jev (~0,4 s) décide seul quand il est sûr
+        (compétence ou « aucune ») ; s'il hésite, ne répond pas ou n'est pas configuré, le
+        petit appel LLM décide. Les deux partent ensemble : un doute de Jev ne coûte rien."""
+        llm = asyncio.create_task(self._route_llm(command, active))
+        try:
+            if self.jev is not None:
+                try:
+                    async with asyncio.timeout(self.config.skills.jev_timeout_s):
+                        decision = await self.jev.decide(command, active)
+                except TimeoutError:
+                    logger.info("Jev : trop lent, l'aiguillage LLM décide.")
+                else:
+                    if decision.kind == "aucune":
+                        return None
+                    if decision.kind == "compétence" and decision.skill is not None:
+                        values = {k: locate(command, v) for k, v in decision.values.items()}
+                        if all(values.values()):
+                            return decision.skill, values  # type: ignore[return-value]
+            return await llm
+        finally:
+            if not llm.done():
+                llm.cancel()
+                await asyncio.gather(llm, return_exceptions=True)
+
+    async def _route_llm(
         self, command: str, active: list[Skill]
     ) -> tuple[Skill, dict[str, str]] | None:
         start = time.monotonic()
@@ -1444,5 +1476,7 @@ class Agent:
         aclose = getattr(self.llm, "aclose", None)
         if aclose is not None:
             await aclose()
+        if self.jev is not None:
+            await self.jev.aclose()
         if self.tools is not None:
             await self.tools.aclose()

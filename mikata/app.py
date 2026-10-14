@@ -635,7 +635,7 @@ class App:
             return secret.get_secret_value() if secret is not None else None
 
         applied = []
-        for name in ("llm_api_key", "search_api_key", "elevenlabs_api_key"):
+        for name in ("llm_api_key", "search_api_key", "elevenlabs_api_key", "openrouter_api_key"):
             if value(old, name) == value(new, name):
                 continue
             applied.append(f"secrets.{name}")
@@ -648,6 +648,12 @@ class App:
                 registry = self._agent.tools
                 if registry is not None:
                     registry.ctx.search_api_key = value(new, name)
+            elif name == "openrouter_api_key" and self._agent is not None:
+                from mikata.__main__ import build_jev
+
+                if self._agent.jev is not None:
+                    await self._agent.jev.aclose()
+                self._agent.jev = build_jev(self.config)
             elif name == "elevenlabs_api_key":
                 apply_voice = getattr(self._speaker.tts, "apply", None) if self._speaker else None
                 if apply_voice is not None:

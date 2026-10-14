@@ -161,6 +161,11 @@ def _literal(text: str) -> list[str]:
     return [re.escape(word) for word in fold(text).split()]
 
 
+# Phase 15k : une valeur qui contient une seconde demande (« lance l'opening de Bleach et
+# monte le son ») n'en est pas une : la phrase va au modèle, qui fera les deux.
+_SECOND_ACTION = re.compile(r"\b(?:et|puis|ensuite|apres|and|then|also|aussi)\b")
+
+
 def bind(pattern: str, command: str) -> dict[str, str] | None:
     """Valeurs des paramètres si `command` colle au motif, sinon None."""
     regex = compile_pattern(pattern)
@@ -173,8 +178,8 @@ def bind(pattern: str, command: str) -> dict[str, str] | None:
         name: command[match.start(name) : match.end(name)].strip(" ,.;:!?'\"«»")
         for name in regex.groupindex
     }
-    if any(not value for value in values.values()):
-        return None
+    if any(not value or _SECOND_ACTION.search(fold(value)) for value in values.values()):
+        return None  # vide, ou « Bleach et monte le son » : une seconde demande, pas une valeur
     return values
 
 

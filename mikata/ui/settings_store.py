@@ -72,6 +72,7 @@ SECRET_NAMES = {
     "LLM_API_KEY": "Clé du LLM",
     "SEARCH_API_KEY": "Clé de recherche web",
     "ELEVENLABS_API_KEY": "Clé ElevenLabs",  # ajout phase 11
+    "OPENROUTER_API_KEY": "Clé OpenRouter (Jev)",  # phase 15k
 }
 _YAML_WORDS = {"true", "false", "yes", "no", "on", "off", "null", "~", "y", "n"}
 _PLAIN = re.compile(r"^[A-Za-z_][A-Za-z0-9_./-]*$")
@@ -244,7 +245,12 @@ class ConfigEditor:
         return getattr(getattr(Config(), section), name)
 
     def set(self, key: str, value: Any) -> None:
-        if key.split(".")[-1] in ("llm_api_key", "search_api_key", "elevenlabs_api_key"):
+        if key.split(".")[-1] in (
+            "llm_api_key",
+            "search_api_key",
+            "elevenlabs_api_key",
+            "openrouter_api_key",
+        ):
             raise EditorError("les secrets vont dans .env, jamais dans config.yaml")
         self.text = set_value(self.text, key, value)
 
