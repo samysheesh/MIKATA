@@ -54,6 +54,7 @@ SETTINGS: tuple[SettingSpec, ...] = (
     SettingSpec("wake.verifier_threshold", "Seuil du vérificateur de voix", True),
     SettingSpec("llm.reasoning_effort", "Réflexion par défaut", True, "none, low, medium, high"),
     SettingSpec("agent.follow_up_s", "Fenêtre de suivi", True, "0 : désactivée"),
+    SettingSpec("agent.narration", "Tâches longues", True, "bavard ou discret"),  # phase 15c
     SettingSpec("agent.history_persist_h", "Durée de l'historique", True),
     SettingSpec("ui.skin", "Skin de la mascotte", True),
     SettingSpec("ui.bubble_s", "Durée de la bulle", True),

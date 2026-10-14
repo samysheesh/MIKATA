@@ -26,6 +26,14 @@ PHRASES: dict[str, str] = {
     "error": "Désolé, quelque chose s'est mal passé.",
     "reset": "D'accord, nouvelle conversation.",
     "voice_fallback": "Je passe sur ma voix de base.",  # phase 11 : ElevenLabs indisponible
+    # Phase 15c : phrases d'attente (réglage agent.narration « bavard »), selon l'étape.
+    "wait_thinking": "Je réfléchis, un instant.",
+    "wait_browser": "Je suis sur la page, une seconde.",
+    "wait_search": "Je cherche sur internet.",
+    "wait_files": "Je regarde dans tes fichiers.",
+    "wait_app": "Je regarde dans l'application.",
+    "wait_work": "Je m'en occupe, un instant.",
+    "wait_long": "Ça prend un peu plus de temps, je continue.",
 }
 FALLBACK_KEY = "voice_fallback"
 

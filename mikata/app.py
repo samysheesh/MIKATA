@@ -131,6 +131,8 @@ LIVE_SETTINGS = frozenset(
         "agent.thinking_sound_after_s",
         "audio.output_device",  # phase 15b : la sortie change sans redémarrer
         "guard.full_access",  # relu à chaque tour par la boucle
+        "agent.narration",  # phase 15c
+        "agent.narration_after_s",
         "audio.earcon_volume",
         "llm.reasoning_effort",
         "ui.skin",  # lus par l'interface elle-même ; phase 11 : la voix du profil aussi

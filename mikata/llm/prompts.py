@@ -105,6 +105,20 @@ EXEMPLES (transcription -> ce que tu fais)
 - « explique-moi comment marche un frigo » -> aucun outil : tu expliques en 3 à 5 phrases.
 """
 
+# Phase 15c (réglage agent.narration « bavard ») : le modèle commente les tâches longues.
+NARRATION_NOTE = """\
+TÂCHES LONGUES
+Quand une demande prend plusieurs étapes (navigateur, recherche, fichiers, programme,
+application à explorer), l'utilisateur attend sans rien voir : tiens-le au courant.
+- Avant chaque étape qui prend du temps, écris une phrase très courte qui dit ce que tu fais
+  ou ce que tu viens de trouver, puis appelle l'outil dans la même réponse : « Je cherche sur
+  YouTube. », « J'ai trouvé l'opening 27, je le lance. », « Il y a trois fichiers, je prends
+  le plus récent. »
+- Jamais pour une action simple et rapide (ouvrir une appli, le volume, une touche, la
+  météo) : là, appelle l'outil sans rien écrire.
+- Une seule phrase par étape, jamais la même deux fois, jamais de détail technique.
+"""
+
 JOURS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
 MOIS = (
     "janvier",
@@ -169,8 +183,12 @@ def build_messages(
     skills: Sequence[str] = (),
     script_guide: str | None = None,
     lessons: str = "",
+    narration: bool = False,
 ) -> list[dict[str, Any]]:
-    messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    # Phase 15c : la consigne des tâches longues complète le prompt système ; fixe tant que
+    # le réglage ne change pas (reste dans le cache de prompt).
+    system = f"{SYSTEM_PROMPT}\n{NARRATION_NOTE}" if narration else SYSTEM_PROMPT
+    messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
     if script_guide:  # phase 14d : notice des programmes, fixe (reste dans le cache de prompt)
         messages.append({"role": "system", "content": script_guide})
     if installed_apps:

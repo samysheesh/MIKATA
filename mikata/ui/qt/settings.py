@@ -71,6 +71,10 @@ REASONING = {
     "medium": "Moyenne",
     "high": "Approfondie (plus lent)",
 }
+NARRATION = {
+    "bavard": "Bavard : dit ce qu'il fait",
+    "discret": "Discret : seulement le résultat",
+}
 HISTORY_PRESETS = {
     1: "1 heure",
     12: "12 heures",
@@ -608,6 +612,13 @@ class SettingsWindow(QWidget):
             "llm.reasoning_effort",
             self._choice("llm.reasoning_effort", REASONING),
             "« Réfléchis bien » à la voix pousse au maximum pour une seule demande.",
+        )
+        self._setting(
+            answers_layout,
+            "agent.narration",
+            self._choice("agent.narration", NARRATION),
+            "Sur une demande qui dure (YouTube, recherche, fichiers), MIKATA dit ce qu'il fait "
+            "et ce qu'il trouve, au lieu d'attendre en silence.",
         )
         self._setting(
             answers_layout,

@@ -292,6 +292,12 @@ class AgentConfig(_Section):
     follow_up_s: float = Field(default=6, ge=0)
     session_reset_min: float = Field(default=10, gt=0)
     thinking_sound_after_s: float = Field(default=1.2, ge=0)
+    # Ajout phase 15c. « bavard » : sur une demande qui dure, MIKATA dit ce qu'il fait ou ce
+    # qu'il a trouvé (le modèle, entre deux étapes) et, s'il n'a rien dit après
+    # narration_after_s secondes, une phrase d'attente selon l'étape en cours (en cache, sans
+    # LLM). « discret » : seulement le son de réflexion puis le résultat.
+    narration: Literal["bavard", "discret"] = "bavard"
+    narration_after_s: float = Field(default=5, ge=1)
     history_max_tokens: int = Field(default=6000, ge=500)  # ajout phase 3 : §6, ~6 000 tokens
     # Ajouts phase 6. Historique gardé sur disque (data/history.json) entre deux démarrages,
     # et `history_persist_h` heures sans interaction au lieu de session_reset_min (durée

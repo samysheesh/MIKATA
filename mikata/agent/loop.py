@@ -126,6 +126,93 @@ class CachedPhrases(Protocol):
     def get(self, key: str) -> Any: ...
 
 
+# Phase 15c : phrase d'attente (clé de PHRASES) selon l'étape en cours.
+_ACTIVITY_PREFIXES = (
+    ("browser_", "browser"),
+    ("web_search", "search"),
+    ("fetch_page", "search"),
+    ("find_", "files"),
+    ("list_folder", "files"),
+    ("read_file", "files"),
+    ("uia_", "app"),
+)
+_SDK_CALL = re.compile(r"\b([a-z][a-z0-9_]*)\s*\(")
+
+
+def activity_of(calls: Sequence[ToolCallReq]) -> str:
+    """L'étape lancée par ces appels : browser, search, files, app ou work."""
+    names: list[str] = []
+    for call in calls:
+        if call.name == SCRIPT_TOOL:  # un programme : les fonctions qu'il appelle
+            names.extend(_SDK_CALL.findall(str(call.arguments.get("code", ""))))
+        else:
+            names.append(call.name)
+    for prefix, kind in _ACTIVITY_PREFIXES:
+        if any(name.startswith(prefix) for name in names):
+            return kind
+    return "work"
+
+
+class Narrator:
+    """Phase 15c (réglage agent.narration « bavard ») : destination des phrases d'une
+    commande qui retient quand MIKATA a parlé pour la dernière fois. `run` dit une phrase
+    d'attente (en cache, sans LLM) si rien n'a été dit `after_s` secondes après le début,
+    selon l'étape en cours (`activity`), puis « ça prend un peu plus de temps » après un
+    nouveau silence de 2 × `after_s`. Jamais pendant une écoute (confirmation)."""
+
+    MAX_LINES = 2
+    POLL_S = 0.2
+
+    def __init__(
+        self,
+        speech: SpeechSink,
+        say_phrase: Callable[[SpeechSink, str], None],
+        after_s: float,
+    ) -> None:
+        self._speech = speech
+        self._say_phrase = say_phrase
+        self.after_s = after_s
+        self.activity = "thinking"
+        self.listening = False
+        self.lines: list[str] = []  # phrases d'attente dites (clés de PHRASES)
+        self._started = time.monotonic()
+        self._last_said: float | None = None
+
+    def say(self, text: str) -> None:
+        self._last_said = time.monotonic()
+        self._speech.say(text)
+
+    def say_audio(self, pcm: Any, sample_rate: int) -> None:
+        self._last_said = time.monotonic()
+        self._speech.say_audio(pcm, sample_rate)
+
+    def __getattr__(self, name: str) -> Any:  # drain, cancelled... de la vraie destination
+        return getattr(self._speech, name)
+
+    def due(self, now: float) -> str | None:
+        """La phrase d'attente à dire maintenant, ou None."""
+        if self.listening or len(self.lines) >= self.MAX_LINES:
+            return None
+        if self._last_said is None:
+            if now - self._started >= self.after_s:
+                return f"wait_{self.activity}"
+            return None
+        if now - self._last_said >= 2 * self.after_s and "wait_long" not in self.lines:
+            return "wait_long"
+        return None
+
+    async def run(self) -> None:
+        while len(self.lines) < self.MAX_LINES:
+            await asyncio.sleep(self.POLL_S)
+            key = self.due(time.monotonic())
+            if key is None:
+                continue
+            key = key if key in PHRASES else "wait_work"
+            logger.info("Narration : « {} » (étape : {}).", PHRASES[key], self.activity)
+            self.lines.append(key)
+            self._say_phrase(self, key)
+
+
 class SilentSpeech:
     """Destination muette (option --ask --no-audio) : le texte est seulement renvoyé."""
 
@@ -163,6 +250,7 @@ class TurnResult:
     # Ajouts phase 14e : résultats des outils directs (hors programmes), tour teinté.
     direct_results: list[ToolResult] = field(default_factory=list)
     tainted: bool = False
+    narration: list[str] = field(default_factory=list)  # phase 15c : phrases d'attente dites
 
     @property
     def effort_label(self) -> str:
@@ -187,6 +275,23 @@ class TurnResult:
         if self.rounds:
             return f"{self.rounds} étape(s) d'outils, {self.llm_calls} appel(s) LLM"
         return f"réponse directe, {self.llm_calls} appel(s) LLM"
+
+
+def _listening(
+    narrator: Narrator, listen: Callable[[float], Awaitable[str]] | None
+) -> Callable[[float], Awaitable[str]] | None:
+    """L'écoute d'une réponse (confirmation) suspend les phrases d'attente."""
+    if listen is None:
+        return None
+
+    async def wrapped(timeout_s: float) -> str:
+        narrator.listening = True
+        try:
+            return await listen(timeout_s)
+        finally:
+            narrator.listening = False
+
+    return wrapped
 
 
 def _with_reasoning(messages: list[dict[str, Any]], effort: str | None) -> list[dict[str, Any]]:
@@ -437,6 +542,14 @@ class Agent:
             self._say_phrase(speech, "reset")
             result.answer, result.outcome = PHRASES["reset"], "reset"
             return result
+        narrator: Narrator | None = None
+        narrating: asyncio.Task[None] | None = None
+        # Fenêtre de suivi : la phrase sera peut-être ignorée, MIKATA ne dit rien d'avance.
+        if self.config.agent.narration == "bavard" and not follow_up:
+            narrator = Narrator(speech, self._say_phrase, self.config.agent.narration_after_s)
+            speech = narrator
+            listen = _listening(narrator, listen)
+            narrating = asyncio.create_task(narrator.run())
         try:
             async with asyncio.timeout(llm_cfg.turn_timeout_s):
                 await self._run_turn(request.text, speech, result, on_phase, listen, follow_up)
@@ -445,6 +558,10 @@ class Agent:
             result.outcome = "timeout"
             self._say_phrase(speech, "timeout")
         finally:
+            if narrating is not None:
+                narrating.cancel()
+            if narrator is not None:
+                result.narration = [PHRASES[key] for key in narrator.lines]
             if self.usage is not None and result.llm_calls:
                 result.cost_usd = self.usage.record(label, result.usage, result.llm_calls)
         return result
@@ -504,6 +621,7 @@ class Agent:
             skills=skills_index,
             script_guide=self._script_guide,
             lessons=render(lessons),
+            narration=self.config.agent.narration == "bavard",
         )
         schemas = self.tools.schemas() if self.tools is not None else []
         if self._script_guide is not None:
@@ -594,16 +712,22 @@ class Agent:
                 if not spoken:
                     self._say_phrase(speech, "error")
                 break
+            if isinstance(speech, Narrator):
+                speech.activity = activity_of(reply.calls)
             with turn_context(turn):  # les outils parlent et écoutent dans cette commande
                 results = await self._run_tools(reply, messages, steps, result, on_phase, state)
-            spoken.extend(turn.spoken)  # ex. « Extinction dans 5 secondes... »
+            if isinstance(speech, Narrator):
+                speech.activity = "thinking"
+            tool_spoken = list(turn.spoken)  # ex. « Extinction dans 5 secondes... »
+            spoken.extend(tool_spoken)
             turn.spoken.clear()
             earlier_failure = any(not r.ok for r in result.direct_results) or any(
                 not outcome.ok for outcome in result.scripts
             )
             # Après un échec dans le tour, pas de « C'est fait » automatique : seul un outil
-            # ou un programme qui a dit sa propre phrase conclut ; sinon le modèle explique.
-            if all(r.ok and r.terminal for r in results) and (spoken or not earlier_failure):
+            # ou un programme qui a dit sa propre phrase conclut ; sinon le modèle explique
+            # (une phrase du modèle avant ses outils annonce une étape, elle ne conclut pas).
+            if all(r.ok and r.terminal for r in results) and (tool_spoken or not earlier_failure):
                 result.shortcut = True
                 if not spoken:  # une action simple : « C'est fait » en cache
                     self._say_phrase(speech, "done")

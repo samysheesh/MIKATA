@@ -123,6 +123,8 @@ agent:
   follow_up_use_llm_gate: true     # suivi : le LLM dit si la phrase s'adresse à MIKATA
   session_reset_min: 10
   thinking_sound_after_s: 1.2
+  narration: bavard                # tâches longues : dit ce qu'il fait (bavard) ou seulement le résultat (discret)
+  narration_after_s: 5             # bavard : phrase d'attente si rien n'a été dit après N s
   history_max_tokens: 6000         # historique de conversation envoyé au LLM
   history_persist: true            # historique gardé dans data/history.json (redémarrages)
   history_persist_h: 168           # ... N heures sans interaction (7 jours ; « garde la conversation un mois »)
