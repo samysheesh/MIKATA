@@ -3067,3 +3067,15 @@ une valeur (par exemple « range tous les fichiers texte du bureau dans un dossi
 le bureau », puis Archives, Brouillons, Vieux) ; `data/skills/` contient la compétence, et
 `data/logs/mikata.log` dit « active après 3 réussites ». La cinquième fois, le journal dit
 « rejouée en local » et la réponse est immédiate.
+
+**15f — la sortie suit celle de Windows**
+
+Avec `audio.output_device: default`, MIKATA relève toutes les 2 s la sortie par défaut de
+Windows et bascule dessus quand elle change (casque Bluetooth allumé après le démarrage,
+écran débranché), jamais au milieu d'une commande. Un casque apparu après le démarrage
+fait relire la liste des périphériques (micro et sortie rouverts, environ une seconde sans
+micro). Une sortie choisie par son nom dans les réglages ne bouge jamais toute seule.
+
+À vérifier : MIKATA lancé, allumer (ou éteindre) le casque ; dans les 5 s, le journal dit
+« Sortie de Windows changée » ou « Périphériques audio relus », et MIKATA répond dans la
+nouvelle sortie.

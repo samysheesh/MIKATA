@@ -166,6 +166,15 @@ class AudioCapture:
             count += 1
         return count
 
+    def reopen(self, device: DeviceInfo, loop: asyncio.AbstractEventLoop) -> None:
+        """Phase 15f : rouvre le micro (liste des périphériques relue, nouvel index). Les
+        trames continuent d'arriver dans la même file."""
+        self.stop()
+        self.device = device
+        self._channels = min(device.max_input_channels, 8)
+        self._rate = int(device.default_samplerate)
+        self.start(loop)
+
     def stop(self) -> None:
         """Ferme le flux et attend le thread de traitement. Idempotent."""
         self._stopping.set()

@@ -291,6 +291,7 @@ class App:
         self._detector = detector
         self._player = player
         self._earcons = earcons or {}
+        self._audio_broken = False  # phase 15f : relecture des périphériques à refaire
         self._hotkeys = hotkeys
         self._cpu = cpu
         self._vad = vad
@@ -568,24 +569,124 @@ class App:
         """Phase 15b : nouvelle sortie audio (ou nouveau volume des sons) sans redémarrer.
         Les sons d'interface sont refaits au taux de la nouvelle sortie."""
         from mikata.__main__ import find_output_device
-        from mikata.audio.earcons import Earcons
 
         player = self._player
         if player is None or not hasattr(player, "switch"):
             return
+        from mikata.audio.devices import DeviceNotFoundError
+
         try:
             if new_device:
-                device = await asyncio.to_thread(find_output_device, config)
+                try:
+                    device = await asyncio.to_thread(find_output_device, config)
+                except DeviceNotFoundError:  # branché après le démarrage : liste relue
+                    await self._rescan_audio("sortie choisie dans les réglages")
+                    return
                 await asyncio.to_thread(player.switch, device, asyncio.get_running_loop())
-            self._earcons = await asyncio.to_thread(
-                Earcons,
-                config.resolve("assets/sounds"),
-                player.sample_rate,
-                config.audio.earcon_volume,
-            )
+            await self._rebuild_earcons()
         except Exception as exc:  # introuvable ou refusé : l'ancienne sortie reste
             logger.error("Sortie audio non appliquée : {}", exc)
             self._publish_ui("config", applied=[], restart=[], error=f"sortie audio : {exc}")
+
+    async def _rebuild_earcons(self) -> None:
+        """Sons d'interface au taux de la sortie en cours."""
+        from mikata.audio.earcons import Earcons
+
+        if self._player is None:
+            return
+        self._earcons = await asyncio.to_thread(
+            Earcons,
+            self.config.resolve("assets/sounds"),
+            self._player.sample_rate,
+            self.config.audio.earcon_volume,
+        )
+
+    async def _follow_output(self, source: Any) -> None:
+        """Phase 15f : avec `audio.output_device: default`, MIKATA parle toujours dans la
+        sortie de Windows, même changée après le démarrage (casque Bluetooth allumé, écran
+        débranché). Jamais au milieu d'une commande : la phrase en cours n'est pas coupée."""
+        from mikata.audio.follow import POLL_S, DefaultOutputWatch
+
+        watch = DefaultOutputWatch()
+        try:
+            while True:
+                await asyncio.sleep(POLL_S)
+                player = self._player
+                if player is None or self.config.audio.output_device.casefold() != "default":
+                    continue
+                if self._audio_broken:  # relecture précédente ratée : on réessaie
+                    await self._rescan_audio("nouvel essai")
+                    continue
+                if self._active:
+                    continue
+                target = watch.update(await source.name(), player.device.name)
+                if target is not None:
+                    await self._move_output(target)
+        finally:
+            source.close()
+
+    async def _move_output(self, name: str) -> None:
+        """Bascule sur la sortie `name` ; si PortAudio ne la connaît pas encore (branchée
+        après le démarrage), relit toute la liste des périphériques."""
+        import sounddevice as sd
+
+        from mikata.audio.devices import collect_devices, filter_preferred
+        from mikata.audio.follow import same_device
+
+        assert self._player is not None
+        devices = filter_preferred(await asyncio.to_thread(collect_devices, sd))
+        found = next(
+            (d for d in devices if d.supports("output") and same_device(d.name, name)), None
+        )
+        if found is None:
+            await self._rescan_audio(f"nouvelle sortie « {name} »")
+            return
+        logger.info("Sortie de Windows changée : MIKATA passe sur « {} ».", found.name)
+        try:
+            await asyncio.to_thread(self._player.switch, found, asyncio.get_running_loop())
+            await self._rebuild_earcons()
+        except Exception as exc:
+            logger.error("Changement de sortie impossible : {}", exc)
+
+    async def _rescan_audio(self, reason: str) -> None:
+        """Relit la liste des périphériques de PortAudio (figée à son démarrage) et rouvre
+        le micro et la sortie. Les flux doivent être fermés pendant la relecture : une
+        seconde environ sans micro."""
+        import sounddevice as sd
+
+        from mikata.__main__ import _refresh_portaudio
+        from mikata.audio.devices import collect_devices, default_device_index, find_device
+
+        player, capture = self._player, self._audio
+        if player is None:
+            return
+        cfg = self.config.audio
+        loop = asyncio.get_running_loop()
+        logger.info("Périphériques audio relus ({}).", reason)
+
+        def reopen() -> None:
+            if capture is not None:
+                capture.stop()
+            player.close()
+            _refresh_portaudio(sd)
+            devices = collect_devices(sd)
+            out = find_device(
+                devices, cfg.output_device, "output", default_device_index(sd, "output")
+            )
+            mic = find_device(devices, cfg.input_device, "input", default_device_index(sd, "input"))
+            player.switch(out, loop)
+            reopen_mic = getattr(capture, "reopen", None)
+            if reopen_mic is not None:
+                reopen_mic(mic, loop)
+
+        try:
+            await asyncio.to_thread(reopen)
+        except Exception as exc:  # périphérique absent à cet instant : nouvel essai bientôt
+            self._audio_broken = True
+            logger.warning("Périphériques audio non rouverts ({}) : nouvel essai.", exc)
+            return
+        self._audio_broken = False
+        await self._rebuild_earcons()
 
     def _refresh_state(self) -> None:
         """État affiché = le plus prioritaire des états des commandes en cours."""
@@ -661,6 +762,14 @@ class App:
                     )
             if self._hotkeys is not None:
                 self._start_hotkeys()
+            if self._player is not None and hasattr(self._player, "switch"):
+                from mikata.audio.follow import default_output_source
+
+                source = default_output_source()
+                if source is not None:  # phase 15f : la sortie suit celle de Windows
+                    self._tasks.append(
+                        asyncio.create_task(self._follow_output(source), name="suivi sortie")
+                    )
             if self._cpu is not None and self.config.logging.stats_interval_s > 0:
                 self._tasks.append(asyncio.create_task(self._stats_loop(), name="stats"))
             self._tasks.append(asyncio.create_task(self._maintenance_loop(), name="maintenance"))
