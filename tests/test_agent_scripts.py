@@ -377,3 +377,16 @@ def test_two_confirmations_are_asked_one_after_the_other(tmp_path: Path) -> None
     assert result.confirmations == 2
     assert order == ["écoute-début", "écoute-fin", "écoute-début", "écoute-fin"]
     assert (bench.home / "un.txt").exists() and (bench.home / "deux.txt").exists()
+
+
+def test_no_automatic_done_after_an_earlier_failure(tmp_path: Path) -> None:
+    """Retour du 14/10 : trois clics ratés puis un focus réussi faisaient dire « C'est fait »."""
+    bench = Bench(
+        tmp_path,
+        [ToolCallReq("a", "open_app", {"name": "Photoshop"})],
+        [ToolCallReq("b", "focus_window", {"name": "Spotify"})],
+        [TextDelta("Je n'ai pas trouvé Photoshop, j'ai seulement remis Spotify devant.")],
+    )
+    result = bench.respond("ouvre Photoshop")
+    assert not result.shortcut and result.llm_calls == 3
+    assert bench.sink.said[-1].startswith("Je n'ai pas trouvé") and bench.sink.audio == 0

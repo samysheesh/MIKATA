@@ -39,12 +39,35 @@ def wake_word_pattern(words: Iterable[str]) -> re.Pattern[str]:
     return re.compile(r"\b(?:" + "|".join(alternatives) + r")\b", re.IGNORECASE)
 
 
+# Ce que Whisper entend parfois à la place de « MIKATA » : Nikata, Nakita, Mikita, Makita...
+# Retenu seulement en début de phrase, pour ne jamais couper un mot de la demande.
+_HEARD_VARIANT = re.compile(r"\b[mn][iaeéy][\s\-]?[kcq]u?[aiy][\s\-]?t+[aeo]\b", re.IGNORECASE)
+
+
+def _at_sentence_start(text: str, index: int) -> bool:
+    before = text[:index].rstrip(" ,;:'\"«»-–—")
+    return not before or before[-1] in ".!?…"
+
+
+def _after(text: str, match: re.Match[str]) -> str:
+    return _LEADING_JUNK.sub("", text[match.end() :]).strip()
+
+
 def strip_wake_word(text: str, pattern: re.Pattern[str]) -> tuple[str, bool]:
-    """(texte après la première occurrence du mot d'activation, mot trouvé ?)."""
-    match = pattern.search(text)
-    if match is None:
+    """(demande sans le mot d'activation, mot trouvé ?).
+
+    Le pré-roll garde parfois un essai précédent (« Mikata, quelle heure ? Mikata, quelle
+    heure est-il ? ») : on garde ce qui suit le **dernier** mot d'activation placé en début de
+    phrase. Sinon, comme avant, ce qui suit la première occurrence."""
+    canonical = list(pattern.finditer(text))
+    heard = [m for m in _HEARD_VARIANT.finditer(text) if _at_sentence_start(text, m.start())]
+    if not canonical and not heard:
         return text.strip(), False
-    return _LEADING_JUNK.sub("", text[match.end() :]).strip(), True
+    starts = [m for m in canonical if _at_sentence_start(text, m.start())] + heard
+    usable = sorted((m for m in starts if _after(text, m)), key=lambda m: m.start())
+    if usable:
+        return _after(text, usable[-1]), True
+    return _after(text, canonical[0] if canonical else heard[0]), True
 
 
 def clean_transcript(text: str) -> str:

@@ -432,6 +432,9 @@ class UiController:
             )
         if title is not None:
             wanted = fold(title)
+            for win in windows:  # le nom cherché est dans le titre, ou c'est le processus
+                if wanted and (wanted in fold(win.title) or wanted == fold(win.process)):
+                    return UiWindowInfo(win.title, win.process, win.handle)
             best, best_score = None, 0.0
             for win in windows:
                 if not win.title:
@@ -476,10 +479,13 @@ class UiController:
         root = self._backend.attach(window)
         wanted = fold(control)
         candidates: list[Any] = []
+        seen: dict[str, float] = {}  # noms rencontrés -> ressemblance, pour l'erreur
         for node in self._backend.walk(root, _MAX_VISITED):
             name = self._backend.node_name(node)
             if not name:
                 continue
+            if len(seen) < 2000:
+                seen.setdefault(name[:_NAME_MAX], fuzz.token_set_ratio(wanted, fold(name)))
             node_kind = self._backend.node_kind(node)
             if kind is not None and fold(kind) != fold(node_kind):
                 continue
@@ -489,7 +495,9 @@ class UiController:
                 candidates.append(node)
         if not candidates:
             where = f" (type « {kind} »)" if kind else ""
-            raise ToolError(f"contrôle introuvable : « {control} »{where}")
+            close = [n for n, score in sorted(seen.items(), key=lambda kv: -kv[1]) if score >= 40]
+            hint = f" ; noms proches : {', '.join(f'« {n} »' for n in close[:6])}" if close else ""
+            raise ToolError(f"contrôle introuvable : « {control} »{where}{hint}")
         if nth > len(candidates):
             raise ToolError(f"« {control} » : {len(candidates)} occurrence(s), pas la {nth}e")
         return candidates[nth - 1]

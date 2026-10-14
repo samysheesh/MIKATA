@@ -598,7 +598,12 @@ class Agent:
                 results = await self._run_tools(reply, messages, steps, result, on_phase, state)
             spoken.extend(turn.spoken)  # ex. « Extinction dans 5 secondes... »
             turn.spoken.clear()
-            if all(r.ok and r.terminal for r in results):
+            earlier_failure = any(not r.ok for r in result.direct_results) or any(
+                not outcome.ok for outcome in result.scripts
+            )
+            # Après un échec dans le tour, pas de « C'est fait » automatique : seul un outil
+            # ou un programme qui a dit sa propre phrase conclut ; sinon le modèle explique.
+            if all(r.ok and r.terminal for r in results) and (spoken or not earlier_failure):
                 result.shortcut = True
                 if not spoken:  # une action simple : « C'est fait » en cache
                     self._say_phrase(speech, "done")

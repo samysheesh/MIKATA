@@ -24,6 +24,25 @@ PATTERN = wake_word_pattern(SttConfig().wake_words)
         ("MIKATA.", "", True),
         ("ouvre Discord", "ouvre Discord", False),
         ("Mikatane", "Mikatane", False),  # mot entier seulement
+        # Retours du 14/10 : ce que Whisper entend à la place de « MIKATA »...
+        ("Nikata coupe mon micro sur Discord.", "coupe mon micro sur Discord.", True),
+        ("Nakita, mets pause.", "mets pause.", True),
+        ("Mikita ouvre Steam", "ouvre Steam", True),
+        # ... et l'essai précédent gardé par le pré-roll : seule la dernière demande reste.
+        (
+            "Mikata, combien de fenêtres sont ouvertes ? Mikata, combien de fenêtres sont "
+            "ouvertes et laquelle est devant ?",
+            "combien de fenêtres sont ouvertes et laquelle est devant ?",
+            True,
+        ),
+        (
+            "Nikata coupe mon micro sur Discord. Nikata coupe mon micro sur Discord.",
+            "coupe mon micro sur Discord.",
+            True,
+        ),
+        # Un nom dans la demande n'est jamais pris pour le mot d'activation.
+        ("Mikata, appelle Nikita", "appelle Nikita", True),
+        ("Mikata, dis à Mikata bonjour", "dis à Mikata bonjour", True),
     ],
 )
 def test_strip_wake_word(raw: str, expected: str, found: bool) -> None:
