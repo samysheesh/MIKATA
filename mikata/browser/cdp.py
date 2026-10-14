@@ -40,6 +40,7 @@ class Target:
     url: str
     ws_url: str
     kind: str = "page"
+    id: str = ""  # identifiant DevTools de l'onglet (phase 15a : fermeture d'un onglet)
 
 
 async def list_targets(port: int, timeout_s: float = 3.0) -> list[Target]:
@@ -62,9 +63,20 @@ async def list_targets(port: int, timeout_s: float = 3.0) -> list[Target]:
                 url=entry.get("url", ""),
                 ws_url=ws_url,
                 kind=entry.get("type", "page"),
+                id=entry.get("id", ""),
             )
         )
     return targets
+
+
+async def close_target(port: int, target_id: str, timeout_s: float = 3.0) -> None:
+    """Ferme un onglet par le point d'entrée HTTP de DevTools."""
+    try:
+        async with httpx2.AsyncClient(timeout=timeout_s) as http:
+            response = await http.get(f"http://127.0.0.1:{port}/json/close/{target_id}")
+            response.raise_for_status()
+    except Exception as exc:
+        raise CdpError(f"onglet impossible à fermer : {exc}") from exc
 
 
 class CdpClient:

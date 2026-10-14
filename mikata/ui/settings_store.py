@@ -49,7 +49,7 @@ class SettingSpec:
 
 SETTINGS: tuple[SettingSpec, ...] = (
     SettingSpec("audio.input_device", "Micro", False, "sous-chaîne du nom du périphérique"),
-    SettingSpec("audio.output_device", "Sortie audio", False, "« default » : sortie de Windows"),
+    SettingSpec("audio.output_device", "Sortie audio", True, "« default » : sortie de Windows"),
     SettingSpec("wake.threshold", "Seuil du mot d'activation", True, "voir eval_wakeword.py"),
     SettingSpec("wake.verifier_threshold", "Seuil du vérificateur de voix", True),
     SettingSpec("llm.reasoning_effort", "Réflexion par défaut", True, "none, low, medium, high"),

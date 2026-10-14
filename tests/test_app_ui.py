@@ -264,6 +264,8 @@ def test_real_channel_end_to_end(config_file: Path) -> None:
                 "id": "browser",
                 "label": "Navigateur de travail — lecture en arrière-plan",
                 "running": False,
+                "visible": False,
+                "tabs": [],
             }
         ],  # phase 13f : onglet « En cours »
     }
@@ -287,3 +289,32 @@ def test_restart_request_from_the_interface_stops_mikata_for_a_restart(config_fi
     assert not app.restart_requested
     app._on_ui_command({"type": "restart"})
     assert app.restart_requested and len(stops) == 1  # __main__ sortira avec le code 75
+
+
+def test_reload_config_switches_the_audio_output_live(
+    config_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Phase 15b : changer la sortie dans les réglages s'applique sans redémarrer."""
+    import mikata.__main__ as main_module
+
+    app = App(load_config(config_file))
+    bridge = FakeBridge()
+    _with_ui(app, bridge)
+    switched: list[str] = []
+
+    class Player:
+        sample_rate = 48_000
+
+        def switch(self, device: str, loop: object) -> None:
+            switched.append(device)
+
+        def play_nowait(self, pcm: object) -> None: ...
+
+    app._player = Player()  # type: ignore[assignment]
+    monkeypatch.setattr(main_module, "find_output_device", lambda c: c.audio.output_device)
+    edit_config(config_file, audio={"output_device": "Haut-parleurs"})
+    asyncio.run(app.reload_config())
+    (reply,) = bridge.of("config")
+    assert reply["error"] is None and reply["applied"] == ["audio.output_device"]
+    assert reply["restart"] == [] and switched == ["Haut-parleurs"]
+    assert "wake" in app._earcons and app._earcons.sample_rate == 48_000  # type: ignore[attr-defined]

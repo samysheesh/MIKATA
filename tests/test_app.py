@@ -332,6 +332,8 @@ def test_background_tasks_and_close_task(config_file: Path, tmp_path: Path) -> N
             "id": "browser",
             "label": "Navigateur de travail — lecture en arrière-plan",
             "running": True,
+            "visible": False,
+            "tabs": [],
         }
     ]
 
@@ -342,3 +344,42 @@ def test_background_tasks_and_close_task(config_file: Path, tmp_path: Path) -> N
         assert app._background_tasks()[0]["running"] is False
 
     asyncio.run(scenario())
+
+
+def test_the_interface_manages_the_work_browser(config_file: Path, tmp_path: Path) -> None:
+    """Phase 15a : onglets listés et fermables un par un, pause, fenêtre montrée ou masquée,
+    sans jamais fermer le navigateur lui-même."""
+    from types import SimpleNamespace
+
+    from agent_fakes import make_registry
+    from tool_fakes import FakeBrowser
+
+    app = _app(config_file)
+    published: list[dict[str, object]] = []
+    app._publish_ui = lambda kind, **fields: published.append({"type": kind, **fields})  # type: ignore[method-assign]
+    browser = FakeBrowser()
+    browser.running = True
+    browser.open_tabs = [
+        {"id": "a", "title": "One Piece OP 27", "url": "https://youtube.com/watch?v=1"},
+        {"id": "b", "title": "Mix", "url": "https://youtube.com/watch?v=2"},
+    ]
+    app._agent = SimpleNamespace(tools=make_registry(tmp_path, browser=browser))
+
+    async def scenario() -> None:
+        for command in (
+            {"type": "list_tasks"},
+            {"type": "browser", "action": "pause"},
+            {"type": "browser", "action": "show"},
+            {"type": "browser", "action": "close_tab", "tab": "b"},
+            {"type": "browser", "action": "hide"},
+        ):
+            app._on_ui_command(command)
+            await asyncio.sleep(0.05)
+
+    asyncio.run(scenario())
+    assert ("pause", ()) in browser.log and ("close_tab", "b") in browser.log
+    assert ("visible", True) in browser.log and browser.log[-1] == ("visible", False)
+    assert ("quit", ()) not in browser.log  # le navigateur lui-même reste lancé
+    first, last = published[0]["tasks"][0], published[-1]["tasks"][0]  # type: ignore[index]
+    assert [tab["id"] for tab in first["tabs"]] == ["a", "b"]
+    assert [tab["id"] for tab in last["tabs"]] == ["a"] and last["visible"] is False

@@ -44,13 +44,21 @@ MIKATA_EVENTS = (
     "mic",  # status : ok | paused | busy
     "config",  # applied, restart, error : réponse à reload_config
     "voice",  # event (fallback | resume | profile), engine, message : voix (phase 11)
-    "tasks",  # tasks : [{id, label, running}] — ce qui tourne en arrière-plan (phase 13f)
+    "tasks",  # tasks : [{id, label, running, visible, tabs}] — arrière-plan (13f, 15a)
     "open_settings",
     "show_mascot",
     "bye",  # MIKATA s'arrête : l'interface se ferme
 )
 # Commandes de l'interface vers MIKATA.
-UI_COMMANDS = ("hello", "reload_config", "pause", "restart", "list_tasks", "close_task")
+UI_COMMANDS = (
+    "hello",
+    "reload_config",
+    "pause",
+    "restart",
+    "list_tasks",
+    "close_task",
+    "browser",  # phase 15a : action (show | hide | pause | close_tab | start), tab
+)
 
 
 class ProtocolError(ValueError):

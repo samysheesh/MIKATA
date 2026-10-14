@@ -125,3 +125,53 @@ def test_stop_cuts_speech_but_not_effects(fake_sd: types.ModuleType) -> None:
         return player
 
     asyncio.run(scenario())
+
+
+def test_switch_reopens_the_stream_on_the_new_output(fake_sd: types.ModuleType) -> None:
+    """Phase 15b : la sortie change sans redémarrer, au taux du nouveau périphérique."""
+    speakers = DeviceInfo(5, "Haut-parleurs (Realtek)", "Windows WASAPI", 0, 8, 44_100)
+
+    async def scenario() -> AudioPlayer:
+        player = AudioPlayer(HEADSET)
+        loop = asyncio.get_running_loop()
+        player.start(loop)
+        player.switch(speakers, loop)
+        player.play_nowait(np.full(100, 0.5, dtype=np.float32))
+        _wait_until(lambda: player._effect is None)
+        player.close()
+        return player
+
+    player = asyncio.run(scenario())
+    old, new = FakeOutputStream.instances[-2:]
+    assert old.closed and old.kwargs["device"] == 2
+    assert new.kwargs["device"] == 5 and new.kwargs["samplerate"] == 44_100
+    assert new.kwargs["channels"] == 2 and player.sample_rate == 44_100
+    assert int((new.output()[:, 0] == 0.5).sum()) == 100
+
+
+def test_switch_falls_back_to_the_previous_output(fake_sd: types.ModuleType) -> None:
+    """Un périphérique qui refuse de s'ouvrir ne laisse jamais MIKATA muet."""
+    import pytest
+
+    broken = DeviceInfo(9, "Casque débranché", "Windows WASAPI", 0, 2, 48_000)
+    real = fake_sd.OutputStream
+
+    def output_stream(**kwargs: object) -> object:
+        if kwargs["device"] == 9:
+            raise RuntimeError("périphérique indisponible")
+        return real(**kwargs)
+
+    fake_sd.OutputStream = output_stream  # type: ignore[attr-defined]
+
+    async def scenario() -> AudioPlayer:
+        player = AudioPlayer(HEADSET)
+        loop = asyncio.get_running_loop()
+        player.start(loop)
+        with pytest.raises(RuntimeError):
+            player.switch(broken, loop)
+        return player
+
+    player = asyncio.run(scenario())
+    assert player.device is HEADSET and player._stream is not None
+    assert FakeOutputStream.instances[-1].kwargs["device"] == 2
+    player.close()

@@ -61,7 +61,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
 from loguru import logger
@@ -129,6 +129,8 @@ LIVE_SETTINGS = frozenset(
         "agent.follow_up_use_llm_gate",
         "agent.history_persist_h",
         "agent.thinking_sound_after_s",
+        "audio.output_device",  # phase 15b : la sortie change sans redémarrer
+        "audio.earcon_volume",
         "llm.reasoning_effort",
         "ui.skin",  # lus par l'interface elle-même ; phase 11 : la voix du profil aussi
         "ui.bubble_s",
@@ -380,13 +382,15 @@ class App:
             logger.info("Redémarrage demandé depuis l'interface.")
             self.restart_requested = True
             self.request_shutdown("redémarrage demandé depuis l'interface")
-        elif kind == "list_tasks":  # phase 13f
-            self._publish_ui("tasks", tasks=self._background_tasks())
+        elif kind == "list_tasks":  # phase 13f ; phase 15a : avec les onglets
+            self._spawn(self._publish_browser_state(), "état du navigateur de travail")
         elif kind == "close_task":  # phase 13f
             task_id = command.get("id")
             if task_id == "browser":
                 self._close_work_browser()
             self._publish_ui("tasks", tasks=self._background_tasks())
+        elif kind == "browser":  # phase 15a : gérer le navigateur de travail
+            self._spawn(self._browser_action(command), "navigateur de travail")
 
     def _on_tray_action(self, action: str) -> None:
         """Menu de l'icône (thread pystray) : renvoyé dans la boucle asyncio."""
@@ -431,7 +435,43 @@ class App:
         if prewarm is not None:
             self._spawn(prewarm(), "préchauffage du navigateur de travail")
 
-    def _background_tasks(self) -> list[dict[str, object]]:
+    def _work_browser(self) -> Any:
+        registry = self._agent.tools if self._agent is not None else None
+        return getattr(registry.ctx, "browser", None) if registry is not None else None
+
+    async def _browser_action(self, command: dict[str, object]) -> None:
+        """Afficher, masquer, mettre en pause, fermer un onglet, puis renvoyer l'état."""
+        browser = self._work_browser()
+        action = command.get("action")
+        if browser is None:
+            return
+        try:
+            if action in ("show", "hide"):
+                await asyncio.to_thread(browser.set_visible, action == "show")
+            elif action == "pause":
+                count = await browser.pause_media()
+                logger.info("Navigateur de travail : {} média(s) mis en pause.", count)
+            elif action == "close_tab" and isinstance(command.get("tab"), str):
+                await browser.close_tab(str(command["tab"]))
+            elif action == "start":
+                await browser.prewarm()
+        except Exception as exc:
+            logger.warning("Navigateur de travail ({}) : {}", action, exc)
+        await self._publish_browser_state()
+
+    async def _publish_browser_state(self) -> None:
+        browser = self._work_browser()
+        tabs: list[dict[str, str]] = []
+        if browser is not None and hasattr(browser, "list_tabs"):
+            try:
+                tabs = await browser.list_tabs()
+            except Exception as exc:
+                logger.debug("Onglets illisibles : {}", exc)
+        self._publish_ui("tasks", tasks=self._background_tasks(tabs))
+
+    def _background_tasks(
+        self, tabs: list[dict[str, str]] | None = None
+    ) -> list[dict[str, object]]:
         """Ce qui tourne en arrière-plan (onglet « En cours » des réglages) : chaque tâche
         est fermable par `close_task`. Le navigateur de travail est la première ; les
         minuteurs, rappels et surveillances s'y ajouteront sans changer le protocole."""
@@ -443,6 +483,8 @@ class App:
                 "id": "browser",
                 "label": "Navigateur de travail — lecture en arrière-plan",
                 "running": running,
+                "visible": bool(getattr(browser, "visible", False)),
+                "tabs": tabs or [],
             }
         ]
 
@@ -501,6 +543,8 @@ class App:
             self._agent.config = new
             if "agent.history_persist_h" in live:
                 self._agent.memory.set_keep(new.agent.history_persist_h * 3600)
+        if "audio.output_device" in live or "audio.earcon_volume" in live:
+            await self._switch_output(new, "audio.output_device" in live)
         voice_keys = ("ui.skin", "ui.profiles", "tts.backend", "tts.elevenlabs")
         apply_voice = getattr(self._speaker.tts, "apply", None) if self._speaker else None
         if apply_voice is not None and any(k in live for k in voice_keys):
@@ -516,6 +560,29 @@ class App:
             f", {len(restart)} au prochain démarrage ({', '.join(restart)})" if restart else "",
         )
         self._publish_ui("config", applied=live, restart=restart, error=None)
+
+    async def _switch_output(self, config: Any, new_device: bool) -> None:
+        """Phase 15b : nouvelle sortie audio (ou nouveau volume des sons) sans redémarrer.
+        Les sons d'interface sont refaits au taux de la nouvelle sortie."""
+        from mikata.__main__ import find_output_device
+        from mikata.audio.earcons import Earcons
+
+        player = self._player
+        if player is None or not hasattr(player, "switch"):
+            return
+        try:
+            if new_device:
+                device = await asyncio.to_thread(find_output_device, config)
+                await asyncio.to_thread(player.switch, device, asyncio.get_running_loop())
+            self._earcons = await asyncio.to_thread(
+                Earcons,
+                config.resolve("assets/sounds"),
+                player.sample_rate,
+                config.audio.earcon_volume,
+            )
+        except Exception as exc:  # introuvable ou refusé : l'ancienne sortie reste
+            logger.error("Sortie audio non appliquée : {}", exc)
+            self._publish_ui("config", applied=[], restart=[], error=f"sortie audio : {exc}")
 
     def _refresh_state(self) -> None:
         """État affiché = le plus prioritaire des états des commandes en cours."""

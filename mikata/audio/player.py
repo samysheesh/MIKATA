@@ -118,6 +118,25 @@ class AudioPlayer:
             if effect.pos >= len(effect.pcm) and self._effect is effect:
                 self._effect = None
 
+    def switch(self, device: DeviceInfo, loop: asyncio.AbstractEventLoop) -> None:
+        """Change de sortie à chaud (réglages) : la phrase en cours s'arrête, le flux est
+        rouvert sur le nouveau périphérique. S'il refuse de s'ouvrir, l'ancien est rouvert
+        et l'erreur remonte : MIKATA n'est jamais laissé muet."""
+        previous = self.device
+        self.close()
+        try:
+            self._use(device)
+            self.start(loop)
+        except Exception:
+            self._use(previous)
+            self.start(loop)
+            raise
+
+    def _use(self, device: DeviceInfo) -> None:
+        self.device = device
+        self.sample_rate = int(device.default_samplerate)
+        self._channels = min(device.max_output_channels, 2)
+
     def play_nowait(self, pcm: np.ndarray) -> None:
         """Effet sonore (float32 mono à `sample_rate`), mixé par-dessus la parole."""
         self._effect = _Playback(np.ascontiguousarray(pcm, dtype=np.float32), None, None)

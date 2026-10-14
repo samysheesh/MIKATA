@@ -297,6 +297,8 @@ class FakeBrowser:
         self.log: list[tuple[str, Any]] = []
         self.fail: set[str] = set()
         self.running = False  # phase 13f : onglet « En cours »
+        self.visible = False  # phase 15a
+        self.open_tabs: list[dict[str, str]] = []
 
     async def _record(self, name: str, value: Any = None) -> None:
         if name in self.fail:
@@ -340,6 +342,28 @@ class FakeBrowser:
     def keep_hidden(self) -> None:
         """Le focus_window du code généré est suivi d'un re-cache de la fenêtre de travail."""
         self.log.append(("keep_hidden", ()))
+
+    # Phase 15a : gestion depuis l'interface (onglets et visibilité : voir __init__).
+
+    async def list_tabs(self) -> list[dict[str, str]]:
+        return [dict(tab) for tab in self.open_tabs]
+
+    async def close_tab(self, tab_id: str) -> str:
+        self.log.append(("close_tab", tab_id))
+        self.open_tabs = [tab for tab in self.open_tabs if tab["id"] != tab_id]
+        return "Onglet fermé."
+
+    async def pause_media(self) -> int:
+        self.log.append(("pause", ()))
+        return 1
+
+    def set_visible(self, visible: bool) -> None:
+        self.log.append(("visible", visible))
+        self.visible = visible
+
+    async def prewarm(self) -> None:
+        self.log.append(("prewarm", ()))
+        self.running = True
 
     async def aclose(self) -> None:
         pass

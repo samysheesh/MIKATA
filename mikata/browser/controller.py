@@ -24,7 +24,14 @@ from typing import Any
 
 from loguru import logger
 
-from mikata.browser.cdp import CdpClient, CdpClosed, CdpError, Target, list_targets
+from mikata.browser.cdp import (
+    CdpClient,
+    CdpClosed,
+    CdpError,
+    Target,
+    close_target,
+    list_targets,
+)
 from mikata.config import Config
 from mikata.tools.base import Desktop, ToolError
 
@@ -102,6 +109,11 @@ _TYPE_JS = """(() => {
 })()"""
 
 _BACK_JS = "history.back(); true"
+# Met en pause tout ce qui joue dans la page (vidéos, musiques) ; rend le nombre arrêté.
+_PAUSE_JS = (
+    "(() => { let n = 0; document.querySelectorAll('video, audio').forEach(m => "
+    "{ if (!m.paused) { m.pause(); n++; } }); return n; })()"
+)
 
 
 def _js(snippet: str, **args: str | int) -> str:
@@ -125,6 +137,7 @@ class BrowserController:
         self._client: CdpClient | None = None
         self._work_pids: set[int] | None = None  # cache des PID du profil de travail
         self._work_pids_at = 0.0
+        self.visible = False  # phase 15a : fenêtre de travail montrée à la demande
 
     async def aclose(self) -> None:
         if self._client is not None:
@@ -285,8 +298,8 @@ class BrowserController:
         des processus du profil de travail sont touchées : celles du Brave de
         l'utilisateur ne le sont jamais.
         """
-        if sys.platform != "win32":
-            return
+        if sys.platform != "win32" or self.visible:
+            return  # montrée à la demande de l'utilisateur : on la laisse
         import ctypes
 
         pids = self._work_window_pids()
@@ -486,6 +499,106 @@ class BrowserController:
         except CdpError as exc:
             raise await self._lost(exc) from exc
         return "Page précédente."
+
+    # -- gestion depuis l'interface (phase 15a) ---------------------------------------
+
+    async def list_tabs(self) -> list[dict[str, str]]:
+        """Onglets du navigateur de travail : identifiant, titre, adresse. [] s'il dort."""
+        if not self._config.browser.own_profile or not self._work_window_pids():
+            return []
+        try:
+            targets = await list_targets(self._config.browser.cdp_port)
+        except CdpError:
+            return []
+        return [
+            {"id": t.id, "title": t.title or t.url, "url": t.url}
+            for t in targets
+            if t.kind == "page" and t.id
+        ]
+
+    async def close_tab(self, tab_id: str) -> str:
+        """Ferme un onglet. Le dernier n'est pas fermé mais vidé (page blanche) : le
+        navigateur de travail reste lancé, prêt pour la prochaine demande."""
+        cfg = self._config.browser
+        tabs = await self.list_tabs()
+        target = next((tab for tab in tabs if tab["id"] == tab_id), None)
+        if target is None:
+            raise ToolError("onglet introuvable (déjà fermé ?)")
+        if len(tabs) <= 1:
+            targets = await list_targets(cfg.cdp_port)
+            page = next(t for t in targets if t.id == tab_id)
+            client = CdpClient(page.ws_url, timeout_s=cfg.click_timeout_s)
+            try:
+                await client.connect()
+                await client.navigate("about:blank")
+            except CdpError as exc:
+                raise ToolError(f"onglet impossible à vider : {exc}") from exc
+            finally:
+                await client.close()
+            return "Onglet vidé (le navigateur reste prêt)."
+        try:
+            await close_target(cfg.cdp_port, tab_id)
+        except CdpError as exc:
+            raise ToolError(str(exc)) from exc
+        if self._client is not None:  # l'onglet suivi a peut-être disparu : on se rattachera
+            await self._client.close()
+            self._client = None
+        return "Onglet fermé."
+
+    async def pause_media(self) -> int:
+        """Met en pause ce qui joue dans tous les onglets ; rend le nombre de médias arrêtés."""
+        cfg = self._config.browser
+        if not self._work_window_pids():
+            return 0
+        try:
+            targets = await list_targets(cfg.cdp_port)
+        except CdpError:
+            return 0
+        paused = 0
+        for target in (t for t in targets if t.kind == "page"):
+            client = CdpClient(target.ws_url, timeout_s=cfg.click_timeout_s)
+            try:
+                await client.connect()
+                paused += int(await client.evaluate(_PAUSE_JS) or 0)
+            except (CdpError, OSError, ValueError, TypeError):
+                continue
+            finally:
+                await client.close()
+        return paused
+
+    def set_visible(self, visible: bool) -> None:
+        """Montre la fenêtre de travail à l'écran (pour voir ce que fait MIKATA, se
+        connecter à un compte...) ou la remet en arrière-plan."""
+        self.visible = visible
+        if not visible:
+            self._minimize_work_window()
+            return
+        if sys.platform != "win32":
+            return
+        import ctypes
+
+        pids = self._work_window_pids()
+        user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+        hwnds: list[int] = []
+
+        @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+        def visit(hwnd: int, _: Any) -> bool:
+            hwnds.append(hwnd)
+            return True
+
+        try:
+            user32.EnumWindows(visit, 0)
+            for hwnd in hwnds:
+                pid = ctypes.c_ulong()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                if pid.value not in pids or not user32.GetWindowTextLengthW(hwnd):
+                    continue
+                user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                # Créée hors écran (--window-position=-32000) : on la ramène devant.
+                user32.SetWindowPos(hwnd, 0, 120, 80, 1280, 820, 0x0040)  # SWP_SHOWWINDOW
+                user32.SetForegroundWindow(hwnd)
+        except OSError:
+            return
 
     async def quit(self) -> str:
         """Ferme complètement le navigateur de travail : fenêtre et lecture comprises.
