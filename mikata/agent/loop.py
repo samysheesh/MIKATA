@@ -176,6 +176,18 @@ class Agent:
                 tools.ctx.preferences = preferences
         self._llm = llm
 
+    def refresh_tools(self) -> None:
+        """Phase 16f : des outils sont arrivés après le démarrage (serveurs MCP) : le SDK
+        des programmes et sa notice sont reconstruits."""
+        if self.tools is None:
+            return
+        self._catalog = SdkCatalog(self.tools.tools, platform())
+        self._script_guide = (
+            script_guide(self._catalog.structured_returns()) if self.config.agent.scripts else None
+        )
+        if self._actions is not None:
+            self._actions.catalog = self._catalog
+
     # -- attributs partagés avec les composants ---------------------------------------------
 
     @property

@@ -195,7 +195,12 @@ def test_max_skills_is_enforced(tmp_path: Path) -> None:
     store.adopt(_skill())
     with pytest.raises(ValueError):
         store.adopt(_skill())
-    assert {"list", "remember", "forget"} == skills_module.RESERVED
+    # Les noms réservés sont exactement les fonctions skills.* du SDK.
+    from mikata.tools.registry import load_builtin_tools, registered_tools
+
+    load_builtin_tools()
+    sdk = {getattr(cls, "sdk", "") for cls in registered_tools().values()}
+    assert {n.split(".", 1)[1] for n in sdk if n.startswith("skills.")} == skills_module.RESERVED
 
 
 @pytest.mark.parametrize(

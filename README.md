@@ -3219,3 +3219,36 @@ uv run pytest tests/test_explore.py tests/test_progress.py
   « qu'est-ce que tu as fait ce matin ? »), les actions récentes les plus proches sont
   tirées des traces, sans appel au modèle ; la réponse d'un tour qui a lu un contenu non
   fiable n'est jamais reprise.
+
+**16f — ouverture : outils externes (MCP) et partage des compétences.**
+
+- **Serveurs MCP** : dans `config.yaml`, `mcp.enabled: true` et un serveur par entrée de
+  `mcp.servers`. Exemple (l'heure de n'importe quelle ville, serveur officiel) :
+
+  ```yaml
+  mcp:
+    enabled: true
+    servers:
+      - name: heure
+        command: uvx
+        args: [mcp-server-time, --local-timezone=Europe/Paris]
+  ```
+
+  Une clé dont un serveur a besoin s'écrit `env: {CLE: "${MA_CLE}"}` et va dans `.env`,
+  jamais dans `config.yaml`. Les serveurs démarrent en arrière-plan après MIKATA ; le
+  journal dit « Serveur MCP « heure » : 2 outil(s) ». Ce qu'ils rendent est traité comme
+  du contenu non fiable (comme une page web).
+- **Partager une compétence** : « exporte la compétence lancer opening » -> un zip dans
+  Documents/MIKATA/compétences. « importe la compétence Documents/lancer-opening.zip » ->
+  elle est vérifiée et arrive **proposée** ; MIKATA ne s'en sert qu'après « active la
+  compétence lancer-opening ».
+
+Vérifier sur le PC :
+
+```powershell
+cd D:\projects\mikata
+uv run pytest tests/test_mcp.py tests/test_skills_share.py tests/test_memory_16e.py -q
+# puis activer le serveur d'heure ci-dessus, relancer MIKATA, et dire :
+#   « MIKATA, quand il est 15 h à Paris, quelle heure est-il à New York ? »
+#   « MIKATA, exporte la compétence ... » puis regarder Documents\MIKATA\compétences
+```

@@ -1,4 +1,5 @@
-"""Outils des compétences (phase 15e) : list_skills, remember_skill ★, forget_skill ★.
+"""Outils des compétences (phase 15e) : list_skills, remember_skill ★, forget_skill ★ ;
+phase 16f : export_skill ★, import_skill ★ (la compétence arrive proposée), approve_skill ★.
 
 Les compétences vivent dans data/skills/<nom>/ (`mikata/learn/skills.py`). Elles
 s'apprennent seules en arrière-plan ; `remember_skill` (« retiens comment faire ça »)
@@ -112,5 +113,103 @@ class ForgetSkill(BaseTool[ForgetSkillParams]):
         if skill is None:
             raise ToolError(f"aucune compétence ne correspond à « {args.description} »")
         text = f"Oublié : {skill.description}"
+        _say(text)
+        return text
+
+
+# -- partage (phase 16f) ----------------------------------------------------------------------
+
+EXPORT_FOLDER = "Documents/MIKATA/compétences"
+
+
+class SkillNameParams(BaseModel):
+    name: str = Field(min_length=2, description="Nom ou description de la compétence")
+
+
+@register_tool
+class ExportSkill(BaseTool[SkillNameParams]):
+    name = "export_skill"
+    sdk = "skills.export"
+    effect = Effect.CONSEQUENTIAL
+    expected_s = 0.3
+    description = (
+        "Exporte une compétence apprise (zip au format Agent Skills) dans "
+        "Documents/MIKATA/compétences, pour la partager."
+    )
+    params = SkillNameParams
+    terminal = True
+
+    async def run(self, args: SkillNameParams) -> str:
+        store = _store(self.ctx)
+        skill = store.find(args.name)
+        if skill is None:
+            raise ToolError(f"aucune compétence ne correspond à « {args.name} »")
+        guard = self.ctx.require_guard()
+        target = await self.ctx.run_blocking(
+            store.export, skill.call_name, guard.absolute(EXPORT_FOLDER)
+        )
+        text = f"Compétence exportée dans {target.parent.name} : {target.name}."
+        _say(text)
+        return text
+
+
+class ImportSkillParams(BaseModel):
+    path: str = Field(min_length=1, description="Archive .zip ou dossier de la compétence")
+
+
+@register_tool
+class ImportSkill(BaseTool[ImportSkillParams]):
+    name = "import_skill"
+    sdk = "skills.install"
+    effect = Effect.CONSEQUENTIAL
+    expected_s = 0.5
+    description = (
+        "Importe une compétence partagée (.zip ou dossier au format Agent Skills). Elle "
+        "arrive proposée : MIKATA ne s'en sert qu'après « active la compétence ... »."
+    )
+    params = ImportSkillParams
+    terminal = True
+
+    async def run(self, args: ImportSkillParams) -> str:
+        from pathlib import Path
+
+        from mikata.tools.registry import registered_tools
+
+        store = _store(self.ctx)
+        source = self.ctx.require_guard().resolve_path(args.path)
+        tools = registered_tools()
+        known = set(tools) | {getattr(cls, "sdk", "") or f"tool.{n}" for n, cls in tools.items()}
+        try:
+            skill = await self.ctx.run_blocking(store.import_package, Path(source), known)
+        except (OSError, ValueError) as exc:
+            raise ToolError(str(exc)) from exc
+        text = (
+            f"Compétence « {skill.name} » importée : {skill.description} Dis « active la "
+            f"compétence {skill.name} » après l'avoir relue."
+        )
+        _say(text)
+        return text
+
+
+@register_tool
+class ApproveSkill(BaseTool[SkillNameParams]):
+    name = "approve_skill"
+    sdk = "skills.approve"
+    effect = Effect.CONSEQUENTIAL
+    expected_s = 0.1
+    description = (
+        "Active une compétence importée (ou désactivée) quand l'utilisateur le demande : "
+        "elle repart à l'essai."
+    )
+    params = SkillNameParams
+    terminal = True
+
+    async def run(self, args: SkillNameParams) -> str:
+        store = _store(self.ctx)
+        skill = store.find(args.name)
+        if skill is None:
+            raise ToolError(f"aucune compétence ne correspond à « {args.name} »")
+        store.approve(skill.call_name)
+        text = f"Compétence « {skill.name} » activée, à l'essai."
         _say(text)
         return text

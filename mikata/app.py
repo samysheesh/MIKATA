@@ -295,6 +295,7 @@ class App:
         self._player = player
         self._earcons = earcons or {}
         self._audio_broken = False  # phase 15f : relecture des périphériques à refaire
+        self._mcp: Any = None  # phase 16f : serveurs MCP (mikata.mcp.bridge.McpBridge)
         self._hotkeys = hotkeys
         self._cpu = cpu
         self._vad = vad
@@ -849,6 +850,8 @@ class App:
                 self._tasks.append(asyncio.create_task(self._stats_loop(), name="stats"))
             self._tasks.append(asyncio.create_task(self._maintenance_loop(), name="maintenance"))
             self.prewarm_work_browser()
+            if self.config.mcp.enabled and self._agent is not None:
+                self._spawn(self._start_mcp(), "serveurs MCP")  # phase 16f
             if self._collector is not None:
                 self._negatives_saved = sum(1 for _ in self._negatives_dir.rglob("*.wav"))
                 logger.warning(
@@ -885,6 +888,25 @@ class App:
             logger.warning("Raccourci clavier indisponible : {}", exc)
             self._hotkeys = None
 
+    async def _start_mcp(self) -> None:
+        """Phase 16f : serveurs MCP démarrés en arrière-plan ; leurs outils rejoignent le
+        registre, et le SDK des programmes est reconstruit."""
+        from mikata.mcp.bridge import McpBridge
+
+        agent = self._agent
+        if agent is None or agent.tools is None:
+            return
+        bridge = McpBridge(self.config.mcp, self.config.resolve(".env"))
+        self._mcp = bridge
+        try:
+            added = await bridge.start(agent.tools)
+        except Exception:
+            logger.exception("Démarrage des serveurs MCP impossible.")
+            return
+        if added:
+            agent.refresh_tools()
+            logger.info("Outils MCP disponibles : {}.", ", ".join(added))
+
     async def _shutdown(self) -> None:
         if self._ui is not None:
             try:
@@ -898,6 +920,11 @@ class App:
                 request.recorder.cancel()
             if request.stream is not None:
                 request.stream.cancel()
+        if self._mcp is not None:
+            try:
+                await self._mcp.close()
+            except Exception:
+                logger.exception("Erreur à l'arrêt des serveurs MCP.")
         tasks = [*self._tasks, *self._request_tasks]
         for task in tasks:
             task.cancel()

@@ -63,7 +63,8 @@ STATUS_LABELS = {
     "disabled": "désactivée",
     "proposed": "proposée",
 }
-RESERVED = {"list", "remember", "forget"}  # fonctions skills.* du SDK
+# Fonctions skills.* du SDK (phase 16f : export, install, approve).
+RESERVED = {"list", "remember", "forget", "export", "install", "approve"}
 NAME_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+){0,5}$")
 PARAM_RE = re.compile(r"\{([a-z_][a-z0-9_]{0,30})\}")
 MAX_PARAMS = 4
@@ -224,6 +225,13 @@ def action_calls(code: str, actions: set[str] | None = None) -> list[str]:
     if actions is not None:
         return [name for name in calls if name in actions or name.startswith("skills.")]
     return [name for name in calls if name not in ignored]
+
+
+def _allowed(actions: set[str]) -> set[str]:
+    """Fonctions qu'un programme importé peut appeler : le SDK, les outils, l'interpréteur."""
+    from mikata.action.interp import BUILTINS, INTERP_FUNCTIONS
+
+    return actions | set(BUILTINS) | set(INTERP_FUNCTIONS) | {"say", "ask", "extract", "pick"}
 
 
 def _dotted(node: ast.expr) -> str:
@@ -534,6 +542,98 @@ class SkillStore:
         )
         return skill
 
+    # -- partage (phase 16f) --------------------------------------------------------------
+
+    def export(self, call_name: str, folder: Path) -> Path:
+        """Zip de la compétence (SKILL.md et skill.py, au format Agent Skills) dans
+        `folder`, sans l'historique des échecs ni les anciennes versions."""
+        import zipfile
+
+        skill = self.skills.get(call_name)
+        if skill is None or skill.path is None:
+            raise ValueError(f"compétence inconnue : {call_name}")
+        folder.mkdir(parents=True, exist_ok=True)
+        target = folder / f"{skill.name}.zip"
+        with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name in ("SKILL.md", "skill.py"):
+                archive.write(skill.path / name, f"{skill.name}/{name}")
+        return target
+
+    def import_package(self, source: Path, actions: set[str] | None = None) -> Skill:
+        """Importe une compétence (dossier ou .zip au format Agent Skills). Vérifiée dans le
+        code, elle arrive **proposée** : MIKATA ne s'en sert pas avant qu'on l'active."""
+        import tempfile
+        import zipfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            if source.is_file() and source.suffix.casefold() == ".zip":
+                with zipfile.ZipFile(source) as archive:
+                    names = archive.namelist()
+                    if len(names) > 20 or sum(i.file_size for i in archive.infolist()) > 1_000_000:
+                        raise ValueError("archive trop grosse pour une compétence")
+                    for name in names:
+                        if name.startswith(("/", "\\")) or ":" in name or ".." in name:
+                            raise ValueError(f"chemin refusé dans l'archive : {name}")
+                    archive.extractall(tmp)
+                found = [p.parent for p in Path(tmp).rglob("SKILL.md")]
+                if len(found) != 1:
+                    raise ValueError("l'archive doit contenir une seule compétence (SKILL.md)")
+                folder = found[0]
+            elif (source / "SKILL.md").is_file():
+                folder = source
+            else:
+                raise ValueError("ni dossier de compétence (SKILL.md) ni archive .zip")
+            try:
+                skill = _read_skill(folder)
+            except (yaml.YAMLError, SyntaxError) as exc:
+                raise ValueError(f"compétence illisible : {exc}") from exc
+            # Vérifiée comme une compétence apprise : rien de ce qu'elle déclare n'est cru.
+            if actions is not None:
+                unknown = sorted(set(called_functions(skill.code)) - _allowed(actions))
+                if unknown:
+                    raise ValueError(f"fonctions inconnues : {', '.join(unknown)}")
+            reason = check_shape(skill.params, skill.patterns) or check_program(
+                skill.code, skill.params, skill.code, actions
+            )
+            if reason:
+                raise ValueError(f"compétence refusée : {reason}")
+            base, index = skill.name, 2
+            while skill.call_name in self.skills or skill.call_name in RESERVED:
+                skill.name = f"{base}-{index}"
+                index += 1
+            skill.status = "proposed"
+            skill.successes = skill.failures = skill.uses = 0
+            skill.last_error = ""
+            skill.source = f"importée de {source.name}"
+            skill.path = None
+            self.save(skill)  # seuls SKILL.md et skill.py, réécrits par MIKATA
+        logger.info("Compétence « {} » importée, proposée (à activer).", skill.name)
+        return skill
+
+    def approve(self, call_name: str) -> Skill:
+        """Une compétence proposée (importée) ou désactivée repart à l'essai."""
+        skill = self.skills.get(call_name)
+        if skill is None:
+            raise ValueError(f"compétence inconnue : {call_name}")
+        if skill.status in ("proposed", "disabled"):
+            skill.status = "trial"
+            skill.successes = skill.failures = 0
+            self.save(skill)
+            logger.info("Compétence « {} » activée : à l'essai.", skill.name)
+        return skill
+
+    def find(self, query: str) -> Skill | None:
+        """La compétence dont le nom, la description ou un motif est le plus proche."""
+        wanted = words(query)
+        best, best_score = None, 0
+        for skill in self.all():
+            if fold(query).strip() in (fold(skill.name), fold(skill.call_name)):
+                return skill
+            score = len(wanted & words(" ".join([skill.name, skill.description, *skill.patterns])))
+            if score > best_score:
+                best, best_score = skill, score
+        return best
+
     def adopt(self, skill: Skill) -> Skill:
         """Range une compétence vérifiée (nom unique), à l'essai."""
         base, index = skill.name, 2
@@ -635,6 +735,25 @@ def parse_candidate(text: str) -> dict[str, Any]:
     return data if isinstance(data, dict) and data.get("nom") else {}
 
 
+def check_shape(params: list[str], patterns: list[str]) -> str:
+    """Raison du refus des paramètres et des motifs, ou "" : chaque motif contient tous
+    les paramètres et assez de mots à lui pour ne pas capter n'importe quelle demande."""
+    if len(params) > MAX_PARAMS or len(set(params)) != len(params):
+        return "paramètres en trop ou répétés"
+    if any(not re.fullmatch(r"[a-z_][a-z0-9_]{0,30}", p) for p in params):
+        return "nom de paramètre invalide"
+    if not patterns:
+        return "aucun motif"
+    if len(patterns) > MAX_PATTERNS:
+        return "motifs en trop"
+    for pattern in patterns:
+        if set(PARAM_RE.findall(pattern)) != set(params):
+            return f"motif sans tous les paramètres : « {pattern} »"
+        if len(_literal(PARAM_RE.sub(" ", pattern))) < 2:
+            return f"motif trop vague : « {pattern} »"
+    return ""
+
+
 def check_program(
     code: str, params: list[str], original_code: str, actions: set[str] | None = None
 ) -> str:
@@ -668,19 +787,11 @@ def verify(
     if not NAME_RE.match(name) or name.replace("-", "_") in RESERVED:
         return None, f"nom invalide : {name!r}"
     params = [str(p) for p in candidate.get("parametres") or []]
-    if len(params) > MAX_PARAMS or len(set(params)) != len(params):
-        return None, "paramètres en trop ou répétés"
-    if any(not re.fullmatch(r"[a-z_][a-z0-9_]{0,30}", p) for p in params):
-        return None, "nom de paramètre invalide"
     patterns = [str(p).strip() for p in candidate.get("motifs") or [] if str(p).strip()]
     patterns = patterns[:MAX_PATTERNS]
-    if not patterns:
-        return None, "aucun motif"
-    for pattern in patterns:
-        if set(PARAM_RE.findall(pattern)) != set(params):
-            return None, f"motif sans tous les paramètres : « {pattern} »"
-        if len(_literal(PARAM_RE.sub(" ", pattern))) < 2:
-            return None, f"motif trop vague : « {pattern} »"
+    reason = check_shape(params, patterns)
+    if reason:
+        return None, reason
     code = textwrap.dedent(str(candidate.get("programme", ""))).strip()
     reason = check_program(code, params, original_code, actions)
     if reason:

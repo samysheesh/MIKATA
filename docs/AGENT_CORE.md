@@ -403,7 +403,7 @@ réussite sur trois essais.
 | C. Interpréteur et politiques | faite (`phase-14c-interpreteur`) | boucle infinie arrêtée en moins d'1 s ; suite d'injection verte |
 | D. Boucle unique | faite en partie (`phase-14d-boucle`) | 48/49 aux trois essais (47/49 sans programmes) ; enchaînements longs 2,8 s contre 3,7 s |
 | E. Apprentissage | faite (`phase-14e-apprentissage`, `phase-15e-competences`) | carnet de leçons et traces ; une leçon fait passer une tâche de 2 appels à 1 ; une compétence apprise au 1er tour, appelée par le modèle aux tours 2 à 4, est rejouée au 5e sans appel LLM (vrai modèle, PC simulé) |
-| F. Ouverture | à faire | |
+| F. Ouverture | faite en partie (`phase-16f-ouverture`) | le vrai modèle choisit seul un outil MCP (serveur officiel `mcp-server-time`) et répond juste en 4 à 5,5 s ; une compétence importée reste proposée avant activation. Restent les primitives nouvelles validées et la vision en secours |
 
 Fait en mémoire (phase 16e, §3.7) : préférences apprises des corrections de l'utilisateur (`learn/preferences.py`), épisodes tirés des traces pour une demande qui renvoie au passé (`learn/episodes.py`).
 

@@ -90,6 +90,10 @@ PHASE_12C_TOOLS = {  # savoir-faire appris (mémoire procédurale)
     "list_skills",
     "remember_skill",
     "forget_skill",
+    # phase 16f : partage des compétences
+    "export_skill",
+    "import_skill",
+    "approve_skill",
 }
 PHASE_12D_TOOLS = {  # index local des fichiers (MFT + journal USN)
     "find_path",
@@ -127,6 +131,9 @@ TERMINAL = {
     "browser_close",
     "remember_skill",
     "forget_skill",
+    "export_skill",
+    "import_skill",
+    "approve_skill",
     "open_in_explorer",
 }
 

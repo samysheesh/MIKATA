@@ -249,6 +249,28 @@ class SkillsConfig(_Section):
         return data
 
 
+class McpServerConfig(_Section):
+    """Phase 16f : un serveur MCP lancé par MIKATA (transport stdio)."""
+
+    name: str = Field(min_length=1, max_length=30)
+    command: str = Field(min_length=1)
+    args: list[str] = Field(default_factory=list)
+    # Variables d'environnement du serveur ; « ${NOM} » est lu dans l'environnement ou
+    # dans .env : jamais de secret écrit dans config.yaml.
+    env: dict[str, str] = Field(default_factory=dict)
+    enabled: bool = True
+
+
+class McpConfig(_Section):
+    """Phase 16f : outils externes par le Model Context Protocol. Chaque outil d'un
+    serveur devient un outil de MIKATA, sous les mêmes politiques."""
+
+    enabled: bool = False
+    servers: list[McpServerConfig] = Field(default_factory=list)
+    timeout_s: float = Field(default=20, gt=0, le=120)
+    max_tools_per_server: int = Field(default=30, ge=1, le=200)
+
+
 class FilesIndexConfig(_Section):
     """Ajout phase 12d : index SQLite de tous les noms de fichiers (volumes NTFS), bâti
     en lisant la MFT puis tenu à jour par le journal USN — jamais de rescan. Le LLM ne
@@ -482,6 +504,7 @@ class Config(_Section):
     web: WebConfig = Field(default_factory=WebConfig)
     browser: BrowserConfig = Field(default_factory=BrowserConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
+    mcp: McpConfig = Field(default_factory=McpConfig)  # phase 16f
     learning: LearningConfig = Field(default_factory=LearningConfig)
     files_index: FilesIndexConfig = Field(default_factory=FilesIndexConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)

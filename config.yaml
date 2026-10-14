@@ -93,6 +93,11 @@ skills:                            # phase 15e : compétences apprises (data/ski
   jev: true                        # phase 15k : Jev décide d'abord (clé OPENROUTER_API_KEY dans .env)
   jev_threshold: 0.9               # ... seul au-dessus de cette probabilité
   jev_timeout_s: 1.5
+mcp:                               # phase 16f : outils externes (Model Context Protocol)
+  enabled: false
+  servers: []                      # ex. - {name: notes, command: uvx, args: [mcp-server-x], env: {CLE: "${MA_CLE}"}}
+  timeout_s: 20                    # délai d'une réponse d'un serveur
+  max_tools_per_server: 30
 files_index:                       # ajout phase 12d : index local des fichiers (MFT + journal USN)
   enabled: true                    # find_path / list_folder / open_in_explorer
   db: data/files_index.db          # base SQLite (WAL), jamais envoyée au LLM

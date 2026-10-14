@@ -183,6 +183,14 @@ Bonne nouvelle côté matériel : avec un casque fermé, le son du jeu ne revien
 - **Court terme** : historique en RAM, remis à zéro après 10 min sans interaction ou sur « nouvelle conversation ». Plafond \~6 000 tokens, les échanges les plus anciens sautent en premier.
 - **Long terme** : outils `remember` / `forget` qui écrivent dans `data/memory.json` (≤ 30 faits), injectés dans le prompt système. Pas de base vectorielle en v1.
 - **Compétences** (phase 15e, remplacent les savoir-faire 12c / 12e) : un programme réussi devient une compétence paramétrée, paquet lisible au format Agent Skills dans `data/skills/<nom>/` (`SKILL.md` + `skill.py`), vérifiée dans le code avant d'être gardée. À l'essai, elle est proposée au modèle quand une phrase colle ; après `skills.promote_after` réussites surveillées (3), elle est rejouée en local, sans appel LLM. Un échec la renvoie à l'essai ; après `skills.max_failures` échecs de suite, elle est désactivée (`learn/skills.py`, §7 famille `skills`, `docs/AGENT_CORE.md` §3.6).
+- **Outils externes** (phase 16f) : `mcp.servers` liste des serveurs MCP lancés par
+  MIKATA (transport stdio, JSON-RPC ligne par ligne, sans dépendance). Chaque outil d'un
+  serveur devient un outil du registre, `mcp_<serveur>_<outil>` (et `mcp.<serveur>_<outil>`
+  dans un programme), avec des paramètres validés d'après son schéma. Son effet vient des
+  indications du serveur (lecture seule -> lire, sinon conséquent) et ce qu'il rend est
+  toujours non fiable. Une demande d'échantillonnage du serveur est refusée : MIKATA ne
+  prête pas son modèle. Les variables d'environnement d'un serveur s'écrivent `${NOM}` et se
+  lisent dans `.env` (`mcp/`).
 - **Leçons** (phase 14e) : `data/playbook.json`, de courtes leçons tirées d'un échec corrigé ou d'une correction de l'utilisateur, jointes au contexte quand elles se rapportent à la demande (`learn/playbook.py`, `learn/reflect.py`). Les tours qui ont agi laissent une trace dans `data/traces/`.
 - **Cache de prompt** : prompt système + outils identiques et en tête à chaque appel ; la notice des programmes, fixe, juste après ; puis les faits mémorisés ; le contexte dynamique en dernier. Moins cher et plus rapide.
 
@@ -223,7 +231,10 @@ Bonne nouvelle côté matériel : avec un casque fermé, le son du jeu ne revien
 - **memory** : `remember`, `forget`.
 - **uia** (phase 12a) : `uia_window` (contrôles d'une fenêtre : noms, types), `uia_read` (texte d'un contrôle ou de la fenêtre), `uia_click` ★ / `uia_set_text` ★ (par nom de contrôle, vérifiés par `check_ui_action` et `check_typed_text`), `uia_state` (état ambiant en cache : présence vocale Discord...). Implémentation : `mikata/uia/controller.py` — `UiController` (signature publique inchangée) choisit une fois à la construction le moteur selon `config.uia.backend` : bibliothèque `uiautomation` (comtypes, Apache-2.0) sous Windows, `macuiauto` (API AX) sous macOS ; fenêtres trouvées par `tools/desktop.py`, appels sur le thread COM dédié des outils. L'état ambiant est relu par un thread à part toutes les `uia.state_poll_s` secondes, mis en pause pendant qu'un outil agit, gardé en RAM seulement (jamais loggé). `mikata/uia/client.py` s'abonne aux événements d'accessibilité au démarrage : `UiaClientsAreListening()` devient vrai et les applications Chromium/Electron exposent leur arbre complet sans drapeau de lancement.
 - **browser** (phase 12b) : `browser_tabs`, `browser_open` (il ne conclut pas la commande : une tâche web continue par `browser_read` puis `browser_click`), `browser_read` (titre, texte, liens, boutons de la page), `browser_click` ★ / `browser_type` ★ (par texte visible / libellé, vérifiés par `check_ui_action`, `check_download` et `check_typed_text`), `browser_back` ★. Implémentation : `mikata/browser/cdp.py` (client DevTools sur WebSocket, bibliothèque `websockets`, testé sous Linux contre un faux serveur) et `mikata/browser/controller.py`. Phase 12f : MIKATA navigue dans **son propre profil Brave** (`--user-data-dir` sous `data/brave_profile/`, fenêtre séparée minimisée en arrière-plan, autoplay autorisé) — le Brave de l'utilisateur n'est jamais touché ni fermé ; mode legacy (`browser.own_profile: false`) : attache paresseuse (port ouvert → attaché ; Brave fermé → lancé avec `--remote-debugging-port` ; Brave ouvert sans le port → refus poli, jamais de fermeture automatique). Le JavaScript envoyé au navigateur est fixe, jamais fourni par le LLM.
-- **skills** (phase 12c, refaite en 15e) : `list_skills` (compétences et leur état), `remember_skill` ★ (« retiens comment faire ça » : le dernier programme réussi devient une compétence), `forget_skill` ★ (dossier de la compétence à la corbeille). Une compétence s'appelle aussi depuis un programme : `skills.<nom>(paramètres)` ; elle s'exécute dans le même interpréteur, sous les mêmes politiques, et ne peut pas en appeler une autre. Induction (`learn/skills.py`) : un appel LLM en arrière-plan après un tour dont un programme a réussi au moins deux appels, **jamais** pour un programme écrit après la lecture d'un contenu non fiable ; vérification sans LLM (la phrase d'origine colle à un motif et redonne les valeurs, aucune action absente du programme d'origine, chaque paramètre sert). Rejeu local d'une compétence active : le programme d'une ligne `return skills.<nom>(...)` passe par le même chemin qu'un programme du modèle ; en échec, le modèle reprend la demande. Une correction de l'utilisateur juste après compte comme un échec. Les savoir-faire de la phase 12c (`data/skills/skills.json`) ne sont pas repris.
+- **skills** (phase 12c, refaite en 15e) : `list_skills` (compétences et leur état), `remember_skill` ★ (« retiens comment faire ça » : le dernier programme réussi devient une compétence), `forget_skill` ★ (dossier de la compétence à la corbeille) ; phase 16f : `export_skill` ★
+(zip au format Agent Skills dans Documents/MIKATA/compétences), `import_skill` ★ (vérifiée
+comme une compétence apprise : motifs, fonctions connues seulement, au moins deux actions ;
+elle arrive **proposée**, inutilisée tant qu'on ne l'a pas activée), `approve_skill` ★. Une compétence s'appelle aussi depuis un programme : `skills.<nom>(paramètres)` ; elle s'exécute dans le même interpréteur, sous les mêmes politiques, et ne peut pas en appeler une autre. Induction (`learn/skills.py`) : un appel LLM en arrière-plan après un tour dont un programme a réussi au moins deux appels, **jamais** pour un programme écrit après la lecture d'un contenu non fiable ; vérification sans LLM (la phrase d'origine colle à un motif et redonne les valeurs, aucune action absente du programme d'origine, chaque paramètre sert). Rejeu local d'une compétence active : le programme d'une ligne `return skills.<nom>(...)` passe par le même chemin qu'un programme du modèle ; en échec, le modèle reprend la demande. Une correction de l'utilisateur juste après compte comme un échec. Les savoir-faire de la phase 12c (`data/skills/skills.json`) ne sont pas repris.
 
 Plus tard : intégrations ciblées si un besoin précis apparaît (calendrier, Spotify...), mais la généralité vient des primitives ci-dessus, pas d'un catalogue d'applications.
 
@@ -307,7 +318,9 @@ mikata/
     │        policy.py  extract.py  runtime.py     # interpréteur de scripts, politiques,
     │                                              # extraction en quarantaine
     ├─ learn/  trace.py  playbook.py  reflect.py   # phase 14e : traces, carnet de leçons,
-    │        skills.py                             # réflexion ; phase 15e : compétences
+    │        skills.py                             # réflexion ; phase 15e : compétences ;
+    │        preferences.py  episodes.py           # phase 16e : préférences, épisodes
+    ├─ mcp/    client.py  bridge.py                # phase 16f : outils externes (MCP, stdio)
     ├─ eval/   sim.py  bench.py  agents.py         # phase 14a : banc d'essai (PC simulé,
     │                                              # correcteurs d'état final)
     └─ ui/     tray.py  notify.py  hotkeys.py
@@ -469,6 +482,11 @@ skills:                             # phase 15e : compétences apprises (data/sk
   jev: true                         # phase 15k : Jev d'abord (OPENROUTER_API_KEY), LLM s'il hésite
   jev_threshold: 0.9
   jev_timeout_s: 1.5
+mcp:                                # phase 16f : outils externes (Model Context Protocol)
+  enabled: false
+  servers: []                       # name, command, args, env (« ${NOM} » lu dans .env)
+  timeout_s: 20
+  max_tools_per_server: 30
 files_index:                        # phase 12d : index local des fichiers (MFT + journal USN)
   enabled: true
   db: data/files_index.db           # SQLite WAL, jamais envoyé au LLM
