@@ -333,6 +333,7 @@ def test_background_tasks_and_close_task(config_file: Path, tmp_path: Path) -> N
             "label": "Navigateur de travail — lecture en arrière-plan",
             "running": True,
             "visible": False,
+            "paused": False,
             "tabs": [],
         }
     ]
@@ -369,6 +370,7 @@ def test_the_interface_manages_the_work_browser(config_file: Path, tmp_path: Pat
         for command in (
             {"type": "list_tasks"},
             {"type": "browser", "action": "pause"},
+            {"type": "browser", "action": "pause"},  # phase 15g : le même bouton relance
             {"type": "browser", "action": "show"},
             {"type": "browser", "action": "close_tab", "tab": "b"},
             {"type": "browser", "action": "hide"},
@@ -378,6 +380,7 @@ def test_the_interface_manages_the_work_browser(config_file: Path, tmp_path: Pat
 
     asyncio.run(scenario())
     assert ("pause", ()) in browser.log and ("close_tab", "b") in browser.log
+    assert ("lecture", ()) in browser.log  # Pause puis Reprendre
     assert ("visible", True) in browser.log and browser.log[-1] == ("visible", False)
     assert ("quit", ()) not in browser.log  # le navigateur lui-même reste lancé
     first, last = published[0]["tasks"][0], published[-1]["tasks"][0]  # type: ignore[index]

@@ -110,9 +110,17 @@ _TYPE_JS = """(() => {
 
 _BACK_JS = "history.back(); true"
 # Met en pause tout ce qui joue dans la page (vidéos, musiques) ; rend le nombre arrêté.
+# Pause / reprise de ce qui joue dans la page (phase 15g). La pause marque ce qu'elle arrête
+# (data-mikata-paused) : « Reprendre » ne relance que ça, jamais une vidéo mise en pause à
+# la main. Rendent le nombre de médias touchés.
 _PAUSE_JS = (
     "(() => { let n = 0; document.querySelectorAll('video, audio').forEach(m => "
-    "{ if (!m.paused) { m.pause(); n++; } }); return n; })()"
+    "{ if (!m.paused) { m.pause(); m.dataset.mikataPaused = '1'; n++; } }); return n; })()"
+)
+_RESUME_JS = (
+    "(() => { let n = 0; document.querySelectorAll('video, audio').forEach(m => "
+    "{ if (m.dataset.mikataPaused === '1') { delete m.dataset.mikataPaused; m.play(); n++; } "
+    "}); return n; })()"
 )
 
 
@@ -127,6 +135,44 @@ def _js(snippet: str, **args: str | int) -> str:
     return snippet
 
 
+_WS_CAPTION = 0x00C00000
+_TECHNICAL_CLASSES = ("IME", "MSCTFIME UI")
+
+
+def _work_windows(user32: Any, pids: set[int]) -> list[tuple[int, str]]:
+    """Fenêtres des processus du profil de travail : (handle, « navigateur » | « technique »
+    | « autre »). Navigateur : classe Chrome_WidgetWin_1 avec barre de titre."""
+    import ctypes
+
+    hwnds: list[int] = []
+
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    def visit(hwnd: int, _: Any) -> bool:
+        hwnds.append(hwnd)
+        return True
+
+    found: list[tuple[int, str]] = []
+    try:
+        user32.EnumWindows(visit, 0)
+        for hwnd in hwnds:
+            pid = ctypes.c_ulong()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value not in pids:
+                continue
+            name = ctypes.create_unicode_buffer(64)
+            user32.GetClassNameW(hwnd, name, 64)
+            style = user32.GetWindowLongW(hwnd, -16) & 0xFFFFFFFF
+            if name.value in _TECHNICAL_CLASSES:
+                found.append((hwnd, "technique"))
+            elif name.value == "Chrome_WidgetWin_1" and style & _WS_CAPTION == _WS_CAPTION:
+                found.append((hwnd, "navigateur"))
+            else:
+                found.append((hwnd, "autre"))
+    except OSError:
+        return found
+    return found
+
+
 class BrowserController:
     """Implémente `tools.base.BrowserControl`. Connexion paresseuse : le port DevTools
     n'est cherché qu'à la première utilisation."""
@@ -138,6 +184,7 @@ class BrowserController:
         self._work_pids: set[int] | None = None  # cache des PID du profil de travail
         self._work_pids_at = 0.0
         self.visible = False  # phase 15a : fenêtre de travail montrée à la demande
+        self.media_paused = False  # phase 15g : la lecture a été mise en pause d'ici
 
     async def aclose(self) -> None:
         if self._client is not None:
@@ -545,8 +592,8 @@ class BrowserController:
             self._client = None
         return "Onglet fermé."
 
-    async def pause_media(self) -> int:
-        """Met en pause ce qui joue dans tous les onglets ; rend le nombre de médias arrêtés."""
+    async def _run_in_tabs(self, script: str) -> int:
+        """Exécute un JavaScript fixe dans chaque onglet ; somme des nombres rendus."""
         cfg = self._config.browser
         if not self._work_window_pids():
             return 0
@@ -554,21 +601,42 @@ class BrowserController:
             targets = await list_targets(cfg.cdp_port)
         except CdpError:
             return 0
-        paused = 0
+        total = 0
         for target in (t for t in targets if t.kind == "page"):
             client = CdpClient(target.ws_url, timeout_s=cfg.click_timeout_s)
             try:
                 await client.connect()
-                paused += int(await client.evaluate(_PAUSE_JS) or 0)
+                total += int(await client.evaluate(script) or 0)
             except (CdpError, OSError, ValueError, TypeError):
                 continue
             finally:
                 await client.close()
+        return total
+
+    async def pause_media(self) -> int:
+        """Met en pause ce qui joue dans tous les onglets ; rend le nombre de médias arrêtés."""
+        paused = await self._run_in_tabs(_PAUSE_JS)
+        if paused:
+            self.media_paused = True
         return paused
+
+    async def toggle_media(self) -> str:
+        """Bouton Pause / Reprendre : met en pause ce qui joue, sinon relance ce qui a été
+        mis en pause d'ici. Rend « pause », « lecture » ou « rien »."""
+        if await self.pause_media():
+            return "pause"
+        resumed = await self._run_in_tabs(_RESUME_JS)
+        self.media_paused = False
+        return "lecture" if resumed else "rien"
 
     def set_visible(self, visible: bool) -> None:
         """Montre la fenêtre de travail à l'écran (pour voir ce que fait MIKATA, se
-        connecter à un compte...) ou la remet en arrière-plan."""
+        connecter à un compte...) ou la remet en arrière-plan.
+
+        Seules les vraies fenêtres du navigateur (classe Chrome_WidgetWin_1, avec barre de
+        titre) sont montrées. Phase 15g : la version d'avant montrait aussi les fenêtres
+        techniques de Chromium (« Default IME », « MSCTFIME UI »), désactivées : posées
+        par-dessus la page, elles avalaient tous les clics. On les remet en place ici."""
         self.visible = visible
         if not visible:
             self._minimize_work_window()
@@ -579,26 +647,14 @@ class BrowserController:
 
         pids = self._work_window_pids()
         user32 = ctypes.windll.user32  # type: ignore[attr-defined]
-        hwnds: list[int] = []
-
-        @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
-        def visit(hwnd: int, _: Any) -> bool:
-            hwnds.append(hwnd)
-            return True
-
-        try:
-            user32.EnumWindows(visit, 0)
-            for hwnd in hwnds:
-                pid = ctypes.c_ulong()
-                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-                if pid.value not in pids or not user32.GetWindowTextLengthW(hwnd):
-                    continue
+        for hwnd, kind in _work_windows(user32, pids):
+            if kind == "technique":
+                user32.ShowWindow(hwnd, 0)  # SW_HIDE : invisibles d'ordinaire
+            elif kind == "navigateur":
                 user32.ShowWindow(hwnd, 9)  # SW_RESTORE
                 # Créée hors écran (--window-position=-32000) : on la ramène devant.
                 user32.SetWindowPos(hwnd, 0, 120, 80, 1280, 820, 0x0040)  # SWP_SHOWWINDOW
                 user32.SetForegroundWindow(hwnd)
-        except OSError:
-            return
 
     async def quit(self) -> str:
         """Ferme complètement le navigateur de travail : fenêtre et lecture comprises.

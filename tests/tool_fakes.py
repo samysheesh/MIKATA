@@ -357,6 +357,14 @@ class FakeBrowser:
         self.log.append(("pause", ()))
         return 1
 
+    media_paused = False
+
+    async def toggle_media(self) -> str:
+        """Phase 15g : Pause, puis Reprendre."""
+        self.media_paused = not self.media_paused
+        self.log.append(("pause" if self.media_paused else "lecture", ()))
+        return "pause" if self.media_paused else "lecture"
+
     def set_visible(self, visible: bool) -> None:
         self.log.append(("visible", visible))
         self.visible = visible

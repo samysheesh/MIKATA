@@ -151,6 +151,11 @@ class OpenAICompatClient:
         )
         return http, client
 
+    async def set_api_key(self, api_key: SecretStr) -> None:
+        """Phase 15g : clé remplacée dans les réglages, nouvelle connexion avec elle."""
+        self._api_key = api_key
+        await self._renew("clé remplacée")
+
     async def _renew(self, reason: str) -> None:
         """Nouvelle connexion pour les appels suivants. L'ancienne n'est pas fermée tout de
         suite : une autre commande peut encore s'en servir."""

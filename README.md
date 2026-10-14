@@ -3079,3 +3079,17 @@ micro). Une sortie choisie par son nom dans les réglages ne bouge jamais toute 
 À vérifier : MIKATA lancé, allumer (ou éteindre) le casque ; dans les 5 s, le journal dit
 « Sortie de Windows changée » ou « Périphériques audio relus », et MIKATA répond dans la
 nouvelle sortie.
+
+**15g — retours des tests du 14/10 (après-midi)**
+
+- Navigateur de travail : « Afficher » montrait aussi des fenêtres techniques invisibles de
+  Brave (« Default IME »), désactivées et posées par-dessus la page : plus aucun clic ne
+  passait. Seule la vraie fenêtre du navigateur est montrée. Le bouton Pause devient
+  « Reprendre » et relance ce qu'il a mis en pause (jamais une vidéo arrêtée à la main).
+- Réglages : plus de bouton Enregistrer, chaque changement s'applique tout seul un instant
+  après, sans redémarrer. Le micro, la mascotte affichée et les clés (LLM, recherche,
+  ElevenLabs) s'appliquent aussi à chaud.
+- Compétences : elles s'apprennent aussi d'un enchaînement d'étapes séparées (« ouvre
+  YouTube, lis la page, clique la vidéo »), pas seulement d'un programme ; ce qui a été
+  choisi en lisant la page n'est jamais recopié, la compétence le retrouve elle-même.
+  Essai réel (PC simulé) : apprise au 1er opening, active au 5e.

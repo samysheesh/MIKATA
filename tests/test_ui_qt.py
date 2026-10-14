@@ -381,11 +381,11 @@ def test_settings_show_the_current_values(base: Path) -> None:
         "Clés et coût",
         "Journal",
     ]
-    assert not window.save_button.isEnabled()  # rien de modifié
-    window.fields["agent.follow_up_s"].setValue(9)
-    assert window.save_button.isEnabled() and window.pending() == ["agent.follow_up_s"]
+    assert not window._apply_timer.isActive()  # rien de modifié
+    window.fields["agent.follow_up_s"].setValue(9)  # appliqué tout seul, un instant après
+    assert window._apply_timer.isActive() and window.pending() == ["agent.follow_up_s"]
     window.fields["agent.follow_up_s"].setValue(6)
-    assert not window.save_button.isEnabled()  # revenu à la valeur enregistrée
+    assert not window._apply_timer.isActive()  # revenu à la valeur enregistrée
     window.close()
 
 
@@ -435,6 +435,11 @@ def test_home_manages_the_work_browser(base: Path) -> None:
     assert window.browser_toggle.text() == "Afficher"
     window.browser_pause.click()
     assert sent[-1] == {"type": "browser", "action": "pause"}
+    paused = {**browser, "running": True, "paused": True, "tabs": tabs}
+    window.on_tasks({"type": "tasks", "tasks": [paused]})
+    assert window.browser_pause.text() == "Reprendre"  # phase 15g : le même bouton relance
+    window.on_tasks({"type": "tasks", "tasks": [{**browser, "running": True, "tabs": tabs}]})
+    assert window.browser_pause.text() == "Pause"
     window.browser_toggle.click()
     assert sent[-1] == {"type": "browser", "action": "show"}
     rows = [window.browser_tabs.itemAt(i).widget() for i in range(window.browser_tabs.count())]
@@ -483,14 +488,13 @@ def test_save_writes_only_changed_lines_and_reloads_mikata(base: Path) -> None:
     assert window.save() == ["audio.input_device", "wake.threshold"]
     assert sent == [{"type": "reload_config"}]
     status = window.status.text()
-    assert "Tout de suite : Seuil du mot d'activation." in status
-    assert "Au redémarrage : Micro." in status
+    assert status == "Appliqué : Micro, Seuil du mot d'activation."  # sans redémarrer
     after = (base / "config.yaml").read_text(encoding="utf-8").splitlines()
     changed = [(a, b) for a, b in zip(before, after, strict=True) if a != b]
     assert len(changed) == 2 and all(b.split("#", 1)[1] == a.split("#", 1)[1] for a, b in changed)
     assert list((base / "data" / "backups").glob("*-config/config.yaml"))
     assert applied == [{"audio.input_device": "Micro (RØDE NT-USB+)", "wake.threshold": 0.62}]
-    assert window.save() == [] and window.status.text() == "Rien à enregistrer."
+    assert window.save() == [] and window.status.text() == status
     window.close()
 
 
@@ -681,4 +685,27 @@ def test_restart_button_says_so_when_mikata_is_not_running(base: Path) -> None:
     window = _settings(base, sent, connected=False)
     window.restart_button.click()
     assert window.restart_button.isEnabled() and "pas lancé" in window.status.text()
+    window.close()
+
+
+def test_a_change_applies_by_itself_and_a_new_key_reloads_mikata(
+    base: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Phase 15g : plus de bouton Enregistrer ; une clé remplacée sert tout de suite."""
+    from PySide6.QtWidgets import QApplication, QInputDialog
+
+    sent: list[dict[str, Any]] = []
+    window = _settings(base, sent)
+    assert not hasattr(window, "save_button")
+    window._apply_timer.setInterval(0)
+    window.fields["agent.follow_up_s"].setValue(4)
+    for _ in range(20):
+        QApplication.processEvents()
+        if sent:
+            break
+    assert sent == [{"type": "reload_config"}] and window.pending() == []
+    assert window.status.text() == "Appliqué : Fenêtre de suivi."
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: (NEW_KEY, True))
+    window._replace_secret("LLM_API_KEY")
+    assert sent[-1] == {"type": "reload_config"} and "tout de suite" in window.status.text()
     window.close()

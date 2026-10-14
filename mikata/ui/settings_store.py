@@ -48,7 +48,7 @@ class SettingSpec:
 
 
 SETTINGS: tuple[SettingSpec, ...] = (
-    SettingSpec("audio.input_device", "Micro", False, "sous-chaîne du nom du périphérique"),
+    SettingSpec("audio.input_device", "Micro", True, "sous-chaîne du nom du périphérique"),
     SettingSpec("audio.output_device", "Sortie audio", True, "« default » : sortie de Windows"),
     SettingSpec("wake.threshold", "Seuil du mot d'activation", True, "voir eval_wakeword.py"),
     SettingSpec("wake.verifier_threshold", "Seuil du vérificateur de voix", True),
@@ -58,7 +58,7 @@ SETTINGS: tuple[SettingSpec, ...] = (
     SettingSpec("agent.history_persist_h", "Durée de l'historique", True),
     SettingSpec("ui.skin", "Skin de la mascotte", True),
     SettingSpec("ui.bubble_s", "Durée de la bulle", True),
-    SettingSpec("ui.mascot", "Mascotte au démarrage de MIKATA", False),
+    SettingSpec("ui.mascot", "Mascotte affichée", True),
     SettingSpec(
         "guard.full_access",
         "Accès complet",

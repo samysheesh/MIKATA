@@ -131,6 +131,8 @@ LIVE_SETTINGS = frozenset(
         "agent.thinking_sound_after_s",
         "audio.output_device",  # phase 15b : la sortie change sans redémarrer
         "guard.full_access",  # relu à chaque tour par la boucle
+        "audio.input_device",  # phase 15g : micro rouvert sans redémarrer
+        "ui.mascot",  # phase 15g : appliqué par l'interface elle-même
         "agent.narration",  # phase 15c
         "agent.narration_after_s",
         "audio.earcon_volume",
@@ -452,9 +454,10 @@ class App:
         try:
             if action in ("show", "hide"):
                 await asyncio.to_thread(browser.set_visible, action == "show")
-            elif action == "pause":
-                count = await browser.pause_media()
-                logger.info("Navigateur de travail : {} média(s) mis en pause.", count)
+            elif action == "pause":  # phase 15g : Pause / Reprendre
+                toggle = getattr(browser, "toggle_media", None)
+                done = await toggle() if toggle is not None else await browser.pause_media()
+                logger.info("Navigateur de travail : {}.", done)
             elif action == "close_tab" and isinstance(command.get("tab"), str):
                 await browser.close_tab(str(command["tab"]))
             elif action == "start":
@@ -488,6 +491,7 @@ class App:
                 "label": "Navigateur de travail — lecture en arrière-plan",
                 "running": running,
                 "visible": bool(getattr(browser, "visible", False)),
+                "paused": bool(getattr(browser, "media_paused", False)),
                 "tabs": tabs or [],
             }
         ]
@@ -533,6 +537,7 @@ class App:
             self._publish_ui("config", applied=[], restart=[], error=str(exc))
             return
         changed = changed_settings(self.config, new)
+        old_secrets = self.config.secrets
         live = [k for k in changed if is_live_setting(k)]
         restart = [k for k in changed if not is_live_setting(k)]
         self.config = new
@@ -549,6 +554,9 @@ class App:
                 self._agent.memory.set_keep(new.agent.history_persist_h * 3600)
         if "audio.output_device" in live or "audio.earcon_volume" in live:
             await self._switch_output(new, "audio.output_device" in live)
+        if "audio.input_device" in live:
+            await self._switch_input(new)
+        live += await self._apply_secrets(old_secrets, new.secrets)
         voice_keys = ("ui.skin", "ui.profiles", "tts.backend", "tts.elevenlabs")
         apply_voice = getattr(self._speaker.tts, "apply", None) if self._speaker else None
         if apply_voice is not None and any(k in live for k in voice_keys):
@@ -587,6 +595,66 @@ class App:
         except Exception as exc:  # introuvable ou refusé : l'ancienne sortie reste
             logger.error("Sortie audio non appliquée : {}", exc)
             self._publish_ui("config", applied=[], restart=[], error=f"sortie audio : {exc}")
+
+    async def _switch_input(self, config: Any) -> None:
+        """Phase 15g : nouveau micro choisi dans les réglages, sans redémarrer."""
+        import sounddevice as sd
+
+        from mikata.audio.devices import (
+            DeviceNotFoundError,
+            collect_devices,
+            default_device_index,
+            find_device,
+        )
+
+        reopen = getattr(self._audio, "reopen", None)
+        if reopen is None:
+            return
+        try:
+            device = await asyncio.to_thread(
+                find_device,
+                collect_devices(sd),
+                config.audio.input_device,
+                "input",
+                default_device_index(sd, "input"),
+            )
+        except DeviceNotFoundError:  # branché après le démarrage : liste relue
+            await self._rescan_audio("micro choisi dans les réglages")
+            return
+        try:
+            await asyncio.to_thread(reopen, device, asyncio.get_running_loop())
+        except Exception as exc:
+            logger.error("Micro non changé : {}", exc)
+            self._publish_ui("config", applied=[], restart=[], error=f"micro : {exc}")
+
+    async def _apply_secrets(self, old: Any, new: Any) -> list[str]:
+        """Phase 15g : une clé remplacée dans les réglages sert tout de suite."""
+
+        def value(secrets: Any, name: str) -> str | None:
+            secret = getattr(secrets, name, None)
+            return secret.get_secret_value() if secret is not None else None
+
+        applied = []
+        for name in ("llm_api_key", "search_api_key", "elevenlabs_api_key"):
+            if value(old, name) == value(new, name):
+                continue
+            applied.append(f"secrets.{name}")
+            if name == "llm_api_key" and self._agent is not None:
+                set_key = getattr(self._agent.llm, "set_api_key", None)
+                key = getattr(new, name)
+                if set_key is not None and key is not None:
+                    await set_key(key)
+            elif name == "search_api_key" and self._agent is not None:
+                registry = self._agent.tools
+                if registry is not None:
+                    registry.ctx.search_api_key = value(new, name)
+            elif name == "elevenlabs_api_key":
+                apply_voice = getattr(self._speaker.tts, "apply", None) if self._speaker else None
+                if apply_voice is not None:
+                    await apply_voice(self.config)
+        if applied:
+            logger.info("Clés appliquées sans redémarrer : {}.", ", ".join(applied))
+        return applied
 
     async def _rebuild_earcons(self) -> None:
         """Sons d'interface au taux de la sortie en cours."""

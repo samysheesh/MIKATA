@@ -253,6 +253,9 @@ class TurnResult:
     # l'ordre de `scripts` ; compétences appelées (nom, réussie, erreur) ; rejeu local.
     script_sources: list[tuple[str, bool]] = field(default_factory=list)
     skill_uses: list[tuple[str, bool, str]] = field(default_factory=list)
+    # Phase 15g : appels directs (appel, arguments écrits avant toute lecture non fiable ?),
+    # dans l'ordre de `direct_results`.
+    direct_sources: list[tuple[ToolCallReq, bool]] = field(default_factory=list)
     local_skill: str = ""
 
     @property
@@ -318,13 +321,38 @@ def _with_reasoning(messages: list[dict[str, Any]], effort: str | None) -> list[
 def _inducible(result: TurnResult) -> str:
     """Le programme de ce tour qui peut devenir une compétence, ou "" : le dernier qui a
     réussi, écrit avant toute lecture d'un contenu non fiable (un texte piégé ne doit pas
-    pouvoir s'inscrire dans une compétence), avec au moins deux appels, sans compétence."""
+    pouvoir s'inscrire dans une compétence), avec au moins deux appels, sans compétence.
+    Sans programme, l'enchaînement des appels directs du tour (phase 15g, voir
+    `_steps_as_program`)."""
     for (code, trusted), outcome in zip(
         reversed(result.script_sources), reversed(result.scripts), strict=False
     ):
         if outcome.ok and trusted and len(outcome.records) >= 2 and "skills." not in code:
             return code
-    return ""
+    if result.scripts:
+        return ""
+    return _steps_as_program(result)
+
+
+def _steps_as_program(result: TurnResult) -> str:
+    """Phase 15g : « ouvre YouTube, lis la page, clique la vidéo » fait en trois appels
+    directs, écrit comme un programme pour l'apprentissage. Un argument choisi après la
+    lecture d'un contenu non fiable n'est jamais recopié : il devient `...`, et la
+    compétence devra le retrouver elle-même dans ce qu'elle lit."""
+    steps = result.direct_sources
+    if len(steps) < 2 or len(result.direct_results) != len(steps):
+        return ""
+    if not all(r.ok for r in result.direct_results):
+        return ""
+    lines = []
+    for call, trusted in steps:
+        if call.name.endswith("_skill") or call.name == "remember":
+            return ""  # apprendre à apprendre ou à retenir : non
+        args = ", ".join(
+            f"{key}={value!r}" if trusted else f"{key}=..." for key, value in call.arguments.items()
+        )
+        lines.append(f"{call.name}({args})")
+    return "\n".join(lines)
 
 
 HISTORY_FILE = "data/history.json"
@@ -1030,6 +1058,7 @@ class Agent:
             if call.name == SCRIPT_TOOL:
                 done[call.id] = await self._run_script(call, state, result)
         results = [done[call.id] for call in calls]
+        result.direct_sources.extend((call, trust_before is Trust.TRUSTED) for call in direct)
         result.tool_results.extend(r for r in results if r.name != SCRIPT_TOOL)
         result.direct_results.extend(r for r in results if r.name != SCRIPT_TOOL)
         for res in results:

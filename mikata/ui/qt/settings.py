@@ -10,9 +10,9 @@ Une barre latérale et six pages faites de cartes :
 - **Clés et coût** : coût cumulé, crédit, voix ElevenLabs, clés masquées ;
 - **Journal** : log en direct.
 
-Seuls les réglages pris en compte au redémarrage portent un badge ; les autres s'appliquent
-dès l'enregistrement. Enregistrer (bouton ou Ctrl+S, actif seulement s'il y a des
-modifications) réécrit config.yaml en gardant commentaires et ordre
+Phase 15g : plus de bouton Enregistrer. Un réglage changé s'applique tout seul un instant
+après (`APPLY_DELAY_MS`, le temps de finir de taper) et sans redémarrer, micro et clés
+compris. L'enregistrement réécrit config.yaml en gardant commentaires et ordre
 (`settings_store.ConfigEditor`, sauvegarde dans data/backups), puis demande à MIKATA de le
 relire (`reload_config`). Les clés restent dans .env et ne sont jamais affichées en clair.
 """
@@ -27,7 +27,7 @@ from typing import Any
 import numpy as np
 from loguru import logger
 from PySide6.QtCore import QRectF, QSize, Qt, QTimer
-from PySide6.QtGui import QColor, QGuiApplication, QKeySequence, QPainter, QShortcut
+from PySide6.QtGui import QColor, QGuiApplication, QPainter
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -90,7 +90,7 @@ COST_REFRESH_POLLS = 10  # coûts relus toutes les 5 s (relevé toutes les 500 m
 TASKS_REFRESH_POLLS = 6  # accueil affiché : onglets du navigateur relus toutes les 3 s
 TAB_TITLE_MAX = 70
 PAGES = ("Accueil", "Son et voix", "Comportement", "Apparence", "Clés et coût", "Journal")
-UNSAVED = "Modifications non enregistrées."
+APPLY_DELAY_MS = 600  # le temps de finir de taper un nom ou un nombre
 
 ACCENT = "#6d5dfc"
 ICONS = (Path(__file__).resolve().parent / "icons").as_posix()
@@ -302,13 +302,11 @@ class SettingsWindow(QWidget):
         self._add_page(PAGES[5], "Ce que MIKATA écrit dans son journal.", self._log_page())
         self.nav.currentRowChanged.connect(self._page_changed)
 
-        self.save_button = QPushButton("Enregistrer")
-        self.save_button.setObjectName("primary")
-        self.save_button.setEnabled(False)
-        self.save_button.setToolTip("Ctrl+S")
-        self.save_button.clicked.connect(self.save)
-        shortcut = QShortcut(QKeySequence.StandardKey.Save, self)
-        shortcut.activated.connect(self.save)
+        # Phase 15g : plus de bouton Enregistrer, chaque changement s'applique tout seul.
+        self._apply_timer = QTimer(self)
+        self._apply_timer.setSingleShot(True)
+        self._apply_timer.setInterval(APPLY_DELAY_MS)
+        self._apply_timer.timeout.connect(self.save)
         self.restart_button = QPushButton("Redémarrer MIKATA")
         self.restart_button.setToolTip(
             "Arrête MIKATA proprement puis le relance (modèles et réglages rechargés)."
@@ -321,7 +319,6 @@ class SettingsWindow(QWidget):
         buttons.setContentsMargins(24, 12, 24, 12)
         buttons.addWidget(self.status, 1)
         buttons.addWidget(self.restart_button)
-        buttons.addWidget(self.save_button)
 
         content = QWidget()
         content.setObjectName("content")
@@ -508,7 +505,9 @@ class SettingsWindow(QWidget):
         self.browser_start = QPushButton("Démarrer")
         self.browser_start.clicked.connect(lambda: self._browser_command("start"))
         self.browser_pause = QPushButton("Pause")
-        self.browser_pause.setToolTip("Met en pause les vidéos et musiques de tous les onglets.")
+        self.browser_pause.setToolTip(
+            "Met en pause les vidéos et musiques de tous les onglets, puis les relance."
+        )
         self.browser_pause.clicked.connect(lambda: self._browser_command("pause"))
         self.browser_toggle = QPushButton("Afficher")
         self.browser_toggle.clicked.connect(self._toggle_browser)
@@ -690,7 +689,7 @@ class SettingsWindow(QWidget):
         keys, keys_layout = self._card(
             "Clés",
             "Rangées dans .env, jamais dans config.yaml ni dans le dépôt. Une clé remplacée sert "
-            "au prochain démarrage de MIKATA.",
+            "tout de suite.",
         )
         self.secret_labels: dict[str, QLabel] = {}
         for name, label in SECRET_NAMES.items():
@@ -759,12 +758,11 @@ class SettingsWindow(QWidget):
         return [key for key, value in self.values().items() if self.editor.get(key) != value]
 
     def _edited(self, *_: Any) -> None:
-        dirty = bool(self.pending())
-        self.save_button.setEnabled(dirty)
-        if dirty:
-            self.status.setText(UNSAVED)
-        elif self.status.text() == UNSAVED:
-            self.status.setText("")
+        """Un réglage a bougé : appliqué dans un instant (une frappe de plus repousse)."""
+        if self.pending():
+            self._apply_timer.start()
+        else:
+            self._apply_timer.stop()
 
     def save(self) -> list[str]:
         """Écrit les réglages modifiés ; renvoie les clés changées."""
@@ -775,25 +773,23 @@ class SettingsWindow(QWidget):
                     self.editor.set(key, value)
             changed = self.editor.changed()
             if not changed:
-                self.status.setText("Rien à enregistrer.")
-                self.save_button.setEnabled(False)
                 return []
             self.editor.save(self.base_dir / BACKUP_DIR)
         except (EditorError, OSError) as exc:
             self.status.setText(f"Non enregistré : {exc}")
             return []
         self.editor = ConfigEditor(self.config_path)  # référence des prochaines modifications
-        self.save_button.setEnabled(False)
         live = [k for k in changed if k in SPECS and SPECS[k].live]
         restart = [k for k in changed if k not in live]
         sent = self._send({"type": "reload_config"})
-        text = "Enregistré."
+        text = ""
         if live:
-            text += f" Tout de suite : {', '.join(SPECS[k].label for k in live)}."
+            text = f"Appliqué : {', '.join(SPECS[k].label for k in live)}."
         if restart:
-            text += f" Au redémarrage : {', '.join(SPECS[k].label for k in restart if k in SPECS)}."
+            labels = ", ".join(SPECS[k].label for k in restart if k in SPECS)
+            text += f" Au redémarrage : {labels}."
         if not sent:
-            text += " (MIKATA n'est pas lancé : appliqué à son prochain démarrage.)"
+            text = "Enregistré. MIKATA n'est pas lancé : appliqué à son prochain démarrage."
         self.status.setText(text)
         logger.info("Réglages enregistrés : {}", ", ".join(changed))
         self._on_applied({k: self.values().get(k) for k in changed})
@@ -873,6 +869,7 @@ class SettingsWindow(QWidget):
         self.browser_toggle.setHidden(not running)
         self.browser_toggle.setText("Masquer" if visible else "Afficher")
         self.browser_pause.setHidden(not running)
+        self.browser_pause.setText("Reprendre" if info.get("paused") else "Pause")
         while self.browser_tabs.count():
             item = self.browser_tabs.takeAt(0)
             widget = item.widget()
@@ -913,7 +910,7 @@ class SettingsWindow(QWidget):
         value, ok = QInputDialog.getText(
             self,
             "Remplacer la clé",
-            f"Nouvelle valeur de {name} (écrite dans .env, prise en compte au redémarrage) :",
+            f"Nouvelle valeur de {name} (écrite dans .env, utilisée tout de suite) :",
             QLineEdit.EchoMode.Password,
         )
         if not ok or not value:
@@ -923,7 +920,12 @@ class SettingsWindow(QWidget):
         except (EditorError, OSError) as exc:
             self.status.setText(f"Clé non enregistrée : {exc}")
             return
-        self.status.setText(f"{name} remplacée dans .env : redémarre MIKATA pour l'utiliser.")
+        sent = self._send({"type": "reload_config"})  # phase 15g : sans redémarrer
+        self.status.setText(
+            f"{name} remplacée : utilisée tout de suite."
+            if sent
+            else f"{name} remplacée : utilisée au prochain démarrage de MIKATA."
+        )
         self._refresh_cost()
 
     def _toggle_mic_test(self, on: bool) -> None:

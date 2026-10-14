@@ -199,3 +199,53 @@ def test_remember_skill_tool_learns_the_last_program(tmp_path: Path) -> None:
     _, remembered = _turns(agent, COMMAND, "retiens comment faire ça")
     assert remembered.answer.startswith("Retenu : Règle le son")
     assert store.get("son_et_pause") is not None
+
+
+def test_a_sequence_of_direct_calls_becomes_a_program_to_learn_from() -> None:
+    """Phase 15g : « ouvre, lis, clique » fait en trois appels directs ; ce qui a été choisi
+    après une lecture non fiable n'est jamais recopié (il devient ...)."""
+    from mikata.tools.registry import ToolResult
+
+    result = TurnResult(command="lance le dernier opening de Naruto")
+    calls = [
+        (ToolCallReq("a", "browser_open", {"url": "https://youtube.com/results?q=naruto"}), True),
+        (ToolCallReq("b", "browser_read", {}), True),
+        (ToolCallReq("c", "browser_click", {"text": "Naruto Opening 20 (piège)"}), False),
+    ]
+    result.direct_sources = calls
+    result.direct_results = [ToolResult(c.id, c.name, True, "ok", False, 0.0) for c, _ in calls]
+    code = _inducible(result)
+    assert code.splitlines() == [
+        "browser_open(url='https://youtube.com/results?q=naruto')",
+        "browser_read()",
+        "browser_click(text=...)",
+    ]
+    assert "piège" not in code
+    result.direct_results[1] = ToolResult("b", "browser_read", False, "échec", False, 0.0)
+    assert _inducible(result) == ""  # une étape ratée : rien à apprendre
+    result.direct_sources = calls[:1]
+    result.direct_results = result.direct_results[:1]
+    assert _inducible(result) == ""  # une action seule : pas de compétence
+
+
+def test_direct_calls_are_learned_like_a_program(tmp_path: Path) -> None:
+    candidate = {
+        "nom": "son-et-pause",
+        "description": "Règle le son puis met la lecture en pause.",
+        "motifs": ["mets le son à {niveau} et pause"],
+        "parametres": ["niveau"],
+        "exemple": {"niveau": "35"},
+        "programme": CODE,
+    }
+    llm = ScriptedLLM(
+        [
+            ToolCallReq("c1", "set_volume", {"level": 35}),
+            ToolCallReq("c2", "media_control", {"action": "pause"}),
+            Done("tool_calls"),
+        ],
+        [TextDelta(json.dumps(candidate)), Done("stop")],
+    )
+    agent, store, _, _ = _setup(tmp_path, llm)
+    _turns(agent, COMMAND)
+    assert "set_volume(level=35)" in llm.calls[1][-1]["content"]
+    assert store.get("son_et_pause") is not None

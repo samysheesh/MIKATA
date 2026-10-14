@@ -169,14 +169,16 @@ def test_reload_config_applies_live_settings(config_file: Path) -> None:
         wake={"threshold": 0.7, "refractory_s": 3.0},
         agent={"follow_up_s": 4, "history_persist_h": 48},
         llm={"reasoning_effort": "low"},
-        audio={"input_device": "Autre micro"},
+        audio={"input_device": "Autre micro"},  # phase 15g : appliqué sans redémarrer
+        stt={"model": "small"},
     )
     asyncio.run(app.reload_config())
     (reply,) = bridge.of("config")
-    assert reply["error"] is None and reply["restart"] == ["audio.input_device"]
+    assert reply["error"] is None and reply["restart"] == ["stt.model"]
     assert sorted(reply["applied"]) == [
         "agent.follow_up_s",
         "agent.history_persist_h",
+        "audio.input_device",
         "llm.reasoning_effort",
         "wake.refractory_s",
         "wake.threshold",
@@ -208,7 +210,7 @@ def test_live_settings_are_real_config_keys() -> None:
     for key in app_module.LIVE_SETTINGS:
         section, _, name = key.partition(".")
         assert hasattr(getattr(config, section), name), key
-    assert is_live_setting("wake.threshold") and not is_live_setting("audio.input_device")
+    assert is_live_setting("wake.threshold") and not is_live_setting("stt.model")
     other = config.model_copy(update={"ui": config.ui.model_copy(update={"bubble_s": 3})})
     assert changed_settings(config, other) == ["ui.bubble_s"]
 
@@ -265,6 +267,7 @@ def test_real_channel_end_to_end(config_file: Path) -> None:
                 "label": "Navigateur de travail — lecture en arrière-plan",
                 "running": False,
                 "visible": False,
+                "paused": False,
                 "tabs": [],
             }
         ],  # phase 13f : onglet « En cours »
@@ -318,3 +321,32 @@ def test_reload_config_switches_the_audio_output_live(
     assert reply["error"] is None and reply["applied"] == ["audio.output_device"]
     assert reply["restart"] == [] and switched == ["Haut-parleurs"]
     assert "wake" in app._earcons and app._earcons.sample_rate == 48_000  # type: ignore[attr-defined]
+
+
+def test_new_keys_apply_without_restart(config_file: Path) -> None:
+    """Phase 15g : clé du LLM et clé de recherche remplacées dans .env, prises tout de suite."""
+    from types import SimpleNamespace
+
+    from pydantic import SecretStr
+
+    app = App(load_config(config_file))
+    bridge = FakeBridge()
+    _with_ui(app, bridge)
+    keys: list[str] = []
+
+    async def set_api_key(key: SecretStr) -> None:
+        keys.append(key.get_secret_value())
+
+    ctx = SimpleNamespace(search_api_key="ancienne")
+    app._agent = SimpleNamespace(  # type: ignore[assignment]
+        llm=SimpleNamespace(set_api_key=set_api_key),
+        tools=SimpleNamespace(ctx=ctx),
+        config=app.config,
+        memory=SimpleNamespace(set_keep=lambda s: None),
+    )
+    env = config_file.parent / ".env"
+    env.write_text("LLM_API_KEY=sk-nouvelle-1234\nSEARCH_API_KEY=tv-nouvelle\n", encoding="utf-8")
+    asyncio.run(app.reload_config())
+    (reply,) = bridge.of("config")
+    assert "secrets.llm_api_key" in reply["applied"] and reply["restart"] == []
+    assert keys == ["sk-nouvelle-1234"] and ctx.search_api_key == "tv-nouvelle"

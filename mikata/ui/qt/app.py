@@ -118,6 +118,8 @@ class UiController(QObject):
             self.mascot.set_skin(load_skin_or_default(self.skin_root, str(values["ui.skin"])))
         if "ui.bubble_s" in values:
             self.model.bubble_s = float(values["ui.bubble_s"])
+        if "ui.mascot" in values:  # phase 15g : montrée ou cachée tout de suite
+            self.mascot.set_hidden(not bool(values["ui.mascot"]))
 
 
 def _setup_logging(base_dir: Path) -> None:
