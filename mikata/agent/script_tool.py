@@ -81,10 +81,10 @@ EXEMPLES DE PROGRAMMES
 - « lance le dernier clip de Stromae » :
   browser_open("https://www.youtube.com/results?search_query=Stromae+dernier+clip")
   page = browser_read()
-  question = "Quel lien est le clip officiel le plus récent ? Recopie son texte exact."
-  choix = extract(page, {{"lien": str}}, question)
-  expect(choix.lien, "un clip a été trouvé")
-  browser_click(choix.lien)
+  question = "Quel lien est le clip officiel le plus récent ? Recopie exactement son titre."
+  choix = extract(page, {{"titre": str}}, question)
+  expect(choix.titre, "un clip a été trouvé")
+  browser_click(choix.titre)
   return "C'est lancé."
 - « où fait-il le plus chaud, Lille ou Nice ? » :
   meteo = parallel(get_weather("Lille"), get_weather("Nice"))

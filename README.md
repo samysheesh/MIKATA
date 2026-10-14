@@ -3101,3 +3101,18 @@ Sur une page de résultats YouTube, les 60 liens lus par MIKATA étaient surtout
 trouvait rien à cliquer. Les liens du contenu passent maintenant en premier, sans doublon,
 et le choix de la vidéo se fait sur toute la page lue. Une compétence n'est plus apprise en
 double quand une voisine existe déjà.
+
+**15j — aiguillage : une compétence active reconnue dans toute formulation et toute langue**
+
+Les motifs ne couvrent pas toutes les façons de dire une chose, ni les autres langues.
+Quand des compétences sont actives, un appel minuscule (sans outils, seulement la liste des
+compétences et la phrase) part en même temps que l'appel normal. S'il reconnaît une
+compétence avant que MIKATA ait parlé, l'appel normal est coupé (ou ses outils, pas encore
+exécutés, sont écartés) et la compétence s'exécute. Chaque valeur qu'il lit doit figurer
+dans la phrase, sinon rien ne part. Il ne choisit jamais une compétence encore à l'essai.
+
+Essai réel (vrai modèle, PC simulé, deux passages) : « tu peux me mettre l'opening le plus
+récent de Naruto ? », « play the latest Bleach opening », « pon el último opening de One
+Piece », « mets le dernier générique de Fairy Tail » : 8 sur 8, la bonne vidéo, en 1,8 à
+3,7 s au lieu de 6 à 7 s ; « ferme l'opening de Naruto » ne la déclenche jamais.
+Réglages : `skills.route`, `skills.route_timeout_s`.

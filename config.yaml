@@ -88,6 +88,8 @@ skills:                            # phase 15e : compétences apprises (data/ski
   local_replay: true               # compétence active : rejouée sans appel au modèle
   max_skills: 40
   learn_effort: low                # réflexion de l'appel qui écrit la compétence
+  route: true                      # phase 15j : compétence active reconnue dans toute formulation
+  route_timeout_s: 3               # ... au-delà, l'appel normal décide seul
 files_index:                       # ajout phase 12d : index local des fichiers (MFT + journal USN)
   enabled: true                    # find_path / list_folder / open_in_explorer
   db: data/files_index.db          # base SQLite (WAL), jamais envoyée au LLM

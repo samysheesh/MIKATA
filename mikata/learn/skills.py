@@ -22,6 +22,11 @@ Cycle de vie (décidé avec l'utilisateur le 14/10) :
 4. **Active** après `skills.promote_after` réussites (3) : une phrase qui colle à un motif
    la rejoue **en local, sans appel LLM**. Un échec la renvoie à l'essai, compteur à zéro ;
    après `skills.max_failures` échecs de suite, elle est désactivée.
+5. **Aiguillage** (phase 15j) : pour toute autre formulation, dans toute langue, un appel
+   minuscule part en même temps que l'appel normal et reconnaît la compétence active
+   demandée, avec ses valeurs (vérifiées : chacune doit figurer dans la phrase). S'il
+   répond avant que MIKATA ait commencé à parler, l'appel normal est coupé et la
+   compétence s'exécute ; sinon il est ignoré. Aucune attente ajoutée.
 
 Les compétences de la phase 12c (`data/skills/skills.json`) ne sont pas reprises.
 """
@@ -521,8 +526,9 @@ cette partie reste fixe : ce n'est pas un paramètre.
 - Une valeur écrite ... a été choisie en lisant le résultat d'un appel précédent (une \
 page, une recherche) : le programme doit la retrouver lui-même dans ce qu'il lit, avec \
 extract(contenu, {"champ": str}, "question"). Par exemple : page = browser_read() ; \
-choix = extract(page, {"lien": str}, "Quel lien est ... ? Recopie son texte \
-exact.") ; expect(choix.lien, "trouvé") ; browser_click(choix.lien). Donne toujours \
+choix = extract(page, {"titre": str}, "Quel lien est ... ? Recopie exactement son \
+titre.") ; expect(choix.titre, "trouvé") ; browser_click(choix.titre). Demande le titre \
+d'un lien, jamais « le lien » (l'extraction rendrait une adresse). Donne toujours \
 toute la page à extract (page), jamais page.links seul. extract ne devine \
 jamais : sa question demande le candidat le plus probable de la page (« s'il y en a \
 plusieurs, le numéro le plus élevé »), sinon il répond null.
@@ -627,3 +633,92 @@ def verify(
             heard = example.get(param)
             return None, f"{param} : « {values[param]} » dans la demande, pas « {heard} »"
     return skill, ""
+
+
+# -- aiguillage (phase 15j) ------------------------------------------------------------------
+
+ROUTE_SYSTEM = """\
+Tu aiguilles les demandes faites à MIKATA, un assistant vocal. Ses compétences apprises :
+{skills}
+
+La demande vient de la reconnaissance vocale, dans n'importe quelle langue et n'importe \
+quelle formulation. Dis si elle demande exactement l'une de ces compétences, et lis la \
+valeur de chaque paramètre dans la demande, recopiée telle qu'elle y est dite.
+
+Réponds 0 si l'action demandée est une autre (fermer au lieu de lancer, chercher au lieu \
+de jouer...), si la demande en contient plusieurs, si elle est niée ou au conditionnel \
+(« ne lance pas », « je voudrais savoir si »), ou s'il manque une valeur.
+
+Réponds UNIQUEMENT par un objet JSON : {{"competence": numéro ou 0, "valeurs": \
+{{"paramètre": "valeur"}}}}."""
+
+
+def route_prompt(skills: list[Skill]) -> str:
+    """Prompt de l'aiguillage : ne change que quand les compétences actives changent (il
+    reste dans le cache de prompt du fournisseur)."""
+    lines = [f"{i}. {s.signature} : {s.description}" for i, s in enumerate(skills, 1)]
+    return ROUTE_SYSTEM.format(skills="\n".join(lines))
+
+
+def locate(command: str, value: str) -> str | None:
+    """La valeur telle qu'elle est écrite dans la demande (casse, accents), ou None si elle
+    n'y figure pas : une valeur que le modèle aurait inventée n'est jamais utilisée."""
+    wanted = fold(value).split()
+    if not wanted:
+        return None
+    regex = re.compile(r"\b" + r"\s+".join(map(re.escape, wanted)) + r"\b")
+    match = regex.search(fold(command))
+    if match is None:
+        return None
+    return command[match.start() : match.end()]
+
+
+def pick_route(text: str, skills: list[Skill], command: str) -> tuple[Skill, dict[str, str]] | None:
+    """Lit la réponse de l'aiguillage et la vérifie dans le code : numéro valide, tous les
+    paramètres et rien d'autre, chaque valeur présente dans la demande."""
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        data = json.loads(text[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    number = data.get("competence", data.get("compétence", 0))
+    try:
+        index = int(number)
+    except (TypeError, ValueError):
+        return None
+    if not 1 <= index <= len(skills):
+        return None
+    skill = skills[index - 1]
+    raw = data.get("valeurs") or {}
+    if not isinstance(raw, dict) or set(raw) != set(skill.params):
+        return None
+    values: dict[str, str] = {}
+    for name in skill.params:
+        found = locate(command, str(raw[name]))
+        if found is None:
+            return None
+        values[name] = found
+    return skill, values
+
+
+async def route(
+    llm: LLMClient, command: str, skills: list[Skill], effort: str | None = "none"
+) -> tuple[tuple[Skill, dict[str, str]] | None, Usage | None]:
+    """Un appel minuscule, sans outils : la compétence active que demande `command` (et
+    ses valeurs), ou None."""
+    messages = [
+        {"role": "system", "content": route_prompt(skills)},
+        {"role": "user", "content": f"Demande : « {command} »"},
+    ]
+    chunks: list[str] = []
+    usage: Usage | None = None
+    async for event in llm.stream(messages, [], reasoning_effort=effort):
+        if isinstance(event, TextDelta):
+            chunks.append(event.text)
+        elif isinstance(event, Done):
+            usage = event.usage
+    return pick_route("".join(chunks), skills, command), usage

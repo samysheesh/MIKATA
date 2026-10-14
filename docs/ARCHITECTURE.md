@@ -457,6 +457,8 @@ skills:                             # phase 15e : compétences apprises (data/sk
   local_replay: true
   max_skills: 40
   learn_effort: low
+  route: true                       # phase 15j : aiguillage (toute formulation, toute langue)
+  route_timeout_s: 3
 files_index:                        # phase 12d : index local des fichiers (MFT + journal USN)
   enabled: true
   db: data/files_index.db           # SQLite WAL, jamais envoyé au LLM

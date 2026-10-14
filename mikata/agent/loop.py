@@ -53,7 +53,7 @@ from mikata.agent.script_tool import (
 from mikata.config import Config
 from mikata.learn.playbook import Lesson, Playbook, render
 from mikata.learn.reflect import is_correction, reflect, should_reflect
-from mikata.learn.skills import Skill, SkillStore, call_code, induce, verify
+from mikata.learn.skills import Skill, SkillStore, call_code, induce, route, verify
 from mikata.learn.trace import TraceStore, TurnTrace, trace_from_result
 from mikata.llm.base import Done, LLMClient, TextDelta, ToolCallReq, Usage
 from mikata.llm.prompts import active_window_title, build_messages, dynamic_context
@@ -70,6 +70,9 @@ if TYPE_CHECKING:
 UNTRUSTED_HISTORY = "(contenu lu ailleurs, non gardé dans l'historique)"
 SCRIPT_FAILURES_BEFORE_ESCALATION = 2
 MAX_SCRIPT_FAILURES = 3  # programmes en échec dans un même tour
+# Phase 15j : l'appel normal a fini le premier sans rien dire (il demande un outil) : on
+# laisse encore ce temps à l'aiguillage avant d'exécuter quoi que ce soit.
+ROUTE_GRACE_S = 1.0
 
 
 @dataclass
@@ -257,6 +260,7 @@ class TurnResult:
     # dans l'ordre de `direct_results`.
     direct_sources: list[tuple[ToolCallReq, bool]] = field(default_factory=list)
     local_skill: str = ""
+    skill_via: str = ""  # phase 15j : « motif » (0 appel) ou « aiguillage » (1 petit appel)
 
     @property
     def effort_label(self) -> str:
@@ -270,7 +274,8 @@ class TurnResult:
     def path(self) -> str:
         """Chemin de la requête, pour le log (§10)."""
         if self.local_skill:
-            return f"compétence « {self.local_skill} » en local, {self.llm_calls} appel(s) LLM"
+            via = "reconnue par l'aiguillage" if self.skill_via == "aiguillage" else "en local"
+            return f"compétence « {self.local_skill} » {via}, {self.llm_calls} appel(s) LLM"
         if self.scripts:
             calls = sum(len(outcome.records) for outcome in self.scripts)
             end = "direct" if self.shortcut else "reformulé"
@@ -316,6 +321,26 @@ def _with_reasoning(messages: list[dict[str, Any]], effort: str | None) -> list[
             message = {k: v for k, v in message.items() if k != "reasoning_content"}
         out.append(message)
     return out
+
+
+class _SpeechProbe:
+    """Destination des phrases qui retient si quelque chose a été dit (phase 15j : l'appel
+    normal n'est jamais coupé une fois qu'il a commencé à parler)."""
+
+    def __init__(self, speech: SpeechSink) -> None:
+        self._speech = speech
+        self.said = False
+
+    def say(self, text: str) -> None:
+        self.said = True
+        self._speech.say(text)
+
+    def say_audio(self, pcm: Any, sample_rate: int) -> None:
+        self.said = True
+        self._speech.say_audio(pcm, sample_rate)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._speech, name)
 
 
 def _inducible(result: TurnResult) -> str:
@@ -651,13 +676,40 @@ class Agent:
             spoken.extend(replayed)
             if result.shortcut:
                 max_rounds = -1  # tout est dit : pas d'appel au modèle
+        # Phase 15j : aiguillage, en parallèle du premier appel normal.
+        router = None if replayed is not None else self._start_router(command, follow_up)
         for round_no in range(max_rounds + 1):
             last = round_no == max_rounds  # dernier appel : sans outils, réponse obligée
             gate = _FollowUpGate(follow_up and round_no == 0)
             offered = [] if last or state.no_tools else schemas
-            reply = await self._call_llm(
-                messages, offered, speech, result, gate, strong=state.strong
-            )
+            if router is not None:
+                reply, routed = await self._race(
+                    router, messages, offered, speech, result, gate, state
+                )
+                router = None
+                if routed is not None:
+                    skill, values = routed
+                    spoken.extend(
+                        await self._replay(
+                            skill,
+                            values,
+                            "aiguillage",
+                            speech,
+                            messages,
+                            steps,
+                            result,
+                            turn,
+                            state,
+                            on_phase,
+                        )
+                    )
+                    if result.shortcut:
+                        break
+                    continue  # une donnée à formuler, ou un échec : le modèle reprend
+            else:
+                reply = await self._call_llm(
+                    messages, offered, speech, result, gate, strong=state.strong
+                )
             if reply is None:
                 result.outcome = "server"
                 self._say_phrase(speech, "server")
@@ -825,37 +877,132 @@ class Agent:
         found = self.skills.match(command)
         if found is not None and found[0].status == "active" and self.config.skills.local_replay:
             skill, values = found
-            call = ToolCallReq("competence", SCRIPT_TOOL, {"code": call_code(skill, values)})
-            result.local_skill = skill.name
-            with turn_context(turn):
-                results = await self._run_tools(
-                    _Reply("", [call], ""), messages, steps, result, on_phase, state
-                )
-            spoken = list(turn.spoken)
-            turn.spoken.clear()
-            (outcome,) = results
-            if outcome.ok and outcome.terminal:
-                result.shortcut = True
-                if not spoken:
-                    self._say_phrase(speech, "done")
-                    spoken.append(PHRASES["done"])
-                logger.info("Compétence « {} » rejouée en local : {}.", skill.name, values)
-                return spoken
-            if not outcome.ok:
-                logger.info("Compétence « {} » : échec au rejeu, le modèle reprend.", skill.name)
-                messages.insert(
-                    len(messages) - 2 - len(results),  # avant la demande et le rejeu
-                    {
-                        "role": "system",
-                        "content": f"MIKATA a essayé la compétence {skill.signature}, qui a "
-                        "échoué (voir le résultat). Fais la demande autrement, sans elle.",
-                    },
-                )
-            return spoken
+            return await self._replay(
+                skill, values, "motif", speech, messages, steps, result, turn, state, on_phase
+            )
         hint = self._skill_hint(command, found)
         if hint:
             messages.insert(-1, {"role": "system", "content": hint})
         return None
+
+    async def _replay(
+        self,
+        skill: Skill,
+        values: dict[str, str],
+        via: str,
+        speech: SpeechSink,
+        messages: list[dict[str, Any]],
+        steps: list[dict[str, Any]],
+        result: TurnResult,
+        turn: TurnIO,
+        state: _TurnState,
+        on_phase: Callable[[str], None] | None,
+    ) -> list[str]:
+        """Exécute une compétence active sans le modèle (le programme d'une ligne
+        `return skills.<nom>(...)`, par le même chemin qu'un programme du modèle). Réussie
+        avec une phrase ou rien à dire : tour fini (`result.shortcut`) ; avec une donnée, le
+        modèle la formule ; en échec, le modèle reprend la demande. Rend les phrases dites."""
+        call = ToolCallReq("competence", SCRIPT_TOOL, {"code": call_code(skill, values)})
+        result.local_skill, result.skill_via = skill.name, via
+        with turn_context(turn):
+            results = await self._run_tools(
+                _Reply("", [call], ""), messages, steps, result, on_phase, state
+            )
+        spoken = list(turn.spoken)
+        turn.spoken.clear()
+        (outcome,) = results
+        if outcome.ok and outcome.terminal:
+            result.shortcut = True
+            if not spoken:
+                self._say_phrase(speech, "done")
+                spoken.append(PHRASES["done"])
+            logger.info("Compétence « {} » ({}) : {}.", skill.name, via, values)
+            return spoken
+        if not outcome.ok:
+            logger.info("Compétence « {} » : échec ({}), le modèle reprend.", skill.name, via)
+            messages.insert(
+                len(messages) - 2 - len(results),  # avant la demande et le rejeu
+                {
+                    "role": "system",
+                    "content": f"MIKATA a essayé la compétence {skill.signature}, qui a "
+                    "échoué (voir le résultat). Fais la demande autrement, sans elle.",
+                },
+            )
+        return spoken
+
+    def _start_router(self, command: str, follow_up: bool) -> asyncio.Task[Any] | None:
+        """Phase 15j : lance l'aiguillage s'il y a des compétences actives. Jamais dans la
+        fenêtre de suivi (la phrase n'est peut-être pas pour MIKATA)."""
+        if follow_up or not self._skills_on() or not self.config.skills.route:
+            return None
+        assert self.skills is not None
+        active = [s for s in self.skills.usable() if s.status == "active"]
+        if not active:
+            return None
+        return asyncio.create_task(self._route(command, active), name="aiguillage")
+
+    async def _route(
+        self, command: str, active: list[Skill]
+    ) -> tuple[Skill, dict[str, str]] | None:
+        start = time.monotonic()
+        try:
+            async with asyncio.timeout(self.config.skills.route_timeout_s):
+                routed, usage = await route(self.llm, command, active)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # trop lent, hors ligne : l'appel normal décide seul
+            logger.info("Aiguillage sans réponse : {}", str(exc) or type(exc).__name__)
+            return None
+        if self.usage is not None:
+            self.usage.record("aiguillage", usage, 1)
+        ms = (time.monotonic() - start) * 1000
+        if routed is None:
+            logger.info("Aiguillage : aucune compétence ({:.0f} ms).", ms)
+        else:
+            logger.info("Aiguillage : « {} » {} ({:.0f} ms).", routed[0].name, routed[1], ms)
+        return routed
+
+    async def _race(
+        self,
+        router: asyncio.Task[Any],
+        messages: list[dict[str, Any]],
+        offered: list[dict[str, Any]],
+        speech: SpeechSink,
+        result: TurnResult,
+        gate: _FollowUpGate,
+        state: _TurnState,
+    ) -> tuple[_Reply | None, tuple[Skill, dict[str, str]] | None]:
+        """Premier appel normal et aiguillage en même temps. L'aiguillage l'emporte s'il
+        reconnaît une compétence avant que l'appel normal ait dit quoi que ce soit : l'appel
+        normal est alors coupé, ou sa réponse (des outils pas encore exécutés) écartée.
+        S'il a fini le premier sans parler, l'aiguillage a encore `ROUTE_GRACE_S`."""
+        probe = _SpeechProbe(speech)
+        main = asyncio.create_task(
+            self._call_llm(messages, offered, probe, result, gate, strong=state.strong)
+        )
+        done, _ = await asyncio.wait({router, main}, return_when=asyncio.FIRST_COMPLETED)
+        if main in done and not router.done():
+            reply = main.result()
+            if reply is not None and not reply.text.strip() and not probe.said:
+                await asyncio.wait({router}, timeout=ROUTE_GRACE_S)
+        if not router.done():
+            router.cancel()
+            await asyncio.gather(router, return_exceptions=True)
+            return await main, None
+        routed = router.result()
+        if routed is not None:
+            result.llm_calls += 1
+        if routed is None or probe.said:
+            return await main, None
+        if main.done():
+            reply = main.result()
+            if reply is not None and reply.text.strip():
+                return reply, None  # il a déjà répondu en mots : on garde sa réponse
+            logger.info("Aiguillage : réponse de l'appel normal écartée (outils non exécutés).")
+        else:
+            main.cancel()
+            await asyncio.gather(main, return_exceptions=True)
+        return None, routed
 
     def _skill_hint(self, command: str, found: tuple[Skill, dict[str, str]] | None) -> str:
         """Note pour le modèle : la compétence qui colle (avec ses valeurs), sinon les

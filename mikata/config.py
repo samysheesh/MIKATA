@@ -230,6 +230,10 @@ class SkillsConfig(_Section):
     local_replay: bool = True  # false : même active, la compétence passe par le modèle
     max_skills: int = Field(default=40, ge=1, le=200)
     learn_effort: str | None = "low"  # réflexion de l'appel qui écrit la compétence
+    # Phase 15j : aiguillage. Un appel minuscule en parallèle de l'appel normal reconnaît
+    # une compétence active dans n'importe quelle formulation ou langue.
+    route: bool = True
+    route_timeout_s: float = Field(default=3.0, gt=0, le=20)
 
     @model_validator(mode="before")
     @classmethod
