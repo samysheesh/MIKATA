@@ -280,6 +280,7 @@ class SettingsWindow(QWidget):
         self._log_lines: list[str] = []
         self._polls = 0
         self._browser: dict[str, Any] = {}
+        self._background_apps: list[dict[str, Any]] = []  # phase 17e
 
         self.status = QLabel("")
         self.status.setObjectName("status")
@@ -534,8 +535,20 @@ class SettingsWindow(QWidget):
         show.clicked.connect(self._on_show_mascot)
         line.addWidget(show)
         mascot_layout.addLayout(line)
+
+        # Phase 17e : les applis que MIKATA tient cachées (uia.devtools_apps), comme le
+        # navigateur de travail : les voir, les mettre en pause, les fermer.
+        self.apps_card, apps_layout = self._card(
+            "Applis en arrière-plan",
+            "MIKATA les pilote cachées, sans jamais les afficher. Affiche-les pour les voir, "
+            "ou ferme-les : elles redémarrent cachées à la prochaine demande.",
+        )
+        self.apps_rows = QVBoxLayout()
+        self.apps_rows.setSpacing(6)
+        apps_layout.addLayout(self.apps_rows)
         self._apply_browser_state()
-        return self._stack(card, spend, mascot)
+        self._apply_apps_state()
+        return self._stack(card, self.apps_card, spend, mascot)
 
     def _sound_page(self) -> QWidget:
         inputs, outputs, error = self._devices()
@@ -830,6 +843,10 @@ class SettingsWindow(QWidget):
         browser = next((t for t in tasks if isinstance(t, dict) and t.get("id") == "browser"), {})
         self._browser = browser
         self._apply_browser_state()
+        self._background_apps = [
+            t for t in tasks if isinstance(t, dict) and str(t.get("id", "")).startswith("app:")
+        ]
+        self._apply_apps_state()
 
     # -- navigateur de travail (accueil) ----------------------------------------------------
 
@@ -878,6 +895,56 @@ class SettingsWindow(QWidget):
         self.browser_empty.setHidden(not running or bool(tabs))
         for tab in tabs:
             self.browser_tabs.addWidget(self._tab_row(tab))
+
+    # -- applis en arrière-plan (accueil, phase 17e) -----------------------------------
+
+    def _app_command(self, name: str, action: str) -> None:
+        if not self._send({"type": "app", "name": name, "action": action}):
+            self.status.setText("MIKATA n'est pas lancé.")
+
+    def _apply_apps_state(self) -> None:
+        while self.apps_rows.count():
+            item = self.apps_rows.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self.apps_card.setHidden(not self._background_apps)
+        for app in self._background_apps:
+            self.apps_rows.addWidget(self._app_row(app))
+
+    def _app_row(self, app: dict[str, Any]) -> QWidget:
+        name = str(app.get("label") or "")
+        running, visible = bool(app.get("running")), bool(app.get("visible"))
+        media, now = str(app.get("media") or ""), str(app.get("now") or "")
+        if not running:
+            state = "fermé — démarre caché à la prochaine demande"
+        elif not app.get("driven"):
+            state = "ouvert normalement — piloté par sa fenêtre"
+        else:
+            state = "affiché à l'écran" if visible else "caché, en fond"
+        if media:
+            playing = "en lecture" if media == "playing" else "en pause"
+            state += f" · {playing}" + (f" : {now}" if now else "")
+        label = QLabel(f"{name} — {state}")
+        label.setWordWrap(True)
+        label.setMinimumWidth(1)
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(label, 1)
+        buttons: list[tuple[str, str]] = []
+        if running:
+            buttons.append(("Masquer" if visible else "Afficher", "hide" if visible else "show"))
+        if media:
+            buttons.append(("Pause" if media == "playing" else "Reprendre", "pause"))
+        if running:
+            buttons.append(("Fermer", "close"))
+        for text, action in buttons:
+            button = QPushButton(text)
+            button.clicked.connect(lambda _=False, a=action: self._app_command(name, a))
+            row.addWidget(button)
+        holder = QWidget()
+        holder.setLayout(row)
+        return holder
 
     def _tab_row(self, tab: dict[str, Any]) -> QWidget:
         title = str(tab.get("title") or tab.get("url") or "Onglet")

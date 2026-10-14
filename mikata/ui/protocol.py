@@ -13,7 +13,8 @@ ralentir la boucle audio ni faire tomber MIKATA. Les deux parlent par une connex
 - Interface → MIKATA : `reload_config` (après écriture de config.yaml), `pause`, `restart`
   (redémarrer MIKATA : arrêt propre avec le code 75, relancé par la supervision ou par lui-même),
   `list_tasks`, `close_task` (onglet « En cours » des réglages : ce qui tourne en arrière-plan,
-  fermable — ajout phase 13f).
+  fermable — ajout phase 13f), `browser` (phase 15a), `app` (phase 17e : une appli tenue
+  en arrière-plan, `name` et `action` show | hide | pause | close).
 
 Ce module n'importe ni Qt ni asyncio : il sert aux deux côtés et aux tests.
 """
@@ -44,7 +45,8 @@ MIKATA_EVENTS = (
     "mic",  # status : ok | paused | busy
     "config",  # applied, restart, error : réponse à reload_config
     "voice",  # event (fallback | resume | profile), engine, message : voix (phase 11)
-    "tasks",  # tasks : [{id, label, running, visible, tabs}] — arrière-plan (13f, 15a)
+    "tasks",  # tasks : [{id, label, running, visible, tabs}] — arrière-plan (13f, 15a) ;
+    # phase 17e : id « app:<nom> », avec driven, media (playing | paused | ""), now
     "open_settings",
     "show_mascot",
     "bye",  # MIKATA s'arrête : l'interface se ferme
@@ -58,6 +60,7 @@ UI_COMMANDS = (
     "list_tasks",
     "close_task",
     "browser",  # phase 15a : action (show | hide | pause | close_tab | start), tab
+    "app",  # phase 17e : name, action (show | hide | pause | close)
 )
 
 

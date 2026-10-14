@@ -358,6 +358,12 @@ class SimUi:
     def quit_background(self, name: str) -> str | None:
         return None
 
+    def background_status(self) -> list[dict[str, Any]]:
+        return []
+
+    def background_action(self, name: str, action: str) -> str:
+        raise ToolError("aucune appli n'est tenue en arrière-plan")
+
     def pause_state(self, paused: bool) -> None:
         pass
 

@@ -18,7 +18,7 @@ from typing import Any, ClassVar
 
 from mikata.browser.apps import DevtoolsApps
 from mikata.tools.base import Desktop, ToolError, UiWindowInfo
-from mikata.uia.controller import _STATE, _BackendBase
+from mikata.uia.controller import _STATE, _BackendBase, renamed
 
 # Rôle d'accessibilité Chromium -> nom français donné au LLM (comme `UiaBackend._KINDS`).
 _KINDS: dict[str, str] = {
@@ -262,14 +262,17 @@ class DevtoolsBackend(_BackendBase):
     def click(self, node: Any, name: str) -> str:
         before = self.toggle_state(node)
         self._call_on(node, _CLICK_FN, name)
+        fresh = self._fresh(node)  # le contrôle après le clic : son état, son nom
+        new_name = renamed(name, fresh.name) if fresh is not None else ""
         if before is None:
-            return f"« {name} » cliqué."
-        after = self._fresh_state(node)
+            return f"« {name} » cliqué{new_name}."
+        after = self.toggle_state(fresh) if fresh is not None else None
         state = f" : maintenant {_STATE[after]}" if after is not None else ""
-        return f"« {name} » basculé{state}."
+        return f"« {name} » basculé{state}{new_name}."
 
-    def _fresh_state(self, node: Any) -> bool | None:
-        """L'état d'un interrupteur relu après le clic (l'arbre lu avant est périmé)."""
+    def _fresh(self, node: Any) -> AxNode | None:
+        """Le nœud relu après le clic (l'arbre lu avant est périmé) ; None s'il a disparu
+        (un lien qui change de page)."""
         import time
 
         time.sleep(0.15)  # le temps que l'appli applique le changement
@@ -282,8 +285,8 @@ class DevtoolsBackend(_BackendBase):
             )
         except ToolError:
             return None
-        nodes = result.get("nodes") or []
-        return self.toggle_state(AxNode(nodes[0], node.process)) if nodes else None
+        nodes = [raw for raw in result.get("nodes") or [] if not raw.get("ignored")]
+        return AxNode(nodes[0], node.process) if nodes else None
 
     def set_text(self, node: Any, control: str, text: str) -> str:
         if not self._call_on(node, _FOCUS_FN, control):

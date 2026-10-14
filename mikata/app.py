@@ -53,6 +53,7 @@ import asyncio
 import contextlib
 import functools
 import itertools
+import sys
 import time
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
@@ -116,8 +117,18 @@ FOLLOW_UP_SOURCE = "suivi"
 INTERRUPTED_ANSWER = "stop"
 VOICE_STOP_TARGET_MS = 300  # arrêt vocal : coupure visée après la fin de parole
 MIC_SILENT_S = 2.0  # phase 8 : plus aucune trame du micro depuis N s -> « micro occupé »
+APP_TASK = "app:"  # phase 17e : préfixe des tâches « appli tenue en arrière-plan »
+
+
 # Phase 8 : réglages appliqués sans redémarrer quand l'interface réécrit config.yaml (le
 # reste demande un redémarrage). Préfixe « section. » : toute la section.
+def _media_sessions() -> list[Any]:
+    """Phase 17e : les sessions média de Windows (import paresseux de winrt)."""
+    from mikata.tools.media_sessions import sessions
+
+    return sessions()
+
+
 LIVE_SETTINGS = frozenset(
     {
         "wake.threshold",
@@ -188,7 +199,10 @@ class StatusIcon(Protocol):
     """Icône de la zone de notification (implémentée par `ui.tray.TrayIcon`)."""
 
     def start(
-        self, on_quit: Callable[[], None], on_action: Callable[[str], None] | None = None
+        self,
+        on_quit: Callable[[], None],
+        on_action: Callable[[str], None] | None = None,
+        apps: Sequence[str] = (),  # phase 17e : « Fermer <appli> » des applis cachées
     ) -> None: ...
     def set_state(self, state: State) -> None: ...
     def stop(self) -> None: ...
@@ -308,6 +322,7 @@ class App:
         self.paused = False  # micro coupé côté logiciel (phase 8)
         self.restart_requested = False  # « Redémarrer » dans l'interface : __main__ relance
         self._mic_status = "ok"
+        self._app_tasks: list[dict[str, object]] = []  # phase 17e : applis en arrière-plan
         self._last_frame_at = 0.0
         self.state = State.IDLE
         self._wake_pattern = wake_word_pattern(config.stt.wake_words)
@@ -396,9 +411,14 @@ class App:
             task_id = command.get("id")
             if task_id == "browser":
                 self._close_work_browser()
+            elif isinstance(task_id, str) and task_id.startswith(APP_TASK):  # phase 17e
+                close = {"name": task_id[len(APP_TASK) :], "action": "close"}
+                self._spawn(self._app_action(close), "appli en arrière-plan")
             self._publish_ui("tasks", tasks=self._background_tasks())
         elif kind == "browser":  # phase 15a : gérer le navigateur de travail
             self._spawn(self._browser_action(command), "navigateur de travail")
+        elif kind == "app":  # phase 17e : une appli tenue en arrière-plan
+            self._spawn(self._app_action(command), "appli en arrière-plan")
 
     def _on_tray_action(self, action: str) -> None:
         """Menu de l'icône (thread pystray) : renvoyé dans la boucle asyncio."""
@@ -414,6 +434,10 @@ class App:
             return
         if action == "browser_close":
             self._close_work_browser()
+            return
+        if action.startswith("app_close:"):  # phase 17e : « Fermer Spotify »
+            close = {"name": action.split(":", 1)[1], "action": "close"}
+            self._spawn(self._app_action(close), "appli en arrière-plan")
             return
         message = {"settings": "open_settings", "mascot": "show_mascot"}.get(action)
         if message is None:
@@ -476,7 +500,64 @@ class App:
                 tabs = await browser.list_tabs()
             except Exception as exc:
                 logger.debug("Onglets illisibles : {}", exc)
+        self._app_tasks = await self._read_app_tasks()
         self._publish_ui("tasks", tasks=self._background_tasks(tabs))
+
+    # -- applis tenues en arrière-plan (phase 17e) ---------------------------------------
+
+    async def _read_app_tasks(self) -> list[dict[str, object]]:
+        """Les applis de `uia.devtools_apps` pour l'accueil des réglages : ouvertes ou non,
+        affichées ou cachées, et ce qu'elles jouent (sessions média de Windows)."""
+        registry = self._agent.tools if self._agent is not None else None
+        ctx = registry.ctx if registry is not None else None
+        uia = getattr(ctx, "uia", None)
+        status_fn = getattr(uia, "background_status", None)
+        if ctx is None or status_fn is None or not self.config.uia.devtools_apps:
+            return []
+        try:
+            status = await ctx.run_blocking(status_fn)
+            media = await ctx.run_blocking(_media_sessions) if sys.platform == "win32" else []
+        except Exception as exc:
+            logger.debug("Applis en arrière-plan illisibles : {}", exc)
+            return []
+        from mikata.tools.media_sessions import matching
+
+        tasks: list[dict[str, object]] = []
+        for app in status:
+            session = matching(str(app.get("name", "")), media) if app.get("open") else None
+            tasks.append(
+                {
+                    "id": f"{APP_TASK}{app.get('name')}",
+                    "label": str(app.get("name", "")),
+                    "running": bool(app.get("open")),
+                    "driven": bool(app.get("driven")),
+                    "visible": bool(app.get("visible")),
+                    "media": ("playing" if session.playing else "paused") if session else "",
+                    "now": session.label if session is not None else "",
+                }
+            )
+        return tasks
+
+    async def _app_action(self, command: dict[str, object]) -> None:
+        """Afficher, masquer, Pause / Reprendre, fermer une appli tenue en arrière-plan,
+        puis renvoyer l'état à l'interface."""
+        registry = self._agent.tools if self._agent is not None else None
+        ctx = registry.ctx if registry is not None else None
+        uia = getattr(ctx, "uia", None)
+        name, action = str(command.get("name") or ""), command.get("action")
+        if ctx is None or uia is None or not name:
+            return
+        try:
+            if action == "pause":
+                from mikata.tools.media_sessions import toggle
+
+                done = await ctx.run_blocking(toggle, name)
+                logger.info("{} : {}.", name, done or "aucune lecture à commander")
+            elif action in ("show", "hide", "close"):
+                logger.info(await ctx.run_blocking(uia.background_action, name, action))
+        except Exception as exc:
+            logger.warning("{} ({}) : {}", name, action, exc)
+        await self._publish_browser_state()
 
     def _background_tasks(
         self, tabs: list[dict[str, str]] | None = None
@@ -495,7 +576,8 @@ class App:
                 "visible": bool(getattr(browser, "visible", False)),
                 "paused": bool(getattr(browser, "media_paused", False)),
                 "tabs": tabs or [],
-            }
+            },
+            *self._app_tasks,  # phase 17e : relu par _publish_browser_state
         ]
 
     def set_paused(self, paused: bool) -> None:
@@ -805,9 +887,11 @@ class App:
                     from mikata.ui.prefs import STATE_FILE
 
                     watch(self.config.resolve(STATE_FILE))
+                hidden = list(self.config.uia.devtools_apps)  # phase 17e : « Fermer Spotify »
                 self._tray.start(
                     on_quit=lambda: self.request_shutdown("menu Quitter"),
                     on_action=self._on_tray_action if self._ui is not None else None,
+                    **({"apps": hidden} if hidden and self._ui is not None else {}),
                 )
             if self._ui is not None:
                 try:

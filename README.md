@@ -3403,3 +3403,27 @@ uv run python scripts/eval_bench.py --tag appli --trials 2
 #      le temps de relancer Spotify caché) ; « MIKATA, mets pause », « MIKATA, ferme Spotify ».
 # Le journal dit : « Spotify relancé caché avec l'accès DevTools » (data\logs\mikata.log).
 ```
+
+**Suite du 14/10 au soir** (tes retours après le premier essai) :
+
+- **Les applis en arrière-plan dans les menus** : sur l'accueil des réglages, une carte
+  « Applis en arrière-plan » montre chaque appli tenue cachée (« Spotify — caché, en fond ·
+  en lecture : Jet Lag · Tiakola ») avec **Afficher / Masquer**, **Pause / Reprendre** et
+  **Fermer** ; le menu de l'icône a « Fermer Spotify ». Pause / Reprendre passe par les
+  contrôles média de Windows, appli par appli : jamais la musique d'une autre appli (les
+  touches média, elles, vont à l'appli que Windows juge courante).
+- **Plus lent qu'il ne faut la première fois** : Spotify fermé, MIKATA le lançait pendant
+  `uia_items`, qui abandonnait au bout de 15 s (ton PC chargé : plus de 15 s pour démarrer) ;
+  le tour perdait ces 15 s. Le délai des gestes d'appli couvre maintenant le lancement.
+- **« Mets-le en boucle » bouclait la playlist** : le bouton de répétition de Spotify a trois
+  états (liste, puis titre). Un clic dit maintenant ce que le bouton est devenu (« il
+  s'appelle maintenant « Enable repeat one » ») : MIKATA sait qu'il faut recliquer pour
+  boucler le titre. Vaut pour tous les boutons à plusieurs états, dans toutes les applis.
+
+```powershell
+uv sync   # nouveau paquet : winrt-Windows.Media.Control (contrôles média de Windows)
+uv run pytest tests/test_background_apps_ui.py tests/test_ui_qt.py -q
+# Réglages > Accueil : la carte « Applis en arrière-plan » ; Pause / Reprendre, Afficher, Fermer.
+# Icône de MIKATA (clic droit) : « Fermer Spotify ».
+# À la voix : « MIKATA, mets Jet Lag de Tiakola en boucle » -> le titre seul se répète.
+```

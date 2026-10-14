@@ -324,9 +324,9 @@ class UiaBackend(_BackendBase):
         if invoke is not None:
             try:
                 invoke.Invoke()
-                return f"« {name} » cliqué."
             except Exception as exc:
                 raise ToolError(f"« {name} » n'a pas répondu au clic : {exc}") from exc
+            return f"« {name} » cliqué{renamed(name, self.node_name(node))}."
         toggle = self._pattern(node, "Toggle")
         if toggle is not None:
             try:
@@ -335,7 +335,7 @@ class UiaBackend(_BackendBase):
                 raise ToolError(f"« {name} » n'a pas répondu au clic : {exc}") from exc
             state = self.toggle_state(node)
             after = f" : maintenant {_STATE[state]}" if state is not None else ""
-            return f"« {name} » basculé{after}."
+            return f"« {name} » basculé{after}{renamed(name, self.node_name(node))}."
         raise ToolError(f"« {name} » ne se laisse pas cliquer (pas un bouton)")
 
     def set_text(self, node: Any, control: str, text: str) -> str:
@@ -542,6 +542,14 @@ class UiController:
 
     def quit_background(self, name: str) -> str | None:
         return self._apps.quit(name) if self._apps is not None else None
+
+    def background_status(self) -> list[dict[str, Any]]:
+        return self._apps.status() if self._apps is not None else []
+
+    def background_action(self, name: str, action: str) -> str:
+        if self._apps is None:
+            raise ToolError("aucune appli n'est tenue en arrière-plan (uia.devtools_apps)")
+        return str(self._apps.act(name, action))
 
     def _engine(self, window: UiWindowInfo) -> _BackendBase:
         """Le moteur de cette fenêtre : DevTools pour une appli listée, sinon celui de la
@@ -904,6 +912,17 @@ def _shown_for_click(handle: int | None) -> Iterator[None]:
 
 
 SHOW_FOR_CLICK_S = 0.3  # le temps que l'appli prenne le clic, fenêtre visible
+
+
+def renamed(before: str, after: str) -> str:
+    """Phase 17e : « ; il s'appelle maintenant « X » » si le clic a changé le nom du
+    contrôle, sinon "". Un bouton à plusieurs états le dit par son nom : la répétition de
+    Spotify passe de « Enable repeat » (répéter la liste) à « Enable repeat one » (répéter
+    le titre) ; sans cela, MIKATA croyait un titre en boucle quand c'était la liste."""
+    after = after.strip()
+    if not after or fold(after) == fold(before):
+        return ""
+    return f" ; il s'appelle maintenant « {after[:_NAME_MAX]} »"
 
 
 def _prefixed(wanted: str, name: str) -> bool:

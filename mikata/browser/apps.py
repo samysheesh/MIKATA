@@ -210,6 +210,55 @@ class DevtoolsApps:
         logger.info("{} (caché) fermé à la demande.", app)
         return f"{app} fermé."
 
+    # -- interface (accueil des réglages, menu de l'icône) ------------------------------
+
+    def status(self) -> list[dict[str, Any]]:
+        """Chaque appli listée : ouverte ou non, tenue par MIKATA (avec l'accès), affichée
+        à l'écran ou cachée, et le titre de sa page. Ne lance ni ne relance jamais rien."""
+        found: list[dict[str, Any]] = []
+        for app in self._names:
+            procs = _processes(app)
+            port = debug_port(_cmdlines(procs)) if procs else None
+            title = ""
+            if port is not None:
+                with contextlib.suppress(CdpError):
+                    page = main_page(list_targets_sync(port, 1.0))
+                    title = page.title if page is not None else ""
+            found.append(
+                {
+                    "name": app,
+                    "open": bool(procs),
+                    "driven": port is not None,
+                    "visible": bool(procs) and bool(_visible_windows({p.pid for p in procs})),
+                    "title": title,
+                }
+            )
+        return found
+
+    def act(self, name: str, action: str) -> str:
+        """Depuis l'interface : « show » (la fenêtre revient devant), « hide » (recachée),
+        « close » (l'appli est fermée, lecture comprise)."""
+        app = self.serves(name)
+        if app is None:
+            raise ToolError(f"« {name} » n'est pas une appli tenue en arrière-plan")
+        with self._lock:
+            procs = _processes(app)
+            if not procs:
+                return f"{app} est déjà fermé."
+            pids = {p.pid for p in procs}
+            if action == "show":
+                _show_windows(pids)
+                return f"{app} affiché."
+            if action == "hide":
+                _hide_windows(pids)
+                return f"{app} caché."
+            if action == "close":
+                self._drop(app)
+                _terminate(procs)
+                logger.info("{} fermé depuis l'interface.", app)
+                return f"{app} fermé."
+        raise ToolError(f"action inconnue : {action}")
+
     def aclose(self) -> None:
         """Arrêt de MIKATA : les connexions se ferment, les applis continuent de tourner."""
         with self._lock:
@@ -491,3 +540,20 @@ def _hide_windows(pids: set[int]) -> None:
     user32 = ctypes.windll.user32  # type: ignore[attr-defined,unused-ignore]
     for hwnd in _visible_windows(pids):
         user32.ShowWindow(hwnd, _SW_HIDE)
+
+
+def _show_windows(pids: set[int]) -> None:
+    """Remet devant la fenêtre principale de l'appli (celle qui a un titre : « Spotify
+    Free »), cachée ou réduite. Les fenêtres techniques sans titre restent cachées."""
+    if sys.platform != "win32":
+        return
+    import ctypes
+
+    user32 = ctypes.windll.user32  # type: ignore[attr-defined,unused-ignore]
+    for hwnd in _top_windows(pids):
+        if not user32.GetWindowTextLengthW(hwnd):
+            continue
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE : affichée, à sa taille d'avant
+        user32.keybd_event(0x12, 0, 0, 0)  # Alt : lève le verrou de premier plan
+        user32.keybd_event(0x12, 0, 0x0002, 0)
+        user32.SetForegroundWindow(hwnd)

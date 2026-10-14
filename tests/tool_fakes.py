@@ -292,6 +292,17 @@ class FakeUi:
         hidden = [w for w in self.windows if w.engine == "devtools" and w.process == name]
         return f"{name} fermé." if hidden else None
 
+    def background_status(self) -> list[dict[str, Any]]:
+        return [
+            {"name": w.process, "open": True, "driven": True, "visible": False, "title": w.title}
+            for w in self.windows
+            if w.engine == "devtools"
+        ]
+
+    def background_action(self, name: str, action: str) -> str:
+        self._record("background_action", (name, action))
+        return f"{name} : {action}."
+
     def pause_state(self, paused: bool) -> None:
         self.paused.append(paused)
 

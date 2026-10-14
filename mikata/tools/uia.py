@@ -20,6 +20,17 @@ from mikata.tools.registry import register_tool
 from mikata.tools.shell import _approve
 
 
+def app_launch_limit(ctx: ToolContext, own: float | None = None) -> float | None:
+    """Phase 17e : délai d'un outil qui peut lancer une appli tenue cachée (la première
+    demande la démarre). Le 14/10, sous charge, Spotify a mis plus de 15 s à démarrer :
+    `uia_items` expirait, et le tour perdait ces 15 s. Le délai couvre le lancement, puis
+    l'outil ; sans appli listée, rien ne change."""
+    config = ctx.config
+    if not config.uia.devtools_apps:
+        return own
+    return max(own or 0.0, config.tools.timeout_s + config.uia.devtools_launch_timeout_s)
+
+
 def _uia(ctx: ToolContext) -> UiAutomation:
     """Le pilote UIA, sauf si la section `uia` de la config est coupée (message dédié)."""
     if not ctx.config.uia.enabled:
@@ -56,6 +67,9 @@ class UiaWindow(BaseTool[UiaWindowParams]):
     )
     params = UiaWindowParams
     terminal = False
+
+    def time_limit(self) -> float | None:
+        return app_launch_limit(self.ctx)
 
     async def run(self, args: UiaWindowParams) -> str:
         uia = _uia(self.ctx)
@@ -98,6 +112,9 @@ class UiaRead(BaseTool[UiaReadParams]):
     params = UiaReadParams
     terminal = False
 
+    def time_limit(self) -> float | None:
+        return app_launch_limit(self.ctx)
+
     async def run(self, args: UiaReadParams) -> str:
         uia = _uia(self.ctx)
         win = await self.ctx.run_blocking(uia.window, args.window, args.process)
@@ -139,6 +156,9 @@ class UiaClick(BaseTool[UiaClickParams]):
     params = UiaClickParams
     terminal = True
 
+    def time_limit(self) -> float | None:
+        return app_launch_limit(self.ctx)
+
     async def run(self, args: UiaClickParams) -> str:
         guard = self.ctx.require_guard()
         decision = guard.check_ui_action(args.control)
@@ -175,6 +195,9 @@ class UiaSetText(BaseTool[UiaSetTextParams]):
     )
     params = UiaSetTextParams
     terminal = True
+
+    def time_limit(self) -> float | None:
+        return app_launch_limit(self.ctx)
 
     async def run(self, args: UiaSetTextParams) -> str:
         guard = self.ctx.require_guard()
@@ -253,6 +276,9 @@ class UiaItems(BaseTool[UiaItemsParams]):
     params = UiaItemsParams
     terminal = False
 
+    def time_limit(self) -> float | None:
+        return app_launch_limit(self.ctx)
+
     async def run(self, args: UiaItemsParams) -> str:
         uia = _uia(self.ctx)
         win = await self.ctx.run_blocking(uia.window, args.window, args.process)
@@ -307,8 +333,8 @@ class UiaWait(BaseTool[UiaWaitParams]):
     params = UiaWaitParams
     terminal = False
 
-    def time_limit(self) -> float:
-        return 25.0
+    def time_limit(self) -> float | None:
+        return app_launch_limit(self.ctx, 25.0)
 
     async def run(self, args: UiaWaitParams) -> str:
         import time

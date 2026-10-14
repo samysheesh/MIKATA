@@ -275,6 +275,8 @@ class UiAutomation(Protocol):
     # Phase 17e : applis Chromium tenues cachées par DevTools (`uia.devtools_apps`).
     def background_apps(self) -> list[str]: ...  # celles qui tournent cachées
     def quit_background(self, name: str) -> str | None: ...  # la ferme ; None : pas l'une d'elles
+    def background_status(self) -> list[dict[str, Any]]: ...  # pour l'interface
+    def background_action(self, name: str, action: str) -> str: ...  # show | hide | close
     def state_summary(self) -> str: ...  # état ambiant en cache (Discord...), "" si rien
     def pause_state(self, paused: bool) -> None: ...  # le poller d'état saute ses lectures
     def aclose(self) -> None: ...  # arrête le poller d'état (arrêt propre)

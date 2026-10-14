@@ -65,6 +65,10 @@ dependencies = [
     # Phase 12a : pilotage fin des applications par l'arbre d'accessibilité Windows (UIA).
     # Pur Python, s'appuie sur comtypes (déjà présent) ; imports paresseux, mocké dans les tests.
     "uiautomation>=2.0.25 ; sys_platform == 'win32'",
+    # Phase 17e : les sessions média de Windows (SMTC), appli par appli : Pause / Reprendre
+    # et titre en cours des applis tenues en arrière-plan. Même famille que winrt-runtime,
+    # déjà là pour les notifications ; import paresseux, mocké dans les tests.
+    "winrt-Windows.Media.Control>=3.2.1 ; sys_platform == 'win32'",
     # Phase 12b : contrôle du navigateur (Brave/Chromium) via le protocole DevTools. Le vrai
     # client est testé sur la CI Linux contre un faux serveur WebSocket.
     "websockets>=14",

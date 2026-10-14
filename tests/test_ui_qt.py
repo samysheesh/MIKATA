@@ -462,6 +462,45 @@ def test_home_manages_the_work_browser(base: Path) -> None:
     window.close()
 
 
+def test_home_lists_the_hidden_apps(base: Path) -> None:
+    """Phase 17e : les applis tenues en arrière-plan, sur l'accueil : afficher, Pause /
+    Reprendre, fermer ; la carte disparaît s'il n'y en a aucune."""
+    from PySide6.QtWidgets import QLabel, QPushButton
+
+    sent: list[dict[str, Any]] = []
+    window = _settings(base, sent)
+    browser = {"id": "browser", "label": "Navigateur", "running": True, "tabs": []}
+    window.on_tasks({"type": "tasks", "tasks": [browser]})
+    assert window.apps_card.isHidden()
+    spotify = {
+        "id": "app:Spotify",
+        "label": "Spotify",
+        "running": True,
+        "driven": True,
+        "visible": False,
+        "media": "playing",
+        "now": "Jet Lag · Tiakola",
+    }
+    window.on_tasks({"type": "tasks", "tasks": [browser, spotify]})
+    assert not window.apps_card.isHidden()
+    row = window.apps_rows.itemAt(0).widget()
+    text = row.findChildren(QLabel)[0].text()
+    assert text == "Spotify — caché, en fond · en lecture : Jet Lag · Tiakola"
+    buttons = {button.text(): button for button in row.findChildren(QPushButton)}
+    assert list(buttons) == ["Afficher", "Pause", "Fermer"]
+    buttons["Afficher"].click()
+    assert sent[-1] == {"type": "app", "name": "Spotify", "action": "show"}
+    buttons["Pause"].click()
+    assert sent[-1] == {"type": "app", "name": "Spotify", "action": "pause"}
+    buttons["Fermer"].click()
+    assert sent[-1] == {"type": "app", "name": "Spotify", "action": "close"}
+    closed = {**spotify, "running": False, "driven": False, "media": "", "now": ""}
+    window.on_tasks({"type": "tasks", "tasks": [browser, closed]})
+    row = window.apps_rows.itemAt(0).widget()
+    assert "fermé" in row.findChildren(QLabel)[0].text() and not row.findChildren(QPushButton)
+    window.close()
+
+
 def test_home_asks_for_the_browser_state_only_when_shown(base: Path) -> None:
     sent: list[dict[str, Any]] = []
     window = _settings(base, sent)

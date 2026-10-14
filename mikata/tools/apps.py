@@ -512,6 +512,11 @@ class OpenAppLink(BaseTool[AppLinkParams]):
     def concludes(self, args: AppLinkParams) -> bool:
         return not args.background  # ouverte en arrière-plan : pour agir dedans, une étape
 
+    def time_limit(self) -> float | None:
+        from mikata.tools.uia import app_launch_limit
+
+        return app_launch_limit(self.ctx)  # phase 17e : peut lancer une appli tenue cachée
+
     async def run(self, args: AppLinkParams) -> str:
         from mikata.tools.desktop import DENIED_SCHEMES
 

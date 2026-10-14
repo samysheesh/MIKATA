@@ -22,7 +22,7 @@ import io
 import sys
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +58,15 @@ STATE_LABELS: dict[State, str] = {
     State.ACTING: "action",
     State.SPEAKING: "parole",
 }
+
+
+def _close_app(on_action: Callable[[str], None], app: str) -> Callable[..., None]:
+    """Action du menu « Fermer <appli> » (phase 17e), liée à son appli."""
+
+    def close(*_: Any) -> None:
+        on_action(f"app_close:{app}")
+
+    return close
 
 
 def make_icon_image(color: str, size: int = ICON_SIZE) -> Image.Image:
@@ -148,10 +157,14 @@ class TrayIcon:
         self._hidden_checked_at = 0.0
 
     def start(
-        self, on_quit: Callable[[], None], on_action: Callable[[str], None] | None = None
+        self,
+        on_quit: Callable[[], None],
+        on_action: Callable[[str], None] | None = None,
+        apps: Sequence[str] = (),
     ) -> None:
         """`on_action` (ajout phase 8) : « settings », « mascot », « pause » ; sans lui, le
-        menu n'a que « Quitter » (interface désactivée)."""
+        menu n'a que « Quitter » (interface désactivée). `apps` (phase 17e) : les applis
+        tenues en arrière-plan (`uia.devtools_apps`), chacune avec « Fermer <appli> »."""
         import pystray  # backend Win32 sous Windows, Cocoa sous macOS
 
         self._on_quit = on_quit
@@ -167,6 +180,8 @@ class TrayIcon:
                     "Fermer le navigateur de MIKATA",
                     lambda *_: on_action("browser_close"),
                 ),
+                # Phase 17e : une appli tenue cachée n'a pas de fenêtre à fermer.
+                *(pystray.MenuItem(f"Fermer {app}", _close_app(on_action, app)) for app in apps),
                 pystray.Menu.SEPARATOR,
             ]
         menu = pystray.Menu(*items, pystray.MenuItem("Quitter", self._quit_clicked))
