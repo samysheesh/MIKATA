@@ -62,15 +62,21 @@ class Forget(BaseTool[ForgetParams]):
     sdk = "memory.forget"
     effect = Effect.CONSEQUENTIAL
     expected_s = 0.1
-    description = "Oublie un fait mémorisé, quand l'utilisateur le demande."
+    description = (
+        "Oublie un fait mémorisé ou une préférence apprise, quand l'utilisateur le demande."
+    )
     params = ForgetParams
     terminal = True
 
     async def run(self, args: ForgetParams) -> str:
         removed = _memory(self.ctx).forget(args.fact)
-        if removed is None:
-            raise ToolError(f"aucun fait mémorisé ne correspond à « {args.fact} »")
-        return f"Oublié : {removed}"
+        if removed is not None:
+            return f"Oublié : {removed}"
+        preferences = self.ctx.preferences  # phase 16e
+        preference = preferences.forget(args.fact) if preferences is not None else None
+        if preference is None:
+            raise ToolError(f"aucun fait ni préférence ne correspond à « {args.fact} »")
+        return f"Oublié : {preference.subject}, {preference.value}."
 
 
 MAX_HISTORY_HOURS = 24 * 366  # un an

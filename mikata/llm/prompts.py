@@ -163,6 +163,7 @@ def build_messages(
     script_guide: str | None = None,
     lessons: str = "",
     narration: bool = False,
+    preferences: str = "",
 ) -> list[dict[str, Any]]:
     # Phase 15c : la consigne des tâches longues complète le prompt système ; fixe tant que
     # le réglage ne change pas (reste dans le cache de prompt).
@@ -182,6 +183,14 @@ def build_messages(
         facts = "\n".join(f"- {fact}" for fact in memory_facts)
         messages.append(
             {"role": "system", "content": f"Ce que tu sais de l'utilisateur :\n{facts}"}
+        )
+    if preferences:  # phase 16e : apprises de ses corrections, changent rarement
+        messages.append(
+            {
+                "role": "system",
+                "content": "Préférences de l'utilisateur, apprises de ses corrections (à "
+                f"suivre sauf demande contraire) :\n{preferences}",
+            }
         )
     if lessons:  # phase 14e : leçons du carnet qui se rapportent à cette demande
         messages.append({"role": "system", "content": lessons})

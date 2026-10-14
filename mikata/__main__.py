@@ -289,11 +289,13 @@ def _learning(config: Config) -> dict[str, Any]:
     if not config.learning.enabled:
         return {}
     from mikata.learn.playbook import PLAYBOOK_FILE, Playbook
+    from mikata.learn.preferences import PREFERENCES_FILE, PreferenceStore
     from mikata.learn.trace import TRACES_DIR, TraceStore
 
     return {
         "playbook": Playbook(config.resolve(PLAYBOOK_FILE), config.learning.max_lessons),
         "traces": TraceStore(config.resolve(TRACES_DIR)) if config.learning.traces else None,
+        "preferences": PreferenceStore(config.resolve(PREFERENCES_FILE)),  # phase 16e
     }
 
 

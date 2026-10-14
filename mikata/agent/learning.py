@@ -14,7 +14,8 @@ from loguru import logger
 from mikata.agent.turn import TurnResult
 from mikata.config import Config
 from mikata.learn.playbook import Lesson, Playbook
-from mikata.learn.reflect import is_correction, reflect, should_reflect
+from mikata.learn.preferences import PreferenceStore
+from mikata.learn.reflect import is_correction, reflect_all, should_reflect
 from mikata.learn.trace import TraceStore, TurnTrace, trace_from_result
 from mikata.llm.base import LLMClient
 
@@ -30,12 +31,14 @@ class Learner:
         usage: UsageTracker | None,
         playbook: Playbook | None,
         traces: TraceStore | None,
+        preferences: PreferenceStore | None = None,
     ) -> None:
         self.llm = llm
         self._config = config
         self.usage = usage
         self.playbook = playbook
         self.traces = traces
+        self.preferences = preferences  # phase 16e
         self._last_trace: tuple[TurnTrace, float] | None = None
         self.task: asyncio.Task[None] | None = None
 
@@ -90,7 +93,7 @@ class Learner:
         config = self._config()
         try:
             async with asyncio.timeout(config.llm.turn_timeout_s):
-                lessons, usage = await reflect(
+                lessons, preferences, usage = await reflect_all(
                     self.llm,
                     trace,
                     correction_of=correction_of,
@@ -106,3 +109,7 @@ class Learner:
         source = "correction" if correction_of is not None else "échec corrigé"
         for scope, text in lessons:
             self.playbook.add(scope, text, source)
+        # Une préférence ne vient que des mots de l'utilisateur : d'une correction.
+        if correction_of is not None and self.preferences is not None:
+            for subject, value in preferences:
+                self.preferences.learn(subject, value, "correction")

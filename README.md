@@ -3207,3 +3207,15 @@ essais, une fois par l'exploration.
 git checkout phase-16d-exploration
 uv run pytest tests/test_explore.py tests/test_progress.py
 ```
+
+**16e — mémoire : préférences et épisodes.**
+
+- **Préférences apprises** (`data/preferences.json`) : sujet → valeur (« musique →
+  Spotify »), avec le nombre de fois où tu l'as montrée. Elles ne viennent que de tes
+  corrections (« non, sur Spotify »), jamais d'un contenu lu ailleurs ; si tu changes
+  d'avis, la nouvelle valeur remplace l'ancienne. Elles sont données au modèle à chaque
+  commande ; « oublie ma préférence pour la musique » la retire.
+- **Épisodes** : pour une demande qui renvoie au passé (« remets la même vidéo qu'hier »,
+  « qu'est-ce que tu as fait ce matin ? »), les actions récentes les plus proches sont
+  tirées des traces, sans appel au modèle ; la réponse d'un tour qui a lu un contenu non
+  fiable n'est jamais reprise.

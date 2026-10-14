@@ -58,7 +58,10 @@ from mikata.agent.turn import (
     TurnResult,
 )
 from mikata.config import Config
+from mikata.learn.episodes import episodes, refers_to_past
+from mikata.learn.episodes import render as render_episodes
 from mikata.learn.playbook import Playbook, render
+from mikata.learn.preferences import PreferenceStore
 from mikata.learn.skills import SkillStore
 from mikata.learn.trace import TraceStore
 from mikata.llm.base import LLMClient
@@ -112,6 +115,7 @@ class Agent:
         playbook: Playbook | None = None,
         traces: TraceStore | None = None,
         jev: Any = None,
+        preferences: PreferenceStore | None = None,
     ) -> None:
         self.config = config
         self.memory = memory if memory is not None else short_term_memory(config)
@@ -133,7 +137,8 @@ class Agent:
         self._say_phrase = PhraseSpeaker(phrases)
         self._model = ModelCaller(llm, settings)
         self._summarizer = Summarizer(self.memory, llm, settings, usage)
-        self._learner = Learner(llm, settings, usage, playbook, traces)
+        self._learner = Learner(llm, settings, usage, playbook, traces, preferences)
+        self.preferences = preferences  # phase 16e
         # Programmes (phase 14d) : SDK tiré du registre, une fois.
         self._catalog = SdkCatalog(tools.tools, platform()) if tools is not None else None
         self._script_guide = (
@@ -167,6 +172,8 @@ class Agent:
                 tools.ctx.skills_capture = self._skill_path.capture  # outil remember_skill
             if tools.ctx.history is None:  # outil set_history_duration
                 tools.ctx.history = self.memory
+            if preferences is not None:  # outil forget (« oublie que je préfère... »)
+                tools.ctx.preferences = preferences
         self._llm = llm
 
     # -- attributs partagés avec les composants ---------------------------------------------
@@ -347,7 +354,14 @@ class Agent:
             script_guide=self._script_guide,
             lessons=render(lessons),
             narration=self.config.agent.narration == "bavard",
+            preferences=self.preferences.render() if self.preferences is not None else "",
         )
+        traces = self._learner.traces
+        if traces is not None and refers_to_past(command):  # phase 16e : épisodes
+            recent = await asyncio.to_thread(traces.recent, 60)
+            block = render_episodes(episodes(command, recent, self._clock()))
+            if block:
+                messages.insert(-1, {"role": "system", "content": block})
         turn = Turn(command, speech, result, io, messages, on_phase=on_phase, follow_up=follow_up)
         return turn, lessons
 

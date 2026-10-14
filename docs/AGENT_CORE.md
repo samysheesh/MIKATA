@@ -405,6 +405,8 @@ réussite sur trois essais.
 | E. Apprentissage | faite (`phase-14e-apprentissage`, `phase-15e-competences`) | carnet de leçons et traces ; une leçon fait passer une tâche de 2 appels à 1 ; une compétence apprise au 1er tour, appelée par le modèle aux tours 2 à 4, est rejouée au 5e sans appel LLM (vrai modèle, PC simulé) |
 | F. Ouverture | à faire | |
 
+Fait en mémoire (phase 16e, §3.7) : préférences apprises des corrections de l'utilisateur (`learn/preferences.py`), épisodes tirés des traces pour une demande qui renvoie au passé (`learn/episodes.py`).
+
 Fait en D (phase 16a) : boucle découpée en composants, prompt système réécrit en
 principes et exemples canoniques (le savoir propre à un outil est passé dans sa
 description) ; banc à deux essais : 98/100 et 164 appels au modèle, contre 99/100 et 169.

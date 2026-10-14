@@ -297,6 +297,8 @@ class ToolContext:
     # capture forcée du dernier programme réussi (câblée par la boucle agent).
     skills: Any = None
     skills_capture: Callable[[str], Awaitable[str]] | None = None
+    # Ajout phase 16e : préférences apprises (mikata.learn.preferences), pour forget.
+    preferences: Any = None
     # Ajout phase 12d : index local des fichiers (mikata.files.index.FileIndex).
     index: FileIndexService | None = None
     _executor: ThreadPoolExecutor | None = field(default=None, repr=False)
