@@ -183,4 +183,8 @@ class UiaState(BaseTool[UiaStateParams]):
     async def run(self, args: UiaStateParams) -> str:
         uia = _uia(self.ctx)
         summary = await self.ctx.run_blocking(uia.state_summary)
-        return summary or "Rien à signaler : aucun salon vocal Discord rejoint."
+        if not summary:
+            # Un état vide ne prouve rien (Discord fermé, illisible...) : surtout pas « tu
+            # n'es pas en vocal », dont le modèle concluait qu'il n'y avait rien à faire.
+            raise ToolError("état ambiant vide : rien à lire pour l'instant")
+        return summary
