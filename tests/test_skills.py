@@ -196,3 +196,25 @@ def test_max_skills_is_enforced(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         store.adopt(_skill())
     assert {"list", "remember", "forget"} == skills_module.RESERVED
+
+
+@pytest.mark.parametrize(
+    ("command", "anime"),
+    [
+        ("Est-ce que tu peux me lancer le dernier opening de Bleach, s'il te plaît ?", "Bleach"),
+        ("Lance-moi le dernier opening de One Piece stp", "One Piece"),
+        ("lancez le dernier opening de Black Clover", "Black Clover"),
+        ("tu pourrais lancer le dernier opening de Jujutsu Kaisen merci", "Jujutsu Kaisen"),
+        ("vas-y lance le dernier opening de Dr. Stone maintenant", "Dr. Stone"),
+    ],
+)
+def test_politeness_and_verb_forms_do_not_matter(command: str, anime: str) -> None:
+    """Phase 15i : politesse autour de la demande et formes du verbe ignorées."""
+    assert bind("lance le dernier opening de {anime}", command) == {"anime": anime}
+
+
+def test_politeness_never_eats_a_different_request() -> None:
+    pattern = "lance le dernier opening de {anime}"
+    assert bind(pattern, "lance la dernière vidéo de Squeezie") is None
+    assert bind(pattern, "balance le dernier opening de Naruto") is None
+    assert bind(pattern, "ferme le dernier opening de Naruto") is None

@@ -82,9 +82,58 @@ def words(text: str) -> set[str]:
     return {w for w in fold(text).split() if len(w) >= 3 and w not in _STOP}
 
 
+# Phase 15i : la politesse et les mots d'appel autour de la demande ne comptent pas
+# (« est-ce que tu peux me lancer ... s'il te plaît ? »). Formes repliées (voir `fold`).
+_LEADING = (
+    "est ce que tu peux", "est ce que tu pourrais", "est ce que vous pouvez",
+    "est ce que vous pourriez", "est ce que", "tu peux", "tu pourrais", "peux tu",
+    "pourrais tu", "vous pouvez", "pouvez vous", "tu veux bien", "s il te plait",
+    "s il vous plait", "stp", "svp", "vas y", "allez", "alors", "bon", "ok", "okay", "euh",
+    "dis moi", "dis", "hey", "please", "can you", "could you", "me", "m", "moi",
+)  # fmt: skip
+_TRAILING = (
+    "s il te plait", "s il vous plait", "stp", "svp", "steuplait", "merci", "please",
+    "pour moi", "maintenant", "tout de suite",
+)  # fmt: skip
+_LEADING_RE = re.compile(r"^\s*(?:" + "|".join(map(re.escape, _LEADING)) + r")\b")
+_TRAILING_RE = re.compile(r"\b(?:" + "|".join(map(re.escape, _TRAILING)) + r")\s*$")
+_CLITIC = r"(?:\s*\b(?:moi|me|m|nous)\b)?"  # « lance-moi », « mets-moi »
+
+
+def _blank(text: str, regex: re.Pattern[str]) -> str:
+    match = regex.search(text)
+    if match is None or match.end() == match.start():
+        return text
+    return text[: match.start()] + " " * (match.end() - match.start()) + text[match.end() :]
+
+
+def strip_politeness(folded: str) -> str:
+    """Efface (par des blancs, même longueur) la politesse en tête et en fin de phrase."""
+    for regex in (_LEADING_RE, _TRAILING_RE):
+        while True:
+            blanked = _blank(folded, regex)
+            if blanked == folded:
+                break
+            folded = blanked
+    return folded
+
+
+def _verb(word: str) -> str:
+    """Premier mot d'un motif, le plus souvent un verbe à l'impératif : toutes ses formes
+    courantes (« lance » : lancer, lancez ; « mets » : mettre, mettez), suivi ou non de
+    « moi »."""
+    stem = word
+    while len(stem) > 3 and stem[-1] in "eszrt" and len(word) - len(stem) < 2:
+        stem = stem[:-1]
+    if len(word) < 4:
+        return re.escape(word) + _CLITIC
+    return re.escape(stem) + r"\w{0,4}" + _CLITIC
+
+
 def compile_pattern(pattern: str) -> re.Pattern[str] | None:
     """« mets l'opening {numero} de {anime} » -> expression sur le texte replié. Les mots
-    sont séparés par n'importe quels blancs ou ponctuations ; None si le motif est vide."""
+    sont séparés par n'importe quels blancs ou ponctuations ; le premier mot accepte ses
+    autres formes (phase 15i) ; None si le motif est vide."""
     parts: list[str] = []
     position = 0
     for match in PARAM_RE.finditer(pattern):
@@ -94,6 +143,8 @@ def compile_pattern(pattern: str) -> re.Pattern[str] | None:
     parts.extend(_literal(pattern[position:]))
     if not parts:
         return None
+    if not parts[0].startswith("(?P<"):
+        parts[0] = _verb(fold(pattern).split()[0])
     body = r"\s*".join(parts)
     try:
         return re.compile(rf"^\s*{body}\s*$")
@@ -110,7 +161,7 @@ def bind(pattern: str, command: str) -> dict[str, str] | None:
     regex = compile_pattern(pattern)
     if regex is None:
         return None
-    match = regex.match(fold(command))
+    match = regex.match(strip_politeness(fold(command)))
     if match is None:
         return None
     values = {
