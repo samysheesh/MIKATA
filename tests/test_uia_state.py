@@ -3,9 +3,12 @@ jamais loggé ni écrit sur disque, lecture du salon vocal Discord."""
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
 from types import SimpleNamespace
+
+import pytest
 
 from mikata.uia.client import UiaAccessibilityClient
 from mikata.uia.controller import _discord_voice_from
@@ -96,15 +99,26 @@ def test_stop_terminates_the_thread() -> None:
     state.stop()  # idempotent
 
 
-def test_poll_s_zero_never_starts() -> None:
-    state = AmbientState(0, lambda: {"discord": "x"})
+def test_poll_s_zero_reads_on_demand_with_a_short_cache() -> None:
+    """Par défaut, rien ne tourne au repos : l'état est lu quand on le demande, et gardé
+    `max_age_s` secondes (deux questions de suite ne relisent pas Discord)."""
+    reads: list[int] = []
+
+    def snapshot() -> dict[str, str]:
+        reads.append(1)
+        return {"discord": f"lecture {len(reads)}"}
+
+    state = AmbientState(0, snapshot, max_age_s=0.2)
     state.start()
-    assert state._thread is None and state.summary() == ""
+    assert state._thread is None and reads == []  # aucun fil, aucune lecture au repos
+    assert state.summary() == "lecture 1"
+    assert state.summary() == "lecture 1" and len(reads) == 1  # encore frais
+    time.sleep(0.25)
+    assert state.summary() == "lecture 2"
 
 
 def test_summary_joins_non_empty_entries_only() -> None:
-    state = AmbientState(0, lambda: {})
-    state._data = {"discord": "salon « Général »", "rien": "  "}
+    state = AmbientState(0, lambda: {"discord": "salon « Général »", "rien": "  "})
     assert state.summary() == "salon « Général »"
 
 
@@ -181,3 +195,33 @@ def test_accessibility_client_starts_and_stops() -> None:
     client.stop()
     assert client._thread is None
     client.stop()
+
+
+def test_the_uia_com_client_is_created_once_even_from_many_threads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Son premier usage génère le cache comtypes : fait par deux fils à la fois, il le
+    cassait (4 premiers lancements sur 5 sur un vrai Windows, cache vide)."""
+    from mikata.uia import state as state_module
+
+    created: list[int] = []
+    inside = threading.Event()
+
+    def get_root_control() -> object:
+        assert not inside.is_set(), "deux créations en même temps"
+        inside.set()
+        time.sleep(0.05)  # le temps de générer les modules
+        created.append(threading.get_ident())
+        inside.clear()
+        return object()
+
+    monkeypatch.setitem(
+        sys.modules, "uiautomation", SimpleNamespace(GetRootControl=get_root_control)
+    )
+    monkeypatch.setattr(state_module, "_uia_ready", False)
+    threads = [threading.Thread(target=state_module.load_uiautomation) for _ in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+    assert len(created) == 1

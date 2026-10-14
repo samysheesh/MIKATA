@@ -3252,3 +3252,21 @@ uv run pytest tests/test_mcp.py tests/test_skills_share.py tests/test_memory_16e
 #   « MIKATA, quand il est 15 h à Paris, quelle heure est-il à New York ? »
 #   « MIKATA, exporte la compétence ... » puis regarder Documents\MIKATA\compétences
 ```
+
+Aussi en 16f, après relecture :
+
+- **Moins de CPU au repos** : l'état ambiant (qui est en vocal sur Discord) n'est plus relu
+  toutes les 2 s mais quand MIKATA en a besoin. Une relève coûtait 140 à 200 ms de CPU, soit
+  7 à 10 % d'un cœur en permanence. `uia.state_poll_s: N` remet la relève de fond.
+- **Premier démarrage fiable** : le cache que `uiautomation` génère au premier usage est
+  créé une seule fois, sous verrou. Créé par deux fils à la fois, il se cassait (4 premiers
+  lancements sur 5 à cache vide) et le pilotage des applications restait en panne.
+- **Une question se répond** : « combien font 17 fois 23 ? » n'ouvre plus la Calculatrice.
+- Le clic du moteur macOS ne dit plus « cliqué » quand le clic a échoué.
+
+```powershell
+uv run pytest tests/test_uia_state.py tests/test_uia_tools.py tests/test_prompts.py -q
+# MIKATA relancé, dire : « MIKATA, qui est en vocal sur Discord ? » (réponse en ~0,5 s)
+# CPU au repos : comparer les lignes « CPU du processus » de data\logs\mikata.log
+Select-String -Path data\logs\mikata.log -Pattern "CPU du processus" | Select-Object -Last 5
+```

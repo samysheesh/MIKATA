@@ -62,3 +62,29 @@ def test_a_missing_control_lists_the_closest_names() -> None:
     assert "contrôle introuvable : « Muet »" in str(error.value)
     assert "noms proches : « Rendre muet »" in str(error.value)
     assert controller._find(window, "Rendre muet", None, 1) == "Rendre muet"
+
+
+def test_both_backends_implement_the_whole_interface() -> None:
+    """Toute opération appelée par le contrôleur est déclarée par la base et fournie par
+    chaque moteur : un moteur incomplet ne se construit pas."""
+    from mikata.uia.controller import AxBackend, UiaBackend
+
+    for backend in (UiaBackend, AxBackend):
+        assert not backend.__abstractmethods__, backend.__abstractmethods__
+        backend(FakeDesktop())  # type: ignore[arg-type]
+
+
+def test_an_ax_click_that_fails_is_reported_as_a_failure() -> None:
+    """Le moteur macOS disait « cliqué » quand AXPress échouait mais que l'attribut
+    existait : lire l'attribut ne clique pas."""
+    from mikata.uia.controller import AxBackend
+
+    class Node:
+        def perform(self, action: str) -> None:
+            raise RuntimeError("AXError -25205")
+
+        def get(self, attribute: str) -> Any:
+            return object()  # l'attribut existe
+
+    with pytest.raises(ToolError, match="n'a pas répondu au clic"):
+        AxBackend(FakeDesktop()).click(Node(), "Envoyer")  # type: ignore[arg-type]

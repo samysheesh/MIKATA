@@ -23,7 +23,7 @@ from typing import Any, ClassVar
 
 from loguru import logger
 
-from mikata.uia.state import _com_init
+from mikata.uia.state import _com_init, load_uia_interfaces
 
 
 class UiaAccessibilityClient:
@@ -48,7 +48,7 @@ class UiaAccessibilityClient:
             import macuiauto  # type: ignore[import-not-found]
 
             logger.info(
-                "Accessibilité macOS : backend AX prêt (%s). Si les fenêtres restent "
+                "Accessibilité macOS : backend AX prêt ({}). Si les fenêtres restent "
                 "illisibles, accordez l'autorisation Accessibilité puis relancez.",
                 getattr(macuiauto, "__name__", "macuiauto"),
             )
@@ -75,7 +75,7 @@ class UiaAccessibilityClient:
             client.RemoveFocusChangedEventHandler(handler)
 
     @staticmethod
-    def _subscribe() -> tuple[Any, Any] | None:
+    def _subscribe() -> tuple[Any, Any]:
         """Client IUIAutomation + abonnement aux changements de focus, ou (None, None).
 
         Trois essais : un processus mort sans désabonnement (arrêt forcé) peut faire
@@ -84,8 +84,8 @@ class UiaAccessibilityClient:
         for attempt in range(3):
             try:
                 import comtypes
-                from comtypes.gen import UIAutomationClient as uia
 
+                uia = load_uia_interfaces()
                 client = comtypes.CoCreateInstance(
                     uia.CUIAutomation._reg_clsid_,
                     interface=uia.IUIAutomation,

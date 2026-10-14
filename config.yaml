@@ -188,7 +188,7 @@ ui:                                # ajout phase 8 : mascotte et réglages (proc
     femme: {voice: elevenlabs, voice_id: YxrwjAKoUKULGd0g8K9Y, voice_name: "Lucie"}
 uia:                               # ajout phase 12a : pilotage fin des applications (arbre UIA)
   enabled: true                    # lire les contrôles et cliquer par nom (outils uia_*)
-  state_poll_s: 2                  # état ambiant en RAM (Discord...) ; 0 = jamais
+  state_poll_s: 0                  # état ambiant (Discord...) : 0 = lu à la demande ; N = toutes les N s
   max_controls: 200                # contrôles listés par uia_window (au plus)
   max_text_chars: 2000             # texte lu par uia_read, tronqué
   accessibility_client: true       # client UIA à l'écoute : Discord, VS Code... se lisent sans drapeau

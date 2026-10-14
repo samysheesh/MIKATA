@@ -31,7 +31,7 @@ from rapidfuzz import fuzz
 from mikata.config import Config
 from mikata.tools.base import Desktop, ToolError, UiControlInfo, UiWindowInfo
 from mikata.uia.client import UiaAccessibilityClient
-from mikata.uia.state import AmbientState
+from mikata.uia.state import AmbientState, load_uiautomation
 
 # Conteneurs sans intérêt pour le LLM : pas listés par `controls`.
 _SKIP_KINDS = {"fenêtre", "panneau", "groupe", "barre de titre", "document"}
@@ -70,6 +70,34 @@ class _BackendBase(ABC):
     @abstractmethod
     def children(self, node: Any) -> list[Any]:
         """Enfants d'un nœud : `GetChildren` (UIA) ou `AXChildren` (AX)."""
+
+    @abstractmethod
+    def node_name(self, node: Any) -> str:
+        """Nom accessible du nœud ("" s'il n'en a pas)."""
+
+    @abstractmethod
+    def node_kind(self, node: Any) -> str:
+        """Type du nœud en français (« bouton », « champ »...) ; « contrôle » sinon."""
+
+    @abstractmethod
+    def control_text(self, node: Any) -> str:
+        """Texte d'un contrôle (valeur d'un champ, texte d'un document, sinon son nom)."""
+
+    @abstractmethod
+    def document_text(self, root: Any) -> str:
+        """Texte du document principal de la fenêtre ("" s'il n'y en a pas)."""
+
+    @abstractmethod
+    def visible_text(self, root: Any) -> str:
+        """Textes visibles de la fenêtre, bornés."""
+
+    @abstractmethod
+    def click(self, node: Any, name: str) -> str:
+        """Clique le nœud ; lève ToolError s'il ne réagit pas."""
+
+    @abstractmethod
+    def set_text(self, node: Any, control: str, text: str) -> str:
+        """Remplit un champ ; lève ToolError s'il refuse le texte."""
 
     def walk(self, root: Any, max_nodes: int) -> list[Any]:
         """Parcours en profondeur, borné : une fenêtre géante ne bloque pas l'outil.
@@ -140,11 +168,13 @@ class UiaBackend(_BackendBase):
         `GetTopLevelControl` est la seule voie fiable : `WindowControl(NativeWindowHandle=...)`
         ignore la poignée et renvoie la fenêtre au premier plan (constaté sur Discord)."""
         try:
-            import uiautomation as auto
-        except ImportError as exc:
+            auto = load_uiautomation()
+        except ModuleNotFoundError as exc:
             raise ToolError(
                 "le pilotage fin des applications n'est pas installé (uiautomation)"
             ) from exc
+        except ImportError as exc:  # cache comtypes illisible
+            raise ToolError(f"le pilotage fin des applications a échoué : {exc}") from exc
         if not window.handle:
             raise ToolError(f"la fenêtre « {window.title} » n'a pas de poignée Windows")
         try:
@@ -364,18 +394,13 @@ class AxBackend(_BackendBase):
         return "\n".join(parts)
 
     def click(self, node: Any, name: str) -> str:
-        """Clic AX : action `AXPress` (boutons, cases, liens...)."""
+        """Clic AX : action `AXPress` (boutons, cases, liens...). Un échec est un échec :
+        lire l'attribut `AXPress` ne clique pas."""
         try:
             node.perform("AXPress")
-            return f"« {name} » cliqué."
         except Exception as exc:
-            try:
-                press = node.get("AXPress")
-                if press is not None:
-                    return f"« {name} » cliqué."
-            except Exception:
-                pass
             raise ToolError(f"« {name} » n'a pas répondu au clic : {exc}") from exc
+        return f"« {name} » cliqué."
 
     def set_text(self, node: Any, control: str, text: str) -> str:
         try:
@@ -395,7 +420,9 @@ class UiController:
         # Choix unique du moteur, à la construction, par la plateforme (mikata/plat.py,
         # via la config) : plus aucune branche sys.platform ni test de type de nœud
         # dans les méthodes publiques.
-        self._backend = UiaBackend(desktop) if config.uia.backend == "uia" else AxBackend(desktop)
+        self._backend: _BackendBase = (
+            UiaBackend(desktop) if config.uia.backend == "uia" else AxBackend(desktop)
+        )
         self._desktop = desktop
         self._state = AmbientState(config.uia.state_poll_s, self._snapshot)
         self._state.start()
@@ -505,11 +532,11 @@ class UiController:
     # -- lecture ----------------------------------------------------------------------
 
     def read(self, window: UiWindowInfo, control: str | None, max_chars: int) -> str:
-        root = self._backend.attach(window)
         if control is not None:
             node = self._find(window, control, None, 1)
             text = self._backend.control_text(node)
         else:
+            root = self._backend.attach(window)
             text = self._backend.document_text(root) or self._backend.visible_text(root)
         if not text.strip():
             raise ToolError("aucun texte lisible dans cette fenêtre")

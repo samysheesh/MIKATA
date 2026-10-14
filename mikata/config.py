@@ -419,7 +419,9 @@ class UiaConfig(_Section):
     gardé en RAM seulement, jamais loggé."""
 
     enabled: bool = True  # false : les outils UIA répondent « désactivé »
-    state_poll_s: float = Field(default=2, ge=0)  # état ambiant ; 0 = jamais rafraîchi
+    # État ambiant (Discord...) : 0 = lu à la demande par uia_state, rien au repos ;
+    # N > 0 = relu en fond toutes les N s (~150 ms de CPU par relève de Discord).
+    state_poll_s: float = Field(default=0, ge=0)
     max_controls: int = Field(default=200, ge=10, le=2000)  # contrôles listés par uia_window
     max_text_chars: int = Field(default=2000, ge=100, le=20000)  # texte lu, tronqué
     # Client d'accessibilité à l'écoute (UiaClientsAreListening) : les applications

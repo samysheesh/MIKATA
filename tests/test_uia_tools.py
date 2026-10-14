@@ -94,9 +94,10 @@ def test_uia_state_reads_the_ambient_cache(tmp_path: Path) -> None:
     assert any(name == "state" for name, _ in ui.log)
 
 
-def test_uia_state_with_nothing_tracked_fails(tmp_path: Path) -> None:
+def test_uia_state_with_nothing_to_report_says_so(tmp_path: Path) -> None:
+    """Pas en vocal (ou Discord fermé) : une réponse, pas une panne."""
     result = _execute(make_ctx(tmp_path, uia=FakeUi(state="")), "uia_state")
-    assert not result.ok and "aucun état ambiant" in result.content
+    assert result.ok and result.content == "Rien à signaler : aucun salon vocal Discord rejoint."
 
 
 @pytest.mark.parametrize(

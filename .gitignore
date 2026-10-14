@@ -41,3 +41,6 @@ assets/mascot/*
 !assets/mascot/default/
 !assets/mascot/gars/
 !assets/mascot/femme/
+
+# Journal d'erreurs écrit par la bibliothèque uiautomation dans le dossier courant
+@AutomationLog.txt

@@ -172,17 +172,15 @@ class UiaState(BaseTool[UiaStateParams]):
     sdk = "ui.state"
     effect = Effect.READ
     output = Trust.UNTRUSTED
-    expected_s = 0.1
+    expected_s = 0.6  # lu à la demande : une relève de Discord prend ~0,5 s
     description = (
-        "Lit l'état ambiant du PC gardé en mémoire (par ex. qui est dans le salon vocal "
-        "Discord), sans rien ouvrir ni déplacer."
+        "Lit l'état ambiant du PC (par ex. qui est dans le salon vocal Discord), sans rien "
+        "ouvrir ni déplacer."
     )
     params = UiaStateParams
     terminal = False
 
     async def run(self, args: UiaStateParams) -> str:
         uia = _uia(self.ctx)
-        summary = uia.state_summary()
-        if not summary:
-            raise ToolError("aucun état ambiant suivi (uia.state_poll_s = 0 ou rien à lire)")
-        return summary
+        summary = await self.ctx.run_blocking(uia.state_summary)
+        return summary or "Rien à signaler : aucun salon vocal Discord rejoint."

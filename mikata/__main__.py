@@ -188,11 +188,10 @@ def build_tool_context(config: Config) -> ToolContext:
             from mikata.uia.controller import UiController
 
             ctx.uia = UiController(config, ctx.desktop)
-            if p == "win32" and config.uia.state_poll_s > 0:
-                logger.info(
-                    "Pilotage des applications : actif (état ambiant toutes les {} s).",
-                    config.uia.state_poll_s,
-                )
+            if p == "win32":
+                every = config.uia.state_poll_s
+                when = f"toutes les {every} s" if every > 0 else "lu à la demande"
+                logger.info("Pilotage des applications : actif (état ambiant {}).", when)
         if config.browser.enabled:  # phase 12b : navigateur piloté (CDP, connexion paresseuse)
             from mikata.browser.controller import BrowserController
 
