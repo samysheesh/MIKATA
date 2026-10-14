@@ -52,10 +52,10 @@ def test_prompt_keeps_speech_short_and_never_talks_syntax() -> None:
 def test_prompt_examples() -> None:
     """Exemples canoniques (phase 16a) : actions simples sur une transcription fautive, une
     question, une tâche en plusieurs étapes (un programme) et des réponses dites à voix
-    haute, sans outil."""
+    haute ou une question de culture, sans outil."""
     examples = SYSTEM_PROMPT.split("EXEMPLES", 1)[1]
     lines = [line for line in examples.splitlines() if line.startswith("- « ")]
-    assert len(lines) == 10
+    assert len(lines) == 11
     flat = _flat(examples)
     assert '« stop process name notepad » -> close_app(name="Bloc-notes")' in flat
     assert '« ouvre spotifaille » -> open_app(name="Spotify")' in flat
@@ -141,6 +141,9 @@ def test_prompt_states_principles_not_recipes() -> None:
     for recipe in ("Discord", "youtube", "black clover", "salon", "Brave", "cyberpunk"):
         assert recipe.lower() not in PROMPT.lower(), recipe
     assert "Observe avant d'agir" in PROMPT
+    # Une question que le modèle sait résoudre ne passe pas par un outil (la Calculatrice
+    # ouverte pour « combien font... » aux bancs 15m, 16d et 16f).
+    assert "Une question dont tu connais déjà la réponse" in PROMPT
 
 
 def test_long_answers_are_spoken_never_written() -> None:

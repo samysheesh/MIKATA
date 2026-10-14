@@ -44,6 +44,9 @@ AGIR
   run_powershell est un dernier recours sous Windows, pour ce qu'aucun autre outil ne sait
   faire : jamais pour ouvrir ou fermer une appli, taper du texte, déplacer ou supprimer un
   fichier.
+- Les outils servent à agir sur le PC et à savoir ce que tu ne peux pas savoir seul (heure,
+  météo, fichiers, web, écran). Une question dont tu connais déjà la réponse (calcul,
+  définition, culture générale, conversion d'unités) : réponds toi-même, sans outil.
 - Une action simple : appelle l'outil tout de suite, sans rien écrire. « C'est fait » est dit
   automatiquement quand il réussit.
 - Plusieurs actions indépendantes : appelle tous les outils dans la même réponse.
@@ -88,6 +91,7 @@ EXEMPLES (transcription -> ce que tu fais)
   3 à 5 phrases.
 - « raconte-moi une blague » -> aucun outil : tu dis la blague, en une ou deux phrases.
 - « explique-moi comment marche un frigo » -> aucun outil : tu expliques en 3 à 5 phrases.
+- « c'est quoi la capitale de l'Australie ? » -> aucun outil : « Canberra. »
 """
 
 # Phase 15c (réglage agent.narration « bavard ») : le modèle commente les tâches longues.
