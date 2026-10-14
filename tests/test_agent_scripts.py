@@ -104,7 +104,8 @@ class Bench:
 def test_the_script_tool_and_its_guide_reach_the_model(tmp_path: Path) -> None:
     bench = Bench(tmp_path, [TextDelta("Bonjour.")])
     bench.respond("bonjour")
-    assert bench.llm.offered[0][-1] == SCRIPT_TOOL and "set_volume" in bench.llm.offered[0]
+    offered = bench.llm.offered[0]
+    assert SCRIPT_TOOL in offered and "explore" in offered and "set_volume" in offered
     system = [m["content"] for m in bench.llm.messages[0] if m["role"] == "system"]
     assert system[1].startswith("PROGRAMMES (outil script)")
     assert "web_search(...) -> {answer, results: [{title, snippet, url}]}" in system[1]

@@ -25,6 +25,7 @@ _ACTIVITY_PREFIXES = (
     ("list_folder", "files"),
     ("read_file", "files"),
     ("uia_", "app"),
+    ("explore", "app"),  # phase 16d
 )
 _SDK_CALL = re.compile(r"\b([a-z][a-z0-9_]*)\s*\(")
 

@@ -15,6 +15,7 @@ import time
 from collections.abc import Iterable, Sequence
 
 from mikata.action.sdk import SdkCatalog
+from mikata.agent.explore import EXPLORE_EXPECTED_S, EXPLORE_TOOL
 from mikata.agent.script_tool import SCRIPT_TOOL
 from mikata.learn.skills import fold
 from mikata.llm.base import ToolCallReq
@@ -59,6 +60,8 @@ def expected_duration(calls: Sequence[ToolCallReq], catalog: SdkCatalog | None) 
     for call in calls:
         if call.name == SCRIPT_TOOL:
             script += _program_duration(str(call.arguments.get("code", "")), catalog)
+        elif call.name == EXPLORE_TOOL:
+            script += EXPLORE_EXPECTED_S
         else:
             entry = catalog.by_tool(call.name)
             if entry is not None and entry.announces:

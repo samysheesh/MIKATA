@@ -320,6 +320,10 @@ class AgentConfig(_Section):
     # Phase 16c : une action dont la durée prévue (déclarée par chaque outil) dépasse ce
     # seuil est annoncée au moment où elle part, jamais avant (mode « bavard »).
     ack_after_s: float = Field(default=2.5, ge=0.5)
+    # Phase 16d : exploration bornée d'une interface inconnue (outil explore).
+    explore: bool = True
+    explore_max_steps: int = Field(default=8, ge=1, le=20)
+    explore_timeout_s: float = Field(default=30, gt=0, le=120)
     history_max_tokens: int = Field(default=6000, ge=500)  # ajout phase 3 : §6, ~6 000 tokens
     # Ajouts phase 6. Historique gardé sur disque (data/history.json) entre deux démarrages,
     # et `history_persist_h` heures sans interaction au lieu de session_reset_min (durée

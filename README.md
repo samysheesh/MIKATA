@@ -3192,3 +3192,18 @@ tournaient déjà en parallèle, et « annule » arrêtait la dernière en cours
 
 À vérifier : demander une tâche longue (« cherche les horaires de la piscine de Lyon »),
 puis « MIKATA, tu en es où ? » pendant qu'elle tourne.
+
+**16d — exploration bornée d'une interface inconnue.** Pour un but dans une application ou
+une page dont MIKATA ne connaît pas les boutons, le modèle appelle `explore(but, cible)`.
+Une petite boucle observe l'écran (contrôles de la fenêtre, ou la page), demande au modèle
+jusqu'à trois actions avec un contexte réduit au but et à l'état (au lieu de tout le
+prompt à chaque étape), les exécute sous les mêmes politiques (cliquer est permis ; écrire
+ou appuyer sur des touches après une lecture demande un « oui », sauf accès complet), et
+recommence, au plus 8 étapes et 30 s (`agent.explore_max_steps`, `agent.explore_timeout_s`).
+Banc (2 essais) : 98/100 et 161 appels ; `discord_micro`, instable jusqu'ici, réussi aux deux
+essais, une fois par l'exploration.
+
+```powershell
+git checkout phase-16d-exploration
+uv run pytest tests/test_explore.py tests/test_progress.py
+```

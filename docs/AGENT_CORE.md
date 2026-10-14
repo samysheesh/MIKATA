@@ -413,7 +413,9 @@ cours ; accusé de réception quand une action part et que sa durée prévue (d�
 chaque outil) dépasse `agent.ack_after_s`, jamais avant ni pour un outil qui s'annonce
 lui-même ; le modèle ne dit plus ce qu'il va faire, seulement ce qu'il a trouvé. Les
 demandes tournaient déjà en parallèle et « annule » arrêtait la dernière en cours.
-Reste à faire en D : chemin « exploration » borné.
+Fait en D (phase 16d) : exploration bornée (`agent/explore.py`, outil `explore`) :
+observer, demander au modèle jusqu'à trois actions avec un contexte réduit au but et à
+l'état, exécuter sous les politiques, au plus 8 étapes et 30 s. La phase D est complète.
 Fait en E (phase 15e) : compétences (`mikata/learn/skills.py`), qui remplacent
 `mikata/skills/`. Écarts à la section 3.6 : la vérification avant adoption se fait dans le
 code, sans rejouer la demande (rejouer une action sur le PC la referait deux fois) ; la

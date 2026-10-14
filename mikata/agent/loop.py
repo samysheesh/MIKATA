@@ -37,6 +37,7 @@ from loguru import logger
 from mikata.action.effects import Trust
 from mikata.action.sdk import SdkCatalog
 from mikata.agent.actions import ActionRunner
+from mikata.agent.explore import EXPLORE_SCHEMA
 from mikata.agent.history import SUMMARY_PROMPT, Summarizer, short_term_memory
 from mikata.agent.learning import Learner
 from mikata.agent.memory import LongTermMemory, ShortTermMemory, is_reset_command
@@ -375,6 +376,8 @@ class Agent:
         schemas = self.tools.schemas() if self.tools is not None else []
         if self._script_guide is not None:
             schemas = [*schemas, SCRIPT_SCHEMA]
+        if self._actions is not None and self.config.agent.explore:
+            schemas = [*schemas, EXPLORE_SCHEMA]  # phase 16d
         max_rounds = self.config.llm.max_tool_rounds
         fallback_steps = self.config.llm.reasoning_fallback_steps
         skill_path = self._skill_path

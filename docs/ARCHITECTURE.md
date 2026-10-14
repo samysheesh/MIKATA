@@ -290,7 +290,8 @@ mikata/
     ├─ llm/    client.py  prompts.py
     ├─ agent/  loop.py  turn.py  model.py  actions.py         # phase 16a : boucle en
     │        skill_path.py  learning.py  history.py           # composants ; loop.py
-    │        narration.py  memory.py  guard.py  script_tool.py # assemble un tour
+    │        narration.py  progress.py  explore.py             # assemble un tour ;
+    │        memory.py  guard.py  script_tool.py               # 16c-d : suivi, exploration
     ├─ tools/  registry.py  system.py  apps.py  web.py  media.py
     │        input.py  files.py  shell.py  ui.py  memory_tools.py  uia.py  browser.py
     │        skills.py
@@ -429,6 +430,9 @@ agent:
   narration: bavard                 # phase 15c : bavard | discret (tâches longues commentées)
   narration_after_s: 5
   ack_after_s: 2.5                  # phase 16c : accusé quand une action longue part
+  explore: true                     # phase 16d : exploration bornée (outil explore)
+  explore_max_steps: 8
+  explore_timeout_s: 30
 learning:                           # phase 14e : ce que MIKATA apprend à l'usage
   enabled: true
   max_lessons: 60                   # carnet de leçons (data/playbook.json)

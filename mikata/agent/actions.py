@@ -25,6 +25,7 @@ from mikata.action.effects import Trust
 from mikata.action.policy import Verdict, confirm_question, decide
 from mikata.action.runtime import ScriptRuntime
 from mikata.action.sdk import SdkCatalog
+from mikata.agent.explore import EXPLORE_TOOL, Explorer
 from mikata.agent.guard import log_action
 from mikata.agent.script_tool import (
     SCRIPT_TOOL,
@@ -102,9 +103,11 @@ class ActionRunner:
         # l'historique des commandes suivantes.
         turn.messages.append({**assistant, "reasoning_content": reply.reasoning})
         turn.steps.append(assistant)
-        # Les outils directs partent ensemble ; un programme s'exécute seul, à son tour.
+        # Les outils directs partent ensemble ; un programme ou une exploration s'exécute
+        # seul, à son tour.
         trust_before = state.trust
-        direct = [call for call in calls if call.name != SCRIPT_TOOL]
+        own = (SCRIPT_TOOL, EXPLORE_TOOL)
+        direct = [call for call in calls if call.name not in own]
         done = dict(
             zip(
                 (call.id for call in direct),
@@ -115,10 +118,12 @@ class ActionRunner:
         for call in calls:
             if call.name == SCRIPT_TOOL:
                 done[call.id] = await self._script(call, turn)
+            elif call.name == EXPLORE_TOOL:
+                done[call.id] = await self._explore(call, turn)
         results = [done[call.id] for call in calls]
         result.direct_sources.extend((call, trust_before is Trust.TRUSTED) for call in direct)
-        result.tool_results.extend(r for r in results if r.name != SCRIPT_TOOL)
-        result.direct_results.extend(r for r in results if r.name != SCRIPT_TOOL)
+        result.tool_results.extend(r for r in results if r.name not in own)
+        result.direct_results.extend(r for r in results if r.name not in own)
         for res in results:
             turn.messages.append(
                 {"role": "tool", "tool_call_id": res.call_id, "content": res.content}
@@ -133,6 +138,40 @@ class ActionRunner:
                 short = short[:HISTORY_TOOL_CHARS] + " […]"
             turn.steps.append({"role": "tool", "tool_call_id": res.call_id, "content": short})
         return results
+
+    async def execute(self, call: ToolCallReq, turn: Turn) -> ToolResult:
+        """Une action décidée hors du modèle principal (exploration) : même politique qu'un
+        outil direct, notée dans le tour ; ses arguments viennent de ce qui a été lu."""
+        result = await self._direct(call, turn.state.trust, turn)
+        turn.result.tool_calls.append(call)
+        turn.result.tool_results.append(result)
+        turn.result.direct_results.append(result)
+        turn.result.direct_sources.append((call, False))
+        return result
+
+    async def _explore(self, call: ToolCallReq, turn: Turn) -> ToolResult:
+        """Outil explore : la boucle bornée d'observation et d'action (phase 16d)."""
+        from mikata.tools.registry import ToolResult
+
+        start = time.monotonic()
+        goal = str(call.arguments.get("but", "")).strip()
+        target = str(call.arguments.get("cible", "")).strip()
+        if not goal or not target:
+            content = "explore(but, cible) : il manque le but ou la cible"
+            return ToolResult(call.id, EXPLORE_TOOL, False, content, False, 0.0, None, "échec")
+        outcome = await Explorer(self, self.llm, self._config).run(goal, target, turn)
+        turn.result.llm_calls += outcome.llm_calls
+        duration = time.monotonic() - start
+        log_action(EXPLORE_TOOL, call.arguments, "ok" if outcome.ok else "échec", outcome.answer)
+        if outcome.ok:
+            io = current_turn()
+            if outcome.answer and io is not None:
+                io.speak(outcome.answer)
+            content = outcome.answer or "But atteint."
+            return ToolResult(call.id, EXPLORE_TOOL, True, content, True, duration)
+        done = "; ".join(f"{c.name} : {'ok' if r.ok else 'échec'}" for c, r in outcome.actions)
+        content = f"Exploration arrêtée : {outcome.answer} Actions faites : {done or 'aucune'}."
+        return ToolResult(call.id, EXPLORE_TOOL, False, content, False, duration, None, "échec")
 
     async def _direct(self, call: ToolCallReq, turn_trust: Trust, turn: Turn) -> ToolResult:
         """Un outil direct, après la politique."""
