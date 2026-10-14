@@ -3019,3 +3019,19 @@ Attendu : tout en `passed`, puis la fenêtre de réglages :
    sur le nouveau périphérique, sans redémarrage.
 3. Comportement : « Tâches longues » sur « Discret », Enregistrer, redemander une vidéo :
    MIKATA ne commente plus les étapes. Le remettre sur « Bavard ».
+
+**15d — casque éteint au démarrage**
+
+Si le micro ou la sortie manque au démarrage (casque encore éteint quand le PC s'allume),
+MIKATA lancé par le superviseur (tâche planifiée) n'abandonne plus : il réessaie toutes les
+10 s et démarre dès que le périphérique apparaît (`data/logs/mikata.log` : « Casque ou micro
+éteint ? », puis « Périphériques audio trouvés »). Lancé à la main sans superviseur, il
+s'arrête toujours avec l'erreur, comme avant.
+
+```powershell
+git checkout phase-15d-casque-eteint
+uv run pytest tests/test_audio_wait.py
+```
+
+À vérifier : casque éteint, `Start-ScheduledTask -TaskName MIKATA`, puis allumer le casque :
+MIKATA démarre dans les 10 s.

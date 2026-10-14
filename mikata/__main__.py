@@ -293,6 +293,66 @@ def app_vocabulary(agent: Agent | None) -> Callable[[], list[str]] | None:
     return names
 
 
+AUDIO_RETRY_S = 10.0
+AUDIO_RETRY_LOG_EVERY = 30  # rappel dans le journal toutes les 5 min environ
+
+
+def _refresh_portaudio(sd: Any) -> None:
+    """PortAudio fige la liste des périphériques à son initialisation : on la relit (aucun
+    flux n'est encore ouvert à ce moment-là)."""
+    try:
+        sd._terminate()
+        sd._initialize()
+    except Exception as exc:  # API interne de sounddevice : au pire, liste non relue
+        logger.debug("Liste des périphériques audio non relue : {!r}", exc)
+
+
+def _probe_audio(config: Config) -> None:
+    import sounddevice as sd
+
+    from mikata.audio.devices import collect_devices, default_device_index, find_device
+
+    _refresh_portaudio(sd)
+    devices = collect_devices(sd)
+    find_device(devices, config.audio.input_device, "input", default_device_index(sd, "input"))
+    find_device(devices, config.audio.output_device, "output", default_device_index(sd, "output"))
+
+
+def wait_for_audio_devices(
+    config: Config,
+    *,
+    probe: Callable[[], None] | None = None,
+    sleep: Callable[[float], None] | None = None,
+) -> None:
+    """Phase 15d : au démarrage du PC, le casque est souvent encore éteint. Sous le
+    superviseur, MIKATA attend alors que le micro et la sortie apparaissent (nouvel essai
+    toutes les `AUDIO_RETRY_S` secondes) au lieu de s'arrêter pour de bon sur une
+    « erreur de configuration » que le superviseur ne relance jamais."""
+    import time
+
+    from mikata.audio.devices import DeviceNotFoundError
+
+    check = probe or (lambda: _probe_audio(config))
+    pause = sleep or time.sleep
+    attempt = 0
+    while True:
+        try:
+            check()
+        except DeviceNotFoundError as exc:
+            if attempt % AUDIO_RETRY_LOG_EVERY == 0:
+                logger.warning(
+                    "{} Casque ou micro éteint ? Nouvel essai toutes les {:.0f} s.",
+                    exc,
+                    AUDIO_RETRY_S,
+                )
+            attempt += 1
+            pause(AUDIO_RETRY_S)
+            continue
+        if attempt:
+            logger.info("Périphériques audio trouvés après {} essai(s) : démarrage.", attempt)
+        return
+
+
 def find_output_device(config: Config) -> Any:
     from mikata.audio.devices import collect_devices, default_device_index, find_device
 
@@ -533,6 +593,10 @@ def _main(argv: Sequence[str] | None = None) -> int:
             print(answer)
             return EXIT_OK
 
+        from mikata.supervise import SUPERVISED_ENV
+
+        if not args.no_audio and os.environ.get(SUPERVISED_ENV):
+            wait_for_audio_devices(config)
         try:
             app = build_app(
                 config,
