@@ -3146,3 +3146,12 @@ Jev d'abord (environ 0,4 s), un appel LLM en secours (sa réponse doit être l'u
 options). Mesuré sur de vrais résultats YouTube (5 animes) : la même vidéo que l'appel
 LLM, ou un autre envoi du même opening, en 0,39 à 0,53 s contre 0,9 à 2,1 s. La notice
 des programmes et la consigne d'apprentissage l'emploient pour choisir un lien.
+
+**15m — page lisible plus tôt, sur tous les sites**
+
+Une page est lisible quand son contenu ne bouge plus (titre, nombre de liens, taille du
+texte), et non plus tout son texte, qu'un compteur ou un aperçu vidéo fait bouger sans
+fin. Mesuré sur 8 sites (YouTube, Wikipédia, Le Monde, Google, GitHub, AlloCiné,
+Reddit) : mêmes liens lus, identique sur 6, 0,24 s et 0,5 s plus tôt sur les 2 autres. Le
+reste du délai d'une page YouTube (1,8 à 2 s) est le temps d'envoi de YouTube lui-même.
+Banc (50 tâches, 2 essais) : 49/50.

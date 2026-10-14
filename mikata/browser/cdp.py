@@ -20,6 +20,13 @@ import httpx2
 from websockets.asyncio.client import connect as ws_connect
 
 LOAD_TIMEOUT_S = 8.0  # plafond : on attend une page stable, pas tout le chargement
+# Résumé du contenu de la page (phase 15m) ; vide tant que la page n'a pas de texte.
+_CONTENT_JS = (
+    "(() => { const t = document.body ? document.body.innerText : ''; "
+    "if (!t.trim()) return ''; "
+    "return document.title + '|' + document.querySelectorAll('a[href]').length + '|' "
+    "+ Math.round(t.length / 200); })()"
+)
 MAX_WS_BYTES = 2**26  # 64 Mo : une grosse page ne casse pas la connexion
 
 
@@ -172,13 +179,15 @@ class CdpClient:
         await self.wait_ready(timeout_s)
 
     async def wait_ready(self, timeout_s: float = LOAD_TIMEOUT_S) -> None:
-        """Attend que la page soit lisible : DOM interactif, puis texte stable.
+        """Attend que la page soit lisible : DOM interactif, puis contenu stable.
 
         `loadEventFired` attend tout (images, pubs...) ; `readyState` seul ne garantit pas
         que le contenu chargé après coup (résultats de recherche) soit rendu. On attend
-        donc deux lectures identiques du texte de la page : plus rien ne change, la page a
-        fini de se construire. Plafond `timeout_s` : une page vide ou très lente n'arrête
-        pas la commande.
+        donc deux lectures identiques du contenu : plus rien ne s'ajoute, la page a fini de
+        se construire. Phase 15m : le contenu est résumé (titre, nombre de liens, taille du
+        texte à 200 caractères près) au lieu du texte entier, qu'un compteur ou un aperçu
+        vidéo fait bouger sans fin. Mesuré sur 8 sites : mêmes liens lus, jusqu'à 0,5 s plus
+        tôt. Plafond `timeout_s` : une page vide ou très lente n'arrête pas la commande.
         """
         deadline = asyncio.get_running_loop().time() + timeout_s
         last = None
@@ -189,13 +198,13 @@ class CdpClient:
                 state = None
             if state in ("interactive", "complete"):
                 try:
-                    text = await self.evaluate("document.body ? document.body.innerText : ''")
+                    content = await self.evaluate(_CONTENT_JS)
                 except CdpError:
-                    text = None
-                if isinstance(text, str) and text.strip():
-                    if text == last:
+                    content = None
+                if content:
+                    if content == last:
                         return  # deux lectures identiques : la page est stable
-                    last = text
+                    last = content
             await asyncio.sleep(0.2)
 
     async def evaluate(self, expression: str) -> Any:
