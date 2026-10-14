@@ -458,3 +458,58 @@
   # Dire la traduction, ou la mettre dans le presse-papiers : les deux répondent à la demande.
   expect: [{any_of: [{answer: "hello|how are you"}, {clipboard: "how are you"}]}]
   forbid: [{window_open: Steam}, {typed: "."}]
+
+# -- corrections (phase 16g) : la demande précédente est dans la conversation (`history`) --
+
+- id: correction_autre_appli
+  # Le 14/10 : « non, sur Spotify » fermait YouTube puis disait « C'est fait » sans rien
+  # lancer. Refaire la demande précédente avec la correction, jusqu'au bout.
+  request: "non, sur Spotify"
+  tags: [correction, enchaine]
+  history:
+    - user: "lance la musique Jet Lag de Tiakola"
+      assistant: "C'est fait."
+      calls:
+        - {name: browser_open, args: {url: "https://www.youtube.com/results?search_query=Tiakola+Jet+Lag"}, result: "Page ouverte."}
+        - {name: browser_click, args: {text: "Tiakola & Jorja Smith - Jet Lag"}, result: "« Tiakola & Jorja Smith - Jet Lag » cliqué."}
+  world:
+    open_apps: [Spotify]
+    controls:
+      Spotify:
+        - ["Rechercher", "champ"]
+        - ["Jet Lag - Tiakola, Jorja Smith", "élément"]
+        - ["Accueil", "bouton"]
+  expect: [{ui_clicked: "Jet Lag"}]
+
+- id: correction_application
+  request: "non, Discord"
+  tags: [correction]
+  history:
+    - user: "ouvre Steam"
+      assistant: "C'est fait."
+      calls: [{name: open_app, args: {name: "Steam"}, result: "Steam ouvert."}]
+  world: {open_apps: [Steam]}
+  expect: [{window_open: Discord}]
+
+- id: correction_valeur
+  request: "non, à 20"
+  tags: [correction]
+  history:
+    - user: "mets le son à 30"
+      assistant: "C'est fait."
+      calls: [{name: set_volume, args: {level: 30}, result: "Volume à 30 %."}]
+  world: {volume: 30}
+  expect: [{volume: 20}]
+
+- id: musique_dans_appli
+  # Ouvrir l'appli n'est que le début : la musique demandée doit être lancée dedans.
+  request: "lance la musique Jet Lag de Tiakola sur Spotify"
+  tags: [ui, enchaine]
+  world:
+    open_apps: [Spotify]
+    controls:
+      Spotify:
+        - ["Rechercher", "champ"]
+        - ["Jet Lag - Tiakola, Jorja Smith", "élément"]
+        - ["Accueil", "bouton"]
+  expect: [{ui_clicked: "Jet Lag"}]

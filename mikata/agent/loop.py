@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from mikata.action.effects import Trust
+from mikata.action.effects import Effect, Trust
 from mikata.action.sdk import SdkCatalog
 from mikata.agent.actions import ActionRunner
 from mikata.agent.explore import EXPLORE_SCHEMA
@@ -62,6 +62,7 @@ from mikata.learn.episodes import episodes, refers_to_past
 from mikata.learn.episodes import render as render_episodes
 from mikata.learn.playbook import Playbook, render
 from mikata.learn.preferences import PreferenceStore
+from mikata.learn.reflect import is_correction
 from mikata.learn.skills import SkillStore
 from mikata.learn.trace import TraceStore
 from mikata.llm.base import LLMClient
@@ -464,7 +465,11 @@ class Agent:
             # Après un échec dans le tour, pas de « C'est fait » automatique : seul un outil
             # ou un programme qui a dit sa propre phrase conclut ; sinon le modèle explique
             # (une phrase du modèle avant ses outils annonce une étape, elle ne conclut pas).
-            if all(r.ok and r.terminal for r in results) and (tool_spoken or not earlier_failure):
+            if (
+                all(r.ok and r.terminal for r in results)
+                and (tool_spoken or not earlier_failure)
+                and not self._redo_unfinished(turn, results)
+            ):
                 result.shortcut = True
                 if not turn.spoken:  # une action simple : « C'est fait » en cache
                     self._say_phrase(speech, "done")
@@ -476,6 +481,37 @@ class Agent:
             elif result.rounds >= fallback_steps:
                 result.raise_effort("low", f"plus de {fallback_steps} étape(s)")
         self._finish(turn, lessons, time.monotonic() - started)
+
+    def _redo_unfinished(self, turn: Turn, results: list[Any]) -> bool:
+        """Phase 16g : une correction (« non, sur Spotify ») refait la demande précédente.
+        Une étape ne conclut pas le tour si elle n'a fait que défaire (fermer YouTube), ni
+        tant que la correction n'a pas fait autant d'actions constructives que la demande
+        corrigée (lancer un morceau, c'était ouvrir puis cliquer : ouvrir Spotify n'en est
+        que le début). Le modèle voit alors le résultat et va au bout, au lieu d'un « C'est
+        fait » sur la moitié du travail. Une correction simple (« non, à 20 ») conclut
+        toujours en un appel."""
+        if self.tools is None or not is_correction(turn.command):
+            return False
+        if all(self._undoes(r.name) for r in results):
+            return True
+        done = sum(
+            1 for r in turn.result.direct_results if r.ok and self._constructive(r.name)
+        ) + sum(1 for outcome in turn.result.scripts if outcome.ok)
+        return done < self._actions_before()
+
+    def _undoes(self, name: str) -> bool:
+        tool = self.tools.tools.get(name) if self.tools is not None else None
+        return bool(tool is not None and getattr(tool, "undoes", False))
+
+    def _constructive(self, name: str) -> bool:
+        """Une action qui fait avancer la demande : ni lecture, ni « défaire »."""
+        entry = self._catalog.by_tool(name) if self._catalog is not None else None
+        read = entry is not None and entry.effect is Effect.READ
+        return not read and not self._undoes(name)
+
+    def _actions_before(self) -> int:
+        """Actions constructives de l'échange précédent, celui que l'on corrige."""
+        return sum(1 for name in self.memory.last_tools() if self._constructive(name))
 
     def _starting(self, turn: Turn, calls: list[Any]) -> None:
         """Une action part (ou le modèle reprend la main, `calls` vide) : l'activité du

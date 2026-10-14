@@ -175,6 +175,18 @@ class ShortTermMemory:
             out.append({"role": "assistant", "content": exchange.assistant})
         return out
 
+    def last_tools(self) -> list[str]:
+        """Phase 16g : les outils appelés par le dernier échange (dans l'ordre)."""
+        self._expire()
+        if not self._exchanges:
+            return []
+        return [
+            str(call.get("function", {}).get("name", ""))
+            for step in self._exchanges[-1].steps
+            if step.get("role") == "assistant"
+            for call in step.get("tool_calls") or []
+        ]
+
     def add(self, user: str, assistant: str, steps: Sequence[dict[str, Any]] = ()) -> None:
         """Ajoute un échange ; `steps` : messages d'appels d'outils et de résultats."""
         self._expire()

@@ -198,6 +198,7 @@ class BrowserCloseParams(BaseModel):
 @register_tool
 class BrowserClose(BaseTool[BrowserCloseParams]):
     name = "browser_close"
+    undoes = True
     sdk = "browser.close"
     effect = Effect.ACT
     expected_s = 0.5

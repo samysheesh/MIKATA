@@ -2,9 +2,11 @@
 
 Une préférence est un couple sujet → valeur (« musique → Spotify », « météo → Lyon »),
 avec le nombre de fois où l'utilisateur l'a montrée. Elle ne vient que de ses propres mots :
-la réflexion la tire d'une **correction** (« non, sur Spotify »), jamais d'un contenu lu
-ailleurs (la réflexion ne tourne pas après un contenu non fiable). Si l'utilisateur change
-d'avis, la nouvelle valeur remplace l'ancienne et repart de un.
+quand il **corrige** MIKATA (« non, sur Spotify »), un petit appel au modèle ne voit que sa
+demande et sa correction (`extract`), jamais ce que MIKATA a lu ou fait. Elle s'apprend donc
+même quand le tour corrigé avait lu une page web (la réflexion des leçons, elle, ne tourne
+pas après un contenu non fiable). Si l'utilisateur change d'avis, la nouvelle valeur
+remplace l'ancienne et repart de un.
 
 Les préférences sont données au modèle à chaque commande (préfixe stable : elles changent
 rarement), avec leur nombre de confirmations ; « oublie que je préfère... » les retire.
@@ -13,17 +15,66 @@ rarement), avec leur nombre de confirmations ; « oublie que je préfère... » 
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 from loguru import logger
 
 from mikata.learn.skills import fold, words
+from mikata.llm.base import Done, LLMClient, TextDelta, Usage
 
 PREFERENCES_FILE = "data/preferences.json"
 MAX_PREFERENCES = 40
 MAX_CHARS = 80
+MAX_PER_CORRECTION = 3
+
+EXTRACT_SYSTEM = """\
+L'utilisateur d'un assistant vocal a fait une demande, puis l'a corrigée. Si sa correction \
+montre une préférence qu'il voudra sans doute à chaque fois (une appli, un site, une ville, \
+une façon de faire), donne-la : un sujet court (musique, vidéo, navigateur, météo...) et sa \
+valeur, avec ses mots. Si la correction ne vaut que pour cette fois (un autre titre, une \
+autre personne, une erreur d'écoute), il n'y a pas de préférence.
+
+Réponds UNIQUEMENT par un objet JSON : {"preferences": [{"sujet": "...", "valeur": "..."}]} \
+(liste vide s'il n'y en a pas)."""
+
+
+def parse_preferences(text: str) -> list[tuple[str, str]]:
+    """(sujet, valeur) des préférences d'une réponse JSON du modèle."""
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if match is None:
+        return []
+    try:
+        raw: Any = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return []
+    items = raw.get("preferences") if isinstance(raw, dict) else None
+    found: list[tuple[str, str]] = []
+    for item in (items or [])[:MAX_PER_CORRECTION] if isinstance(items, list) else []:
+        if isinstance(item, dict) and item.get("sujet") and item.get("valeur"):
+            found.append((str(item["sujet"]), str(item["valeur"])))
+    return found
+
+
+async def extract(
+    llm: LLMClient, request: str, correction: str, effort: str | None = "none"
+) -> tuple[list[tuple[str, str]], Usage | None]:
+    """Préférences montrées par une correction, d'après les seuls mots de l'utilisateur."""
+    messages = [
+        {"role": "system", "content": EXTRACT_SYSTEM},
+        {"role": "user", "content": f"Demande : « {request} »\nCorrection : « {correction} »"},
+    ]
+    chunks: list[str] = []
+    usage: Usage | None = None
+    async for event in llm.stream(messages, [], reasoning_effort=effort):
+        if isinstance(event, TextDelta):
+            chunks.append(event.text)
+        elif isinstance(event, Done):
+            usage = event.usage
+    return parse_preferences("".join(chunks)), usage
 
 
 @dataclass

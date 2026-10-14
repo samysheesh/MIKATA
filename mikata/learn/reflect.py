@@ -42,15 +42,10 @@ demande), pas un récit de cette demande précise ;
 - ne contient aucune donnée personnelle, aucun nom de fichier ou contenu propre à cette \
 demande.
 
-Si, en corrigeant MIKATA, l'utilisateur a montré une préférence durable (une appli, un \
-site, une ville, une façon de faire qu'il veut à chaque fois), note-la aussi : un sujet \
-court (musique, navigateur, météo...) et sa valeur. Seulement ce que l'utilisateur a dit \
-lui-même, jamais une déduction.
-
-Réponds UNIQUEMENT par un objet JSON : {"lecons": [{"domaine": "...", "texte": "..."}], \
-"preferences": [{"sujet": "...", "valeur": "..."}]}. « domaine » : le nom de l'appli ou du \
-sujet, en un ou deux mots minuscules (discord, fichiers, navigateur, programmes, général). \
-S'il n'y a rien d'utile à retenir : {"lecons": [], "preferences": []}."""
+Réponds UNIQUEMENT par un objet JSON : {"lecons": [{"domaine": "...", "texte": "..."}]}. \
+« domaine » : le nom de l'appli ou du sujet, en un ou deux mots minuscules (discord, \
+fichiers, navigateur, programmes, général). S'il n'y a rien d'utile à retenir : \
+{"lecons": []}."""
 
 
 def is_correction(command: str) -> bool:
@@ -98,22 +93,6 @@ def parse_lessons(text: str) -> list[tuple[str, str]]:
     return lessons
 
 
-def parse_preferences(text: str) -> list[tuple[str, str]]:
-    """Phase 16e : (sujet, valeur) des préférences notées par la réflexion."""
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if match is None:
-        return []
-    try:
-        raw: Any = json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return []
-    found: list[tuple[str, str]] = []
-    for item in (raw.get("preferences") or [])[:MAX_LESSONS] if isinstance(raw, dict) else []:
-        if isinstance(item, dict) and item.get("sujet") and item.get("valeur"):
-            found.append((str(item["sujet"]), str(item["valeur"])))
-    return found
-
-
 async def reflect(
     llm: LLMClient,
     trace: TurnTrace,
@@ -122,18 +101,6 @@ async def reflect(
     effort: str | None = "low",
 ) -> tuple[list[tuple[str, str]], Usage | None]:
     """Leçons (domaine, texte) tirées du tour ; liste vide s'il n'y a rien à retenir."""
-    lessons, _, usage = await reflect_all(llm, trace, correction_of=correction_of, effort=effort)
-    return lessons, usage
-
-
-async def reflect_all(
-    llm: LLMClient,
-    trace: TurnTrace,
-    *,
-    correction_of: TurnTrace | None = None,
-    effort: str | None = "low",
-) -> tuple[list[tuple[str, str]], list[tuple[str, str]], Usage | None]:
-    """Leçons et préférences (phase 16e) tirées du tour, en un seul appel."""
     parts = []
     if correction_of is not None:
         parts.append("Ce que MIKATA avait fait juste avant :\n" + describe(correction_of))
@@ -151,5 +118,4 @@ async def reflect_all(
             chunks.append(event.text)
         elif isinstance(event, Done):
             usage = event.usage
-    text = "".join(chunks)
-    return parse_lessons(text), parse_preferences(text), usage
+    return parse_lessons("".join(chunks)), usage

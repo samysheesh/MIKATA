@@ -14,8 +14,8 @@ from loguru import logger
 from mikata.agent.turn import TurnResult
 from mikata.config import Config
 from mikata.learn.playbook import Lesson, Playbook
-from mikata.learn.preferences import PreferenceStore
-from mikata.learn.reflect import is_correction, reflect_all, should_reflect
+from mikata.learn.preferences import PreferenceStore, extract
+from mikata.learn.reflect import is_correction, reflect, should_reflect
 from mikata.learn.trace import TraceStore, TurnTrace, trace_from_result
 from mikata.llm.base import LLMClient
 
@@ -41,6 +41,7 @@ class Learner:
         self.preferences = preferences  # phase 16e
         self._last_trace: tuple[TurnTrace, float] | None = None
         self.task: asyncio.Task[None] | None = None
+        self.preference_task: asyncio.Task[None] | None = None  # phase 16g
 
     def lessons_for(self, command: str, context: str) -> list[Lesson]:
         cfg = self._config().learning
@@ -60,6 +61,17 @@ class Learner:
         trace = trace_from_result(command, result, seconds, ids, tainted=result.tainted)
         previous = self._last_trace
         self._last_trace = (trace, time.monotonic()) if trace.acted else None
+        corrected = (
+            previous[0]
+            if previous is not None
+            and time.monotonic() - previous[1] <= cfg.correction_window_s
+            and is_correction(command)
+            else None
+        )
+        if corrected is not None and self.preferences is not None:
+            # Phase 16g : des seuls mots de l'utilisateur, même si le tour corrigé a lu une
+            # page web et même si la correction n'a pas agi.
+            self._learn_preferences(corrected.request, command)
         if not trace.acted:
             return
         if self.traces is not None and cfg.traces:
@@ -73,15 +85,10 @@ class Learner:
         )
         if ids:
             self.playbook.mark(ids, helpful=not failed)
-        correction_of = None
-        if (
-            previous is not None
-            and time.monotonic() - previous[1] <= cfg.correction_window_s
-            and is_correction(command)
-        ):
-            correction_of = previous[0]
-            if correction_of.lessons:  # elles étaient là quand MIKATA s'est trompé
-                self.playbook.mark(correction_of.lessons, helpful=False)
+        correction_of = corrected
+        if correction_of is not None and correction_of.lessons:
+            # elles étaient là quand MIKATA s'est trompé
+            self.playbook.mark(correction_of.lessons, helpful=False)
         if not should_reflect(trace, correction_of):
             return
         if self.task is not None and not self.task.done():
@@ -93,7 +100,7 @@ class Learner:
         config = self._config()
         try:
             async with asyncio.timeout(config.llm.turn_timeout_s):
-                lessons, preferences, usage = await reflect_all(
+                lessons, usage = await reflect(
                     self.llm,
                     trace,
                     correction_of=correction_of,
@@ -109,7 +116,26 @@ class Learner:
         source = "correction" if correction_of is not None else "échec corrigé"
         for scope, text in lessons:
             self.playbook.add(scope, text, source)
-        # Une préférence ne vient que des mots de l'utilisateur : d'une correction.
-        if correction_of is not None and self.preferences is not None:
-            for subject, value in preferences:
-                self.preferences.learn(subject, value, "correction")
+
+    def _learn_preferences(self, request: str, correction: str) -> None:
+        if self.preference_task is not None and not self.preference_task.done():
+            return
+        self.preference_task = asyncio.create_task(
+            self._extract_preferences(request, correction), name="préférences"
+        )
+
+    async def _extract_preferences(self, request: str, correction: str) -> None:
+        assert self.preferences is not None
+        config = self._config()
+        try:
+            async with asyncio.timeout(config.llm.turn_timeout_s):
+                found, usage = await extract(self.llm, request, correction)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # hors ligne, réponse illisible : rien d'appris
+            logger.warning("Préférences : extraction impossible ({})", exc)
+            return
+        if self.usage is not None:
+            self.usage.record("préférences", usage, 1)
+        for subject, value in found:
+            self.preferences.learn(subject, value, "correction")

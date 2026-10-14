@@ -304,6 +304,7 @@ class OpenApp(BaseTool[AppName]):
 @register_tool
 class CloseApp(BaseTool[AppName]):
     name = "close_app"
+    undoes = True
     sdk = "apps.close"
     effect = Effect.ACT
     description = "Ferme une application ouverte (toutes ses fenêtres), comme avec la croix."
@@ -332,6 +333,7 @@ class WindowParams(BaseModel):
 @register_tool
 class CloseWindow(BaseTool[WindowParams]):
     name = "close_window"
+    undoes = True
     sdk = "apps.close_window"
     effect = Effect.ACT
     description = (

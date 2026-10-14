@@ -70,6 +70,9 @@ class BaseTool(Generic[P]):
     # Phase 16c : l'outil s'annonce lui-même (« Extinction dans 5 secondes ») : pas
     # d'accusé de réception en plus, quelle que soit sa durée.
     announces: ClassVar[bool] = False
+    # Phase 16g : l'outil défait (ferme, arrête). Dans une correction (« non, sur
+    # Spotify »), défaire n'est que la moitié du travail : il ne clôt pas le tour.
+    undoes: ClassVar[bool] = False
     platforms: ClassVar[tuple[str, ...]] = ()  # vide = toutes
     returns: ClassVar[str] = "str"  # forme du résultat reçu par un script
 

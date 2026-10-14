@@ -51,6 +51,9 @@ class Task(BaseModel):
     # Leçons déjà dans le carnet au début de l'essai : [{scope, text}] (phase 14e).
     lessons: list[dict[str, str]] = Field(default_factory=list)
     restore: list[str] = Field(default_factory=list)  # live : volume, clipboard, close:<appli>
+    # Phase 16g : échanges précédents de la conversation, pour les corrections (« non, sur
+    # Spotify ») : [{user, assistant, calls: [{name, args, result}]}].
+    history: list[dict[str, Any]] = Field(default_factory=list)
 
 
 def load_tasks(path: Path) -> list[Task]:
@@ -237,6 +240,33 @@ class Trial:
     confirmations: int = 0  # « Tu confirmes ? » posés à l'utilisateur
 
 
+def history_steps(calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Les appels d'outils d'un échange passé, au format des messages mémorisés."""
+    steps: list[dict[str, Any]] = []
+    for index, call in enumerate(calls):
+        ident = f"h{index}"
+        steps.append(
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": ident,
+                        "type": "function",
+                        "function": {
+                            "name": str(call["name"]),
+                            "arguments": json.dumps(call.get("args") or {}, ensure_ascii=False),
+                        },
+                    }
+                ],
+            }
+        )
+        steps.append(
+            {"role": "tool", "tool_call_id": ident, "content": str(call.get("result", "ok"))}
+        )
+    return steps
+
+
 async def run_trial(
     task: Task,
     factory: AgentFactory,
@@ -258,6 +288,12 @@ async def run_trial(
             agent.playbook = Playbook(Path(tmp) / "playbook.json")
             for lesson in task.lessons:
                 agent.playbook.add(lesson["scope"], lesson["text"], "correction")
+        for exchange in task.history:
+            agent.memory.add(
+                str(exchange["user"]),
+                str(exchange.get("assistant", "C'est fait.")),
+                history_steps(exchange.get("calls") or []),
+            )
         speech = _Speech()
         start = time.monotonic()
         error = ""
