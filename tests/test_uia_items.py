@@ -335,3 +335,52 @@ def test_uia_items_waits_a_little_for_rows_that_are_still_loading(tmp_path: Path
         tmp_path, "uia_items", {"process": "Spotify", "query": "Jet Lag"}, uia=Filling()
     )
     assert result.ok and Filling.reads == 3
+
+
+# -- interrupteurs (phase 17d) --------------------------------------------------------------
+
+
+class _Toggle:
+    def __init__(self, state: int) -> None:
+        self.ToggleState = state
+
+    def Toggle(self) -> None:
+        self.ToggleState = 1 - self.ToggleState
+
+
+class _MuteButton:
+    Name = "Rendre muet"
+    ControlTypeName = "ButtonControl"
+
+    def __init__(self) -> None:
+        self.toggle = _Toggle(0)
+
+    def GetTogglePattern(self) -> _Toggle:
+        return self.toggle
+
+    def GetInvokePattern(self) -> None:
+        raise RuntimeError("pas d'Invoke")
+
+
+def test_a_switch_tells_its_state_so_it_is_not_clicked_again() -> None:
+    """Le 14/10 : « Rendre muet » garde son nom une fois activé ; MIKATA relisait le nom,
+    croyait le micro ouvert, recliquait, et rendait le micro."""
+    from mikata.uia.controller import UiaBackend
+
+    backend = UiaBackend(FakeDesktop())  # type: ignore[arg-type]
+    button = _MuteButton()
+    assert backend.control_text(button) == "Rendre muet : désactivé"
+    assert backend.click(button, "Rendre muet") == "« Rendre muet » basculé : maintenant activé."
+    assert backend.control_text(button) == "Rendre muet : activé"
+
+
+def test_controls_show_the_state_of_switches() -> None:
+    class Switches(TreeBackend):
+        def toggle_state(self, node: Any) -> bool | None:
+            return True if node.name == "Rendre muet" else None
+
+    root = Node("Discord", "fenêtre", [Node("Rendre muet", "bouton"), Node("Paramètres", "bouton")])
+    controller = object.__new__(UiController)
+    controller._backend, controller._desktop = Switches(root), FakeDesktop()  # type: ignore[assignment]
+    infos = {c.name: c.text for c in controller.controls(WINDOW, 10)}
+    assert infos == {"Rendre muet": "activé", "Paramètres": ""}

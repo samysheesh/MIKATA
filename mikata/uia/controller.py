@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import contextlib
 import re
+import sys
+import time
 import unicodedata
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator
@@ -45,6 +47,8 @@ _NEAR_LEVELS = 4  # « près de » : la ligne ou le groupe, jusqu'à 4 niveaux a
 _NEAR_NODES = 80  # nœuds lus dans chacun de ces groupes
 _ROW_NODES = 60  # nœuds lus dans un élément de liste (click_in)
 _VALUE_KINDS = {"champ", "liste déroulante"}  # contrôles dont `controls` donne le contenu
+_TOGGLE_KINDS = {"bouton", "case"}  # contrôles dont `controls` donne l'état d'interrupteur
+_STATE = {True: "activé", False: "désactivé"}
 
 
 def fold(text: str) -> str:
@@ -102,6 +106,12 @@ class _BackendBase(ABC):
     @abstractmethod
     def click(self, node: Any, name: str) -> str:
         """Clique le nœud ; lève ToolError s'il ne réagit pas."""
+
+    def toggle_state(self, node: Any) -> bool | None:
+        """Phase 17d : un interrupteur (micro coupé, case cochée) est-il activé ? None si
+        le nœud n'en est pas un. Son nom ne change pas (« Rendre muet » reste « Rendre
+        muet ») : sans son état, MIKATA recliquait pour « vérifier » et défaisait l'action."""
+        return None
 
     @abstractmethod
     def set_text(self, node: Any, control: str, text: str) -> str:
@@ -239,7 +249,20 @@ class UiaBackend(_BackendBase):
         except Exception:
             return None
 
+    def toggle_state(self, node: Any) -> bool | None:
+        toggle = self._pattern(node, "Toggle")
+        if toggle is None:
+            return None
+        try:
+            state = int(toggle.ToggleState)
+        except Exception:
+            return None
+        return {0: False, 1: True}.get(state)
+
     def control_text(self, node: Any) -> str:
+        state = self.toggle_state(node)
+        if state is not None:
+            return f"{self._prop(node, 'Name')} : {_STATE[state]}"
         value = self._pattern(node, "Value")
         if value is not None:
             try:
@@ -297,9 +320,11 @@ class UiaBackend(_BackendBase):
         if toggle is not None:
             try:
                 toggle.Toggle()
-                return f"« {name} » basculé."
             except Exception as exc:
                 raise ToolError(f"« {name} » n'a pas répondu au clic : {exc}") from exc
+            state = self.toggle_state(node)
+            after = f" : maintenant {_STATE[state]}" if state is not None else ""
+            return f"« {name} » basculé{after}."
         raise ToolError(f"« {name} » ne se laisse pas cliquer (pas un bouton)")
 
     def set_text(self, node: Any, control: str, text: str) -> str:
@@ -533,6 +558,9 @@ class UiController:
             if kind in _VALUE_KINDS:  # phase 16g : ce qui est tapé dans un champ
                 value = self._backend.control_text(node).strip()
                 text = value[:_NAME_MAX] if value != name else ""
+            elif kind in _TOGGLE_KINDS:  # phase 17d : un interrupteur, son état
+                state = self._backend.toggle_state(node)
+                text = _STATE[state] if state is not None else ""
             found.append(UiControlInfo(name=name[:_NAME_MAX], kind=kind, text=text))
             if len(found) >= max_controls:
                 break
@@ -637,13 +665,13 @@ class UiController:
         for node in self._backend.iter_walk(root, _MAX_VISITED):  # s'arrête à la bonne
             name = fold(self._backend.node_name(node)).strip()
             if name == wanted:
-                done = self._press_in(node, names, needs)
+                done = self._press_in(window, node, names, needs)
                 if done is not None:
                     return done
             elif name.startswith(wanted) and not any(name.startswith(n) for n in names):
                 close.append(node)
         for row in close:
-            done = self._press_in(row, names, needs)
+            done = self._press_in(window, row, names, needs)
             if done is not None:
                 return done
         mention = f" qui mentionne « {' / '.join(contains or [])} »" if needs else ""
@@ -699,7 +727,9 @@ class UiController:
                     return f"{name} : {value}"
         return None
 
-    def _press_in(self, row: Any, names: list[str], needs: list[str]) -> str | None:
+    def _press_in(
+        self, window: UiWindowInfo, row: Any, names: list[str], needs: list[str]
+    ) -> str | None:
         """Le bouton `names` de l'élément `row` s'il mentionne `needs` : cliqué."""
         inside = self._backend.walk(row, _ROW_NODES)
         if needs:
@@ -711,7 +741,7 @@ class UiController:
             if self._backend.node_kind(node) == "bouton" and any(
                 name == n or name.startswith(n + " ") for n in names
             ):
-                return self._backend.click(node, self._backend.node_name(node))
+                return self._click(window, node, self._backend.node_name(node))
         return None
 
     # -- lecture ----------------------------------------------------------------------
@@ -739,7 +769,12 @@ class UiController:
     ) -> str:
         node = self._find(window, control, kind, nth, clickable=True, near=near)
         name = self._backend.node_name(node) or "(sans nom)"
-        return self._backend.click(node, name)
+        return self._click(window, node, name)
+
+    def _click(self, window: UiWindowInfo, node: Any, name: str) -> str:
+        """Le clic, la fenêtre montrée s'il le faut (`_shown_for_click`)."""
+        with _shown_for_click(window.handle):
+            return self._backend.click(node, name)
 
     def set_text(self, window: UiWindowInfo, control: str, text: str) -> str:
         node = self._find(window, control, "champ", 1)
@@ -753,6 +788,45 @@ class UiController:
         if voice:
             data["discord"] = voice
         return data
+
+
+@contextlib.contextmanager
+def _shown_for_click(handle: int | None) -> Iterator[None]:
+    """Phase 17d. Une appli réduite (MIKATA l'y met pour agir en arrière-plan) se lit et se
+    pilote, mais certaines actions n'y prennent pas : Spotify ignore « Play » fenêtre réduite
+    ou cachée derrière les autres, et le fait fenêtre visible (vérifié le 14/10). Le temps du
+    clic, la fenêtre réduite est montrée par-dessus SANS être activée (l'utilisateur garde le
+    clavier), puis réduite à nouveau : environ 0,3 s."""
+    if sys.platform != "win32" or not handle:
+        yield
+        return
+    import ctypes
+
+    user32 = ctypes.windll.user32  # type: ignore[attr-defined,unused-ignore]
+    if not user32.IsIconic(handle):
+        yield
+        return
+    flags = 0x0001 | 0x0002 | 0x0010 | 0x0040  # NOSIZE | NOMOVE | NOACTIVATE | SHOWWINDOW
+    previous = user32.GetForegroundWindow()
+    user32.ShowWindow(handle, 4)  # SW_SHOWNOACTIVATE
+    user32.SetWindowPos(handle, -1, 0, 0, 0, 0, flags)  # par-dessus...
+    user32.SetWindowPos(handle, -2, 0, 0, 0, 0, flags)  # ...sans y rester épinglée
+    try:
+        yield
+    finally:
+        time.sleep(SHOW_FOR_CLICK_S)
+        user32.ShowWindow(handle, 7)  # SW_SHOWMINNOACTIVE
+        # Remise à l'écran, une fenêtre réduite prend quand même le premier plan (constaté
+        # sur Spotify) : il revient aussitôt à la fenêtre de l'utilisateur. Seulement si c'est
+        # cette fenêtre-là qui l'a pris : si l'utilisateur a changé de fenêtre entre-temps,
+        # on n'y touche pas.
+        if previous and previous != handle and user32.GetForegroundWindow() == handle:
+            user32.keybd_event(0x12, 0, 0, 0)  # Alt : lève le verrou de premier plan
+            user32.keybd_event(0x12, 0, 0x0002, 0)
+            user32.SetForegroundWindow(previous)
+
+
+SHOW_FOR_CLICK_S = 0.3  # le temps que l'appli prenne le clic, fenêtre visible
 
 
 def _discord_voice_from(nodes: list[Any]) -> tuple[str | None, list[str]]:

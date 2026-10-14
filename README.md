@@ -3347,3 +3347,16 @@ uv run python scripts/eval_bench.py --tag appli --trials 2
 # puis d'autres titres : de plus en plus rapide ; « MIKATA, ouvre les réglages bluetooth ».
 # Les compétences apprises : data\skills\
 ```
+
+**Corrections du 14/10 au soir (phase 17d)** :
+
+- **Le morceau ne se lançait pas** : Spotify réduit (ou caché derrière tes fenêtres) ignore
+  le bouton de lecture, alors qu'il se lit et change d'onglet. Vérifié sur ton PC, son de
+  Spotify coupé : rien ne joue fenêtre réduite, la lecture part fenêtre visible. Le temps du
+  seul clic, MIKATA montre maintenant l'appli réduite par-dessus sans lui donner le clavier,
+  puis la réduit à nouveau (~0,3 s) ; le premier plan te revient si l'appli l'a pris (jamais
+  si c'est toi qui as changé de fenêtre). Vérifié : « Now playing: Jet Lag by Tiakola ».
+- **Le micro remis** : « Rendre muet » garde son nom une fois activé ; MIKATA relisait le nom,
+  croyait le micro ouvert et recliquait. Les interrupteurs disent maintenant leur état
+  (« Rendre muet [bouton] : activé ») et un clic dit l'état obtenu.
+- `pick` voit jusqu'à 200 options (comme `uia_window`), au lieu de 80.

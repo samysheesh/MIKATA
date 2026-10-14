@@ -35,7 +35,7 @@ from mikata.tools.base import current_turn
 
 SKILL_TIMEOUT_S = 40.0  # une compétence appelée depuis un programme
 MAX_CALLS = 60  # appels au SDK par script
-MAX_PICK = 80  # options données à pick()
+MAX_PICK = 200  # options données à pick() : autant que les contrôles de uia_window (phase 17d)
 MAX_ACTIONS = 25  # dont appels qui agissent
 ASK_TIMEOUT_S = 8.0
 REDACTED = "(détail masqué : il dépend d'un contenu lu ailleurs)"

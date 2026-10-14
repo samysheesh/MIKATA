@@ -400,6 +400,9 @@ au 5e. Vrai Spotify (clic à blanc) : la bonne ligne visée, la fenêtre de l'ut
 restée devant, la compétence réutilisée pour un autre titre. Banc : 56/56 puis 55/56 ;
 nouvelles tâches sur d'autres applis (réglage par `ms-settings:`, salon Discord). L'outil
 `spotify_play` de la phase 16g est retiré : MIKATA apprend ce qu'il faisait.
+Phase 17d : une appli réduite ou cachée derrière les autres se lit, mais Spotify y
+ignore « Play » ; le temps du clic, la fenêtre réduite est montrée sans être activée,
+puis réduite. Les interrupteurs disent leur état (un micro coupé n'est plus recoupé).
 
 ## 4. Ce qui part, ce qui reste
 
