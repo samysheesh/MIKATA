@@ -128,7 +128,11 @@ class OpenUrl(BaseTool[UrlParams]):
     sdk = "web.open"
     effect = Effect.ACT
     expected_s = 0.5
-    description = "Ouvre une page web dans le navigateur par défaut."
+    description = (
+        "Ouvre un site dans le navigateur de l'utilisateur, pour le lui montrer, sans rien "
+        "faire dessus. Pour agir sur une page (cliquer, lancer une vidéo) : browser_open ; "
+        "pour une information : web_search."
+    )
     params = UrlParams
     terminal = True
 
@@ -176,7 +180,8 @@ class WebSearch(BaseTool[SearchParams]):
     expected_s = 1.5
     description = (
         "Recherche sur le web (actualité, faits récents, horaires...) ; renvoie un résumé et "
-        "des extraits avec leurs adresses."
+        "des extraits avec leurs adresses. Les extraits suffisent souvent pour répondre ; "
+        "fetch_page seulement s'ils ne suffisent pas."
     )
     params = SearchParams
 

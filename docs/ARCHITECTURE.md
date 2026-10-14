@@ -288,7 +288,9 @@ mikata/
     ├─ stt/    base.py  whisper_local.py  mlx_whisper.py  parakeet_mlx.py
     │        parakeet_sherpa.py  speculative.py
     ├─ llm/    client.py  prompts.py
-    ├─ agent/  loop.py  memory.py  guard.py  script_tool.py   # phase 14d : outil script
+    ├─ agent/  loop.py  turn.py  model.py  actions.py         # phase 16a : boucle en
+    │        skill_path.py  learning.py  history.py           # composants ; loop.py
+    │        narration.py  memory.py  guard.py  script_tool.py # assemble un tour
     ├─ tools/  registry.py  system.py  apps.py  web.py  media.py
     │        input.py  files.py  shell.py  ui.py  memory_tools.py  uia.py  browser.py
     │        skills.py

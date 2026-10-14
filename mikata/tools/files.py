@@ -86,6 +86,13 @@ def find(
     return sorted(found, key=recent), cut
 
 
+# Phase 16a : savoir propre aux outils de fichiers (il était dans le prompt système).
+PATH_HINT = (
+    "« Bureau/notes.txt », « Documents/... », « Téléchargements/... » mènent directement "
+    "aux vrais dossiers : pas besoin de chercher le chemin d'abord"
+)
+
+
 class FindParams(BaseModel):
     name: str = Field(min_length=1, description="Nom ou morceau du nom (jokers * ? permis)")
     folder: str | None = Field(
@@ -125,7 +132,8 @@ class FindFiles(BaseTool[FindParams]):
 
 class PathParams(BaseModel):
     path: str = Field(
-        min_length=1, description="Chemin du fichier (absolu, ou relatif au dossier personnel)"
+        min_length=1,
+        description="Chemin du fichier (absolu, ou relatif au dossier personnel) ; " + PATH_HINT,
     )
 
 
@@ -162,7 +170,10 @@ class ReadFile(BaseTool[PathParams]):
 
 
 class WriteParams(BaseModel):
-    path: str = Field(min_length=1, description="Chemin du fichier à écrire")
+    path: str = Field(
+        min_length=1,
+        description="Chemin du fichier à écrire ; " + PATH_HINT,
+    )
     content: str = Field(max_length=WRITE_MAX_CHARS, description="Texte à écrire")
     mode: Literal["create", "overwrite", "append"] = Field(
         default="create",
@@ -209,7 +220,10 @@ class WriteFile(BaseTool[WriteParams]):
 
 
 class MoveParams(BaseModel):
-    source: str = Field(min_length=1, description="Fichier ou dossier à déplacer / renommer")
+    source: str = Field(
+        min_length=1,
+        description="Fichier ou dossier à déplacer / renommer ; " + PATH_HINT,
+    )
     destination: str = Field(
         min_length=1,
         description="Nouveau chemin complet, ou dossier d'arrivée (créé s'il n'existe pas)",
@@ -344,7 +358,9 @@ class FindPath(BaseTool[FindPathParams]):
     effect = Effect.READ
     description = (
         "Cherche un fichier ou un dossier dans l'index local (instantané, tout le PC, "
-        "sans les accents). À préférer à find_files."
+        "sans les accents). À préférer à find_files ; pour le montrer : open_in_explorer. "
+        "Si l'index se construit encore, dis simplement qu'il se prépare : ne parcours "
+        "jamais les disques avec le shell."
     )
     params = FindPathParams
     terminal = False
@@ -371,7 +387,10 @@ class FindPath(BaseTool[FindPathParams]):
 
 
 class ListFolderParams(BaseModel):
-    path: str = Field(min_length=1, description="Chemin du dossier (absolu, ou relatif)")
+    path: str = Field(
+        min_length=1,
+        description="Chemin du dossier (absolu, ou relatif) ; " + PATH_HINT,
+    )
 
 
 @register_tool

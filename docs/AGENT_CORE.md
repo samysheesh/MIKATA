@@ -367,7 +367,7 @@ l'applique :
 | --- | --- | --- |
 | `mikata/agent2/` (23 fichiers, 3 483 lignes), ses 20 fichiers de tests, `tests/agent2_eval/`, `scripts/eval_agent2.py`, section `agent2` de la config, passe d'arrière-plan | **Supprimé** | Section 1 |
 | `mikata/skills/` (497 lignes) et `data/skills/skills.json` | **Remplacé** par les paquets de la section 3.6 | Doublons, procédures dégradées apprises, rejeu rare |
-| `mikata/agent/loop.py` (884 lignes) | **Réécrit** en modules ; comportements validés gardés (suivi, barge-in, mots-clés de réflexion, résumé) | Une classe mêle huit responsabilités |
+| `mikata/agent/loop.py` (884 lignes, 1 483 au 14/10) | **Réécrit** en modules (phase 16a : `turn`, `model`, `actions`, `skill_path`, `learning`, `history`, `narration` ; `loop.py` assemble un tour, 443 lignes) ; comportements validés gardés (suivi, barge-in, mots-clés de réflexion, résumé) | Une classe mêlait sept responsabilités |
 | `mikata/llm/prompts.py` | **Réécrit** | Nouveau contrat (texte, direct, script) |
 | `mikata/agent/guard.py` | **Gardé**, placé derrière les politiques | Critère de la phase 5 |
 | `mikata/llm/client.py`, `usage.py`, `agent/memory.py` | **Gardés** | Sains ; ajout des deux rôles de modèle |
@@ -405,6 +405,9 @@ réussite sur trois essais.
 | E. Apprentissage | faite (`phase-14e-apprentissage`, `phase-15e-competences`) | carnet de leçons et traces ; une leçon fait passer une tâche de 2 appels à 1 ; une compétence apprise au 1er tour, appelée par le modèle aux tours 2 à 4, est rejouée au 5e sans appel LLM (vrai modèle, PC simulé) |
 | F. Ouverture | à faire | |
 
+Fait en D (phase 16a) : boucle découpée en composants, prompt système réécrit en
+principes et exemples canoniques (le savoir propre à un outil est passé dans sa
+description) ; banc à deux essais : 98/100 et 164 appels au modèle, contre 99/100 et 169.
 Reste à faire en D : tâches de fond avec accusé de réception, chemin « exploration » borné.
 Fait en E (phase 15e) : compétences (`mikata/learn/skills.py`), qui remplacent
 `mikata/skills/`. Écarts à la section 3.6 : la vérification avant adoption se fait dans le

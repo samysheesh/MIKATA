@@ -38,9 +38,11 @@ class BrowserOpen(BaseTool[BrowserOpenParams]):
     effect = Effect.ACT
     expected_s = 3.0
     description = (
-        "Ouvre une URL dans le navigateur (Brave) et attend la page, puis continue : lis "
-        "la page (browser_read) et clique (browser_click) ou écris (browser_type) pour "
-        "finir l'action."
+        "Ouvre une URL dans la fenêtre de travail de MIKATA (Brave, en arrière-plan : "
+        "marche toujours, même si le Brave de l'utilisateur est ouvert) et attend la page. "
+        "Ne conclut pas la demande : lis ensuite la page (browser_read) et clique "
+        "(browser_click) ou écris (browser_type) pour finir l'action. Pour une simple "
+        "information, web_search est bien plus rapide."
     )
     params = BrowserOpenParams
     terminal = False  # une tâche web est souvent en plusieurs étapes : on continue

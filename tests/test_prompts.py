@@ -50,11 +50,12 @@ def test_prompt_keeps_speech_short_and_never_talks_syntax() -> None:
 
 
 def test_prompt_examples() -> None:
-    """5 exemples d'actions (transcription fautive -> outil) et, depuis la phase 6, 3 de
-    réponses dites à voix haute, sans outil."""
+    """Exemples canoniques (phase 16a) : actions simples sur une transcription fautive, une
+    question, une tâche en plusieurs étapes (un programme) et des réponses dites à voix
+    haute, sans outil."""
     examples = SYSTEM_PROMPT.split("EXEMPLES", 1)[1]
     lines = [line for line in examples.splitlines() if line.startswith("- « ")]
-    assert len(lines) == 8
+    assert len(lines) == 10
     flat = _flat(examples)
     assert '« stop process name notepad » -> close_app(name="Bloc-notes")' in flat
     assert '« ouvre spotifaille » -> open_app(name="Spotify")' in flat
@@ -130,6 +131,16 @@ def test_system_prompt_tool_guidance() -> None:
     assert "« C'est fait » est dit automatiquement" in PROMPT
     assert "get_weather" in PROMPT and "show_text" in PROMPT
     assert "dans la même réponse" in PROMPT  # actions indépendantes en parallèle
+    assert "écris un programme" in PROMPT  # étapes dépendantes : un programme
+    assert "« lance le dernier clip de Stromae » -> un programme" in PROMPT
+
+
+def test_prompt_states_principles_not_recipes() -> None:
+    """Phase 16a (docs/AGENT_CORE.md §3.9) : aucune recette propre à une appli ou un site
+    dans le prompt ; ce savoir vit dans la description de l'outil."""
+    for recipe in ("Discord", "youtube", "black clover", "salon", "Brave", "cyberpunk"):
+        assert recipe.lower() not in PROMPT.lower(), recipe
+    assert "Observe avant d'agir" in PROMPT
 
 
 def test_long_answers_are_spoken_never_written() -> None:
