@@ -283,6 +283,7 @@ class AppName(BaseModel):
 @register_tool
 class OpenApp(BaseTool[AppName]):
     name = "open_app"
+    prepares = True
     sdk = "apps.open"
     effect = Effect.ACT
     expected_s = 1.0
@@ -363,6 +364,7 @@ class CloseWindow(BaseTool[WindowParams]):
 @register_tool
 class FocusWindow(BaseTool[AppName]):
     name = "focus_window"
+    prepares = True
     sdk = "apps.focus"
     effect = Effect.ACT
     description = "Met au premier plan la fenêtre d'une application déjà ouverte."

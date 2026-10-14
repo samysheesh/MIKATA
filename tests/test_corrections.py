@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from test_agent import NOW, Phrases, ScriptedLLM, Sink
-from tool_fakes import FakeDesktop, make_ctx
+from tool_fakes import FakeAudio, FakeDesktop, make_ctx
 
 from mikata.agent.loop import Agent, TurnResult
 from mikata.eval.bench import history_steps
@@ -23,7 +23,7 @@ def _respond(
 ) -> tuple[TurnResult, FakeDesktop]:
     """`before` : l'échange précédent (demande, appels), celui que la commande corrige."""
     desktop = FakeDesktop()
-    ctx = make_ctx(tmp_path, desktop=desktop)
+    ctx = make_ctx(tmp_path, desktop=desktop, audio=FakeAudio())
     agent = Agent(
         llm,
         ctx.config,
@@ -109,4 +109,13 @@ def test_reads_do_not_count_as_actions_of_the_corrected_task(tmp_path: Path) -> 
         [{"name": "uia_window", "args": {"window": "Steam"}}, {"name": "open_app"}],
     )
     result, _ = _respond(tmp_path, llm, "non, Spotify", before)
+    assert len(llm.calls) == 1 and result.shortcut
+
+
+def test_an_action_that_accomplishes_ends_the_correction_even_alone(tmp_path: Path) -> None:
+    """Une action qui accomplit (ici le volume ; ou lancer le morceau dans Spotify) conclut
+    la correction même si la demande corrigée en avait demandé deux : avant, le modèle
+    continuait et reclicait la ligne, ce qui aurait mis la musique en pause."""
+    llm = ScriptedLLM(_call("set_volume", level=20), [TextDelta("inutile"), Done("stop")])
+    result, _ = _respond(tmp_path, llm, "Non, sur Spotify.", PLAY_ON_YOUTUBE)
     assert len(llm.calls) == 1 and result.shortcut

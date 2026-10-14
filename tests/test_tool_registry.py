@@ -37,6 +37,7 @@ PHASE_4_TOOLS = {
     "get_weather",
     # media
     "media_control",
+    "spotify_play",  # phase 16g : l'appli Spotify du PC
     "set_volume",
     "mute",
     "set_output_device",
@@ -109,6 +110,7 @@ TERMINAL = {
     "focus_window",
     "open_url",
     "media_control",
+    "spotify_play",
     "set_volume",
     "mute",
     "set_output_device",

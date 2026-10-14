@@ -125,6 +125,7 @@ class UrlParams(BaseModel):
 @register_tool
 class OpenUrl(BaseTool[UrlParams]):
     name = "open_url"
+    prepares = True
     sdk = "web.open"
     effect = Effect.ACT
     expected_s = 0.5

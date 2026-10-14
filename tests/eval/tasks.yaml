@@ -56,7 +56,7 @@
 - id: ouvre_absente
   request: "ouvre Photoshop"
   tags: [direct]
-  expect: [{answer: "introuvable|pas install|ne trouve|n'est pas|n'ai pas trouv|aucune"}]
+  expect: [{answer: "introuvable|pas install|ne trouve|n'est pas|n'ai pas trouv|aucune|ne fait pas partie"}]
   forbid: [{window_open: Photoshop}, {window_open: Photos}]
 
 - id: ferme_bloc_notes
@@ -475,11 +475,15 @@
   world:
     open_apps: [Spotify]
     controls:
+      # Comme le vrai Spotify (relevé le 14/10) : des cartes dont le bouton porte titre et
+      # artiste (playlists, paroles), et la ligne du morceau, nommée par son titre.
       Spotify:
-        - ["Rechercher", "champ"]
-        - ["Jet Lag - Tiakola, Jorja Smith", "élément"]
-        - ["Accueil", "bouton"]
+        - ["Play Jet Lag Tiakola", "bouton", "playlist d'un utilisateur"]
+        - ["Jet Lag", "élément", "Song • Tiakola, Jorja Smith"]
+        - ["Jet lag (Evasion #2)", "élément", "Song • Autre Artiste"]
+        - ["Play", "bouton", ""]
   expect: [{ui_clicked: "Jet Lag"}]
+  forbid: [{browser_url: "spotify"}, {ui_clicked: "Play Jet Lag Tiakola"}]
 
 - id: correction_application
   request: "non, Discord"
@@ -508,8 +512,12 @@
   world:
     open_apps: [Spotify]
     controls:
+      # Comme le vrai Spotify (relevé le 14/10) : des cartes dont le bouton porte titre et
+      # artiste (playlists, paroles), et la ligne du morceau, nommée par son titre.
       Spotify:
-        - ["Rechercher", "champ"]
-        - ["Jet Lag - Tiakola, Jorja Smith", "élément"]
-        - ["Accueil", "bouton"]
+        - ["Play Jet Lag Tiakola", "bouton", "playlist d'un utilisateur"]
+        - ["Jet Lag", "élément", "Song • Tiakola, Jorja Smith"]
+        - ["Jet lag (Evasion #2)", "élément", "Song • Autre Artiste"]
+        - ["Play", "bouton", ""]
   expect: [{ui_clicked: "Jet Lag"}]
+  forbid: [{browser_url: "spotify"}, {ui_clicked: "Play Jet Lag Tiakola"}]

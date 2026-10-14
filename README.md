@@ -3290,15 +3290,26 @@ Corrections après tes essais à la voix :
 - `pick` rend l'élément choisi lui-même (un contrôle, un lien), plus son texte ; une
   fonction qui attend un nom accepte l'élément entier.
 
-Reste : lancer un morceau précis dans l'appli Spotify n'est pas fiable (1 essai sur 6 au
-banc, `musique_dans_appli`) : MIKATA passe par l'interface (recherche, clic). Une vraie
-capacité Spotify (API Web) est la solution ; elle demande ton accord.
+- **Spotify, l'appli du PC** (outil `spotify_play`) : « lance Jet Lag de Tiakola » ouvre la
+  recherche dans l'appli (jamais le site, où tu n'es pas connecté), attend les résultats de
+  cette recherche, et lance la ligne du morceau qui cite l'artiste, sans vision. Relevé sur
+  ton Spotify (appli en anglais) : chaque résultat est une ligne « titre / Song • artistes »
+  avec son bouton « Play » ; les cartes « Play Jet Lag Tiakola... » (playlists, paroles)
+  sont écartées. Essai à blanc sur 6 recherches : la bonne ligne à chaque fois, clic en 1,5
+  à 3,5 s. Au banc : 8 essais sur 8, un seul appel au modèle. L'API Web de Spotify, elle,
+  exige Premium.
+- Une correction qui accomplit d'un coup (lancer le morceau) conclut, même si la demande
+  corrigée avait pris deux étapes ; seule une étape qui prépare (ouvrir l'appli) continue.
+- Relecture de `uia/` : l'arbre se lit dans l'ordre de la fenêtre (le « premier » contrôle
+  était le dernier affiché) ; un programme qui passe toute la fenêtre lue à `window`
+  fonctionne (le micro, le 14/10 : 14,7 s au lieu de 4).
 
 ```powershell
 cd D:\projects\mikata
 uv run pytest tests/test_corrections.py tests/test_explore.py tests/test_memory_16e.py -q
 uv run python scripts/eval_bench.py --tag correction --trials 2
-# À la voix : « MIKATA, coupe mon micro sur Discord » (réponse dès le clic),
-# « MIKATA, lance Jet Lag de Tiakola » puis « non, sur Spotify »,
-# puis regarder data\preferences.json (musique : Spotify).
+uv run pytest tests/test_spotify.py tests/test_uia_matching.py -q
+# À la voix : « MIKATA, lance Jet Lag de Tiakola » (l'appli Spotify s'ouvre sur la
+# recherche et le morceau part), « MIKATA, mets Tiakola » (l'artiste),
+# « MIKATA, coupe mon micro sur Discord » (réponse dès le clic).
 ```

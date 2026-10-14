@@ -426,6 +426,9 @@ que défaire (propriété d'outil `undoes`) ne conclut pas le tour, ni tant que 
 n'a pas fait autant d'actions constructives que la demande corrigée. Les préférences
 viennent des seuls mots de l'utilisateur (sa demande et sa correction), même après une
 page web. Le banc rejoue des corrections (`history` : les échanges qui précèdent).
+Une étape qui accomplit conclut la correction ; seule une étape qui prépare (propriété
+`prepares` : ouvrir une appli, mettre une fenêtre devant) continue. Outil `spotify_play`
+(l'appli Spotify par son arbre d'accessibilité, sans navigateur ni vision).
 Fait en E (phase 15e) : compétences (`mikata/learn/skills.py`), qui remplacent
 `mikata/skills/`. Écarts à la section 3.6 : la vérification avant adoption se fait dans le
 code, sans rejouer la demande (rejouer une action sur le PC la referait deux fois) ; la

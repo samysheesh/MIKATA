@@ -485,8 +485,8 @@ class Agent:
     def _redo_unfinished(self, turn: Turn, results: list[Any]) -> bool:
         """Phase 16g : une correction (« non, sur Spotify ») refait la demande précédente.
         Une étape ne conclut pas le tour si elle n'a fait que défaire (fermer YouTube), ni
-        tant que la correction n'a pas fait autant d'actions constructives que la demande
-        corrigée (lancer un morceau, c'était ouvrir puis cliquer : ouvrir Spotify n'en est
+        si elle n'a fait que préparer alors que la demande corrigée demandait plus
+        d'actions (lancer un morceau, c'était ouvrir puis cliquer : ouvrir Spotify n'en est
         que le début). Le modèle voit alors le résultat et va au bout, au lieu d'un « C'est
         fait » sur la moitié du travail. Une correction simple (« non, à 20 ») conclut
         toujours en un appel."""
@@ -497,7 +497,17 @@ class Agent:
         done = sum(
             1 for r in turn.result.direct_results if r.ok and self._constructive(r.name)
         ) + sum(1 for outcome in turn.result.scripts if outcome.ok)
-        return done < self._actions_before()
+        if done >= self._actions_before():
+            return False
+        # Moins d'actions que la demande corrigée : on continue seulement si l'étape n'a
+        # fait que préparer (ouvrir Spotify) ; une action qui accomplit (lancer le
+        # morceau) conclut, même seule. Sinon le modèle refaisait le travail : un second
+        # clic sur la même ligne aurait mis la musique en pause.
+        return all(self._undoes(r.name) or self._prepares(r.name) for r in results)
+
+    def _prepares(self, name: str) -> bool:
+        tool = self.tools.tools.get(name) if self.tools is not None else None
+        return bool(tool is not None and getattr(tool, "prepares", False))
 
     def _undoes(self, name: str) -> bool:
         tool = self.tools.tools.get(name) if self.tools is not None else None
