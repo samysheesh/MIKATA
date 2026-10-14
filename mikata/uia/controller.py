@@ -22,7 +22,7 @@ import contextlib
 import re
 import unicodedata
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any, ClassVar
 
 from loguru import logger
@@ -37,10 +37,14 @@ from mikata.uia.state import AmbientState, load_uiautomation
 _SKIP_KINDS = {"fenêtre", "panneau", "groupe", "barre de titre", "document"}
 # Un clic sans type précis ne vise que les contrôles réellement cliquables.
 _CLICKABLE = {"bouton", "lien", "menu", "élément", "case", "onglet", "arbre", "image", "contrôle"}
-_MAX_VISITED = 2000  # garde-fou contre les arbres énormes (navigateurs...)
+_MAX_VISITED = 4000  # garde-fou contre les arbres énormes (Spotify : ~2000 nœuds, 14/10)
 _MATCH_RATIO = 80.0  # score rapidfuzz minimal pour qu'un nom de contrôle « corresponde »
 _TITLE_RATIO = 55.0  # un titre de fenêtre court matche à un score plus faible
 _NAME_MAX = 200  # caractères gardés d'un nom de contrôle
+_NEAR_LEVELS = 4  # « près de » : la ligne ou le groupe, jusqu'à 4 niveaux au-dessus
+_NEAR_NODES = 80  # nœuds lus dans chacun de ces groupes
+_ROW_NODES = 60  # nœuds lus dans un élément de liste (click_in)
+_VALUE_KINDS = {"champ", "liste déroulante"}  # contrôles dont `controls` donne le contenu
 
 
 def fold(text: str) -> str:
@@ -72,6 +76,10 @@ class _BackendBase(ABC):
         """Enfants d'un nœud : `GetChildren` (UIA) ou `AXChildren` (AX)."""
 
     @abstractmethod
+    def parent(self, node: Any) -> Any:
+        """Parent du nœud, ou None (racine, nœud disparu)."""
+
+    @abstractmethod
     def node_name(self, node: Any) -> str:
         """Nom accessible du nœud ("" s'il n'en a pas)."""
 
@@ -101,15 +109,21 @@ class _BackendBase(ABC):
 
     def walk(self, root: Any, max_nodes: int) -> list[Any]:
         """Parcours en profondeur, borné : une fenêtre géante ne bloque pas l'outil.
-        Enfants lus par le moteur : `GetChildren` (UIA) ou `AXChildren` (AX)."""
-        nodes: list[Any] = []
-        stack = self.children(root)
-        while stack and len(nodes) < max_nodes:
+        Enfants lus par le moteur : `GetChildren` (UIA) ou `AXChildren` (AX). Dans l'ordre
+        de la fenêtre (phase 16g : la pile rendait les frères à l'envers, et le « premier »
+        contrôle était le dernier affiché)."""
+        return list(self.iter_walk(root, max_nodes))
+
+    def iter_walk(self, root: Any, max_nodes: int) -> Iterator[Any]:
+        """Le même parcours, au fil de l'eau : on s'arrête dès qu'on a trouvé."""
+        count = 0
+        stack = list(reversed(self.children(root)))
+        while stack and count < max_nodes:
             node = stack.pop()
-            nodes.append(node)
+            count += 1
+            yield node
             with contextlib.suppress(Exception):
-                stack.extend(self.children(node))
-        return nodes
+                stack.extend(reversed(self.children(node)))
 
     def discord_voice(self, window_for_process: Callable[[str], UiWindowInfo]) -> str:
         """Présence vocale Discord : lue dans l'arbre d'accessibilité du client. Le salon
@@ -193,6 +207,12 @@ class UiaBackend(_BackendBase):
             return list(node.GetChildren())
         except Exception:
             return []
+
+    def parent(self, node: Any) -> Any:
+        try:
+            return node.GetParentControl()
+        except Exception:
+            return None
 
     @staticmethod
     def _prop(node: Any, name: str) -> str:
@@ -376,6 +396,12 @@ class AxBackend(_BackendBase):
     def children(self, node: Any) -> list[Any]:
         return self._ax_children(node)
 
+    def parent(self, node: Any) -> Any:
+        try:
+            return node.get("AXParent")
+        except Exception:
+            return None
+
     def node_name(self, node: Any) -> str:
         return self._ax_name(node)
 
@@ -502,7 +528,11 @@ class UiController:
             kind = self._backend.node_kind(node)
             if kind in _SKIP_KINDS:
                 continue
-            found.append(UiControlInfo(name=name[:_NAME_MAX], kind=kind))
+            text = ""
+            if kind in _VALUE_KINDS:  # phase 16g : ce qui est tapé dans un champ
+                value = self._backend.control_text(node).strip()
+                text = value[:_NAME_MAX] if value != name else ""
+            found.append(UiControlInfo(name=name[:_NAME_MAX], kind=kind, text=text))
             if len(found) >= max_controls:
                 break
         return found
@@ -510,13 +540,18 @@ class UiController:
     def _find(
         self,
         window: UiWindowInfo,
-        control: str,
+        control: str | list[str],
         kind: str | None,
         nth: int,
         clickable: bool = False,
+        near: str | list[str] | None = None,
     ) -> Any:
+        """Le contrôle `control` (un nom, approché ; ou plusieurs noms acceptables, exacts,
+        par ordre de préférence), le plus proche des textes `near` s'ils sont donnés."""
         root = self._backend.attach(window)
-        wanted = fold(control)
+        labels = [control] if isinstance(control, str) else list(control)
+        wanted = [fold(label) for label in labels]
+        shown = " / ".join(labels)
         candidates: list[Any] = []
         seen: dict[str, float] = {}  # noms rencontrés -> ressemblance, pour l'erreur
         for node in self._backend.walk(root, _MAX_VISITED):
@@ -524,22 +559,109 @@ class UiController:
             if not name:
                 continue
             if len(seen) < 2000:
-                seen.setdefault(name[:_NAME_MAX], fuzz.token_set_ratio(wanted, fold(name)))
+                seen.setdefault(name[:_NAME_MAX], fuzz.token_set_ratio(wanted[0], fold(name)))
             node_kind = self._backend.node_kind(node)
             if kind is not None and fold(kind) != fold(node_kind):
                 continue
             if clickable and kind is None and node_kind not in _CLICKABLE:
                 continue
-            if wanted == fold(name) or fuzz.ratio(wanted, fold(name)) >= _MATCH_RATIO:
+            folded = fold(name)
+            if folded in wanted or (
+                len(wanted) == 1 and fuzz.ratio(wanted[0], folded) >= _MATCH_RATIO
+            ):
                 candidates.append(node)
         if not candidates:
             where = f" (type « {kind} »)" if kind else ""
             close = [n for n, score in sorted(seen.items(), key=lambda kv: -kv[1]) if score >= 40]
             hint = f" ; noms proches : {', '.join(f'« {n} »' for n in close[:6])}" if close else ""
-            raise ToolError(f"contrôle introuvable : « {control} »{where}{hint}")
+            raise ToolError(f"contrôle introuvable : « {shown} »{where}{hint}")
+        # Phase 16g : un nom exact passe avant un nom approchant (« Play Jet Lag » et non
+        # « Play Jet Lag Radio », qui ressemble assez pour être candidat).
+        exact = [node for node in candidates if fold(self._backend.node_name(node)) in wanted]
+        candidates = exact or candidates
+        if near:  # phase 16g : le contrôle de la ligne (du groupe) qui mentionne `near`
+            texts = [near] if isinstance(near, str) else list(near)
+            ranked = []
+            for index, node in enumerate(candidates):
+                level = self._near_level(node, texts)
+                if level is not None:  # le plus proche, puis le nom préféré, puis l'ordre
+                    name = fold(self._backend.node_name(node))
+                    rank = wanted.index(name) if name in wanted else len(wanted)
+                    ranked.append((level, rank, index))
+            candidates = [candidates[i] for _, _, i in sorted(ranked)]
+            if not candidates:
+                where = " et ".join(f"« {t} »" for t in texts)
+                raise ToolError(f"aucun « {shown} » près de {where}")
         if nth > len(candidates):
-            raise ToolError(f"« {control} » : {len(candidates)} occurrence(s), pas la {nth}e")
+            raise ToolError(f"« {shown} » : {len(candidates)} occurrence(s), pas la {nth}e")
         return candidates[nth - 1]
+
+    def _near_level(self, node: Any, texts: list[str]) -> int | None:
+        """À combien de niveaux au-dessus du nœud (1 à 4) se trouve le premier groupe qui
+        mentionne tous les `texts`, ou None. Ex. le bouton « Play » de la ligne « Jet Lag »
+        qui cite « Tiakola » : niveau 1 ; un « Play » dont il faut remonter à toute la page
+        pour trouver ces mots passe après."""
+        wanted = [fold(text).strip() for text in texts if text.strip()]
+        ancestor = node
+        for level in range(1, _NEAR_LEVELS + 1):
+            ancestor = self._backend.parent(ancestor)
+            if ancestor is None:
+                return None
+            seen = " | ".join(  # le nom du contrôle lui-même ne compte pas
+                fold(self._backend.node_name(other))
+                for other in [ancestor, *self._backend.walk(ancestor, _NEAR_NODES)]
+                if other is not node
+            )
+            if all(text in seen for text in wanted):
+                return level
+        return None
+
+    def click_in(
+        self,
+        window: UiWindowInfo,
+        item: str,
+        buttons: list[str],
+        contains: list[str] | None = None,
+    ) -> str:
+        """Phase 16g : clique, dans l'élément nommé `item` (une ligne de liste) qui
+        mentionne tous les `contains`, son bouton nommé comme l'un des `buttons` (« Play »
+        vaut aussi « Play <titre> »). Ex. la ligne « Jet Lag » qui cite « Tiakola », son
+        bouton « Play ». Les éléments au nom exact d'abord, puis ceux qui commencent par
+        `item` (« Jet Lag (Radio Edit) »), dans l'ordre de la fenêtre."""
+        root = self._backend.attach(window)
+        wanted = fold(item).strip()
+        names = [fold(button).strip() for button in buttons]
+        needs = [fold(text).strip() for text in contains or [] if text.strip()]
+        close: list[Any] = []
+        for node in self._backend.iter_walk(root, _MAX_VISITED):  # s'arrête à la bonne
+            name = fold(self._backend.node_name(node)).strip()
+            if name == wanted:
+                done = self._press_in(node, names, needs)
+                if done is not None:
+                    return done
+            elif name.startswith(wanted) and not any(name.startswith(n) for n in names):
+                close.append(node)
+        for row in close:
+            done = self._press_in(row, names, needs)
+            if done is not None:
+                return done
+        mention = f" qui mentionne « {' / '.join(contains or [])} »" if needs else ""
+        raise ToolError(f"aucun élément « {item} »{mention} avec un bouton {' / '.join(buttons)}")
+
+    def _press_in(self, row: Any, names: list[str], needs: list[str]) -> str | None:
+        """Le bouton `names` de l'élément `row` s'il mentionne `needs` : cliqué."""
+        inside = self._backend.walk(row, _ROW_NODES)
+        if needs:
+            seen = " | ".join(fold(self._backend.node_name(n)) for n in inside)
+            if not all(text in seen for text in needs):
+                return None
+        for node in inside:
+            name = fold(self._backend.node_name(node)).strip()
+            if self._backend.node_kind(node) == "bouton" and any(
+                name == n or name.startswith(n + " ") for n in names
+            ):
+                return self._backend.click(node, self._backend.node_name(node))
+        return None
 
     # -- lecture ----------------------------------------------------------------------
 
@@ -556,8 +678,15 @@ class UiController:
 
     # -- actions ----------------------------------------------------------------------
 
-    def click(self, window: UiWindowInfo, control: str, kind: str | None, nth: int) -> str:
-        node = self._find(window, control, kind, nth, clickable=True)
+    def click(
+        self,
+        window: UiWindowInfo,
+        control: str | list[str],
+        kind: str | None,
+        nth: int,
+        near: str | list[str] | None = None,
+    ) -> str:
+        node = self._find(window, control, kind, nth, clickable=True, near=near)
         name = self._backend.node_name(node) or "(sans nom)"
         return self._backend.click(node, name)
 

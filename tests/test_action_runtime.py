@@ -426,3 +426,18 @@ def test_an_element_given_where_a_name_is_expected_gives_its_name(tmp_path: Path
     world = World(tmp_path)
     outcome = world.run("app = {'name': 'Steam', 'kind': 'appli'}\napps.open(name=app)")
     assert outcome.ok and ("launch", "Steam") in world.desktop.log
+
+
+def test_a_whole_window_given_as_window_gives_its_title(tmp_path: Path) -> None:
+    """Le 14/10 : `uia_click(window=w)` avec `w = uia_window(...)` (tout le résultat) faisait
+    échouer le clic ; le champ `window` du résultat est le titre attendu."""
+    from mikata.action.sdk import SdkCatalog as Catalog
+
+    world = World(tmp_path)
+    catalog = Catalog(world.registry.tools, "win32")
+    entry = catalog.get("ui.click")
+    assert entry is not None
+    bound = catalog.bind(
+        entry, (), {"window": {"window": "Discord", "controls": []}, "control": "Rendre muet"}
+    )
+    assert bound["window"] == "Discord"

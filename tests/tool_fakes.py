@@ -226,9 +226,26 @@ class FakeUi:
         self._record("read", (window.title, control, max_chars))
         return self.text
 
-    def click(self, window: UiWindowInfo, control: str, kind: str | None, nth: int) -> str:
-        self._record("click", (window.title, control, kind, nth))
+    def click(
+        self,
+        window: UiWindowInfo,
+        control: str | list[str],
+        kind: str | None,
+        nth: int,
+        near: str | list[str] | None = None,
+    ) -> str:
+        self._record("click", (window.title, control, kind, nth) + ((near,) if near else ()))
         return f"« {control} » cliqué."
+
+    def click_in(
+        self,
+        window: UiWindowInfo,
+        item: str,
+        buttons: list[str],
+        contains: list[str] | None = None,
+    ) -> str:
+        self._record("click_in", (window.title, item, tuple(buttons), tuple(contains or ())))
+        return f"« {buttons[0]} » de « {item} » cliqué."
 
     def set_text(self, window: UiWindowInfo, control: str, text: str) -> str:
         self._record("set_text", (window.title, control, text))

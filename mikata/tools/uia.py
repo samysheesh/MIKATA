@@ -64,7 +64,11 @@ class UiaWindow(BaseTool[UiaWindowParams]):
         if not controls:
             raise ToolError(f"aucun contrôle lisible dans « {win.title} »")
         lines = [f"Fenêtre « {win.title} » ({win.process}), {len(controls)} contrôles :"]
-        lines.extend(f"- {control.name} [{control.kind}]" for control in controls)
+        lines.extend(
+            f"- {control.name} [{control.kind}]"
+            + (f" : « {control.text} »" if control.text else "")
+            for control in controls
+        )
         self.ctx.publish_data(
             {
                 "window": win.title,
@@ -110,6 +114,11 @@ class UiaClickParams(WindowParams):
         "l'ambiguïté ; sans : le premier contrôle cliquable de ce nom",
     )
     nth: int = Field(default=1, ge=1, le=20, description="N-ième contrôle de ce nom (1 = premier)")
+    near: str | None = Field(
+        default=None,
+        description="Texte de la même ligne, pour choisir parmi des contrôles de même nom "
+        "(ex. le bouton « Play » de la ligne où figure « Tiakola »)",
+    )
 
 
 @register_tool
@@ -131,7 +140,9 @@ class UiaClick(BaseTool[UiaClickParams]):
         await _approve(self.ctx, guard, decision, f"Cliquer « {args.control} »")
         uia = _uia(self.ctx)
         win = await self.ctx.run_blocking(uia.window, args.window, args.process)
-        return await self.ctx.run_blocking(uia.click, win, args.control, args.kind, args.nth)
+        return await self.ctx.run_blocking(
+            uia.click, win, args.control, args.kind, args.nth, args.near
+        )
 
 
 class UiaSetTextParams(WindowParams):

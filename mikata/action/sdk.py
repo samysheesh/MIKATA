@@ -195,12 +195,13 @@ class SdkCatalog:
             raise SdkBindError(
                 f"{entry.name} : argument manquant « {missing[0]} » ({entry.signature()})"
             )
-        # Phase 16g : un texte attendu, un élément lu donné (contrôle, lien de
-        # `ui.window`, `browser.read` ou `pick`) : son nom, ou son texte.
+        # Phase 16g : un texte attendu, un objet lu donné (contrôle ou lien de `ui.window`,
+        # `browser.read` ou `pick` ; ou tout le résultat de `ui.window` pour `window`) : son
+        # champ du même nom que le paramètre, sinon son nom, sinon son texte.
         kinds = {param.name: param.kind for param in entry.params}
         for key, value in bound.items():
             if kinds.get(key) == "str" and isinstance(value, dict):
-                label = value.get("name") or value.get("text")
+                label = value.get(key) or value.get("name") or value.get("text")
                 if isinstance(label, str) and label.strip():
                     bound[key] = label
         return bound

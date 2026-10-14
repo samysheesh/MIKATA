@@ -110,6 +110,8 @@ class SimDesktop:
 
     def open_target(self, target: str) -> None:
         self.opened.append(target)
+        if target.startswith("spotify:"):  # le protocole de l'appli l'ouvre (phase 16g)
+            self._open_window("Spotify")
 
     def open_folder(self, path: str, select: bool = False) -> None:
         self.revealed.append(path)
@@ -241,12 +243,48 @@ class SimUi:
                 return text[:max_chars]
         raise ToolError(f"contrôle introuvable : « {control} »")
 
-    def click(self, window: UiWindowInfo, control: str, kind: str | None, nth: int) -> str:
-        for name, _, _ in self.controls_by_app.get(window.title, []):
+    def click(
+        self,
+        window: UiWindowInfo,
+        control: str | list[str],
+        kind: str | None,
+        nth: int,
+        near: str | list[str] | None = None,
+    ) -> str:
+        rows = self.controls_by_app.get(window.title, [])
+        if near:  # la « ligne » d'un contrôle simulé : son nom et son texte
+            texts = [near] if isinstance(near, str) else near
+            rows = [
+                r for r in rows if all(t.casefold() in f"{r[0]} {r[2]}".casefold() for t in texts)
+            ]
+        labels = [control] if isinstance(control, str) else control
+        for label in labels:  # plusieurs noms : exacts, par ordre de préférence
+            for name, _, _ in rows:
+                if name.casefold() == label.casefold():
+                    self.clicked.append((window.title, name))
+                    return f"« {name} » cliqué."
+        for name, _, _ in rows if isinstance(control, str) else []:
             if control.casefold() in name.casefold():
                 self.clicked.append((window.title, name))
                 return f"« {name} » cliqué."
         raise ToolError(f"contrôle introuvable : « {control} »")
+
+    def click_in(
+        self,
+        window: UiWindowInfo,
+        item: str,
+        buttons: list[str],
+        contains: list[str] | None = None,
+    ) -> str:
+        """Un élément simulé est une ligne [nom, type, texte] : son texte porte ce qu'il
+        mentionne (artiste...), et il a un bouton de lecture."""
+        for name, _, text in self.controls_by_app.get(window.title, []):
+            if name.casefold() != item.casefold():
+                continue
+            if all(c.casefold() in text.casefold() for c in contains or []):
+                self.clicked.append((window.title, name))
+                return f"« {buttons[0]} » de « {name} » cliqué."
+        raise ToolError(f"aucun élément « {item} »")
 
     def set_text(self, window: UiWindowInfo, control: str, text: str) -> str:
         self.texts.append((window.title, control, text))

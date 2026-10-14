@@ -73,6 +73,9 @@ class BaseTool(Generic[P]):
     # Phase 16g : l'outil défait (ferme, arrête). Dans une correction (« non, sur
     # Spotify »), défaire n'est que la moitié du travail : il ne clôt pas le tour.
     undoes: ClassVar[bool] = False
+    # Phase 16g : l'outil prépare (ouvre une appli, met une fenêtre devant) sans
+    # accomplir : dans une correction d'une demande plus longue, il ne clôt pas le tour.
+    prepares: ClassVar[bool] = False
     platforms: ClassVar[tuple[str, ...]] = ()  # vide = toutes
     returns: ClassVar[str] = "str"  # forme du résultat reçu par un script
 
@@ -225,7 +228,21 @@ class UiAutomation(Protocol):
     def window(self, title: str | None, process: str | None) -> UiWindowInfo: ...
     def controls(self, window: UiWindowInfo, max_controls: int) -> list[UiControlInfo]: ...
     def read(self, window: UiWindowInfo, control: str | None, max_chars: int) -> str: ...
-    def click(self, window: UiWindowInfo, control: str, kind: str | None, nth: int) -> str: ...
+    def click(
+        self,
+        window: UiWindowInfo,
+        control: str | list[str],
+        kind: str | None,
+        nth: int,
+        near: str | list[str] | None = None,
+    ) -> str: ...
+    def click_in(  # phase 16g : un bouton dans un élément de liste nommé
+        self,
+        window: UiWindowInfo,
+        item: str,
+        buttons: list[str],
+        contains: list[str] | None = None,
+    ) -> str: ...
     def set_text(self, window: UiWindowInfo, control: str, text: str) -> str: ...
     def state_summary(self) -> str: ...  # état ambiant en cache (Discord...), "" si rien
     def pause_state(self, paused: bool) -> None: ...  # le poller d'état saute ses lectures
