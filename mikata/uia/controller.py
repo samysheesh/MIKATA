@@ -11,6 +11,9 @@ plateforme (`mikata/plat.py`) :
   AXTextField -> champ...). Note : pour Chromium/Electron (Discord, VS Code...), préférez
   CDP quand c'est possible (arbre complet sans droits d'accessibilité) ; AX reste le
   repli natif.
+- `DevtoolsBackend` (phase 17e, `mikata/uia/devtools.py`) : pour les seules applis Chromium
+  listées dans `uia.devtools_apps`, choisi fenêtre par fenêtre (`UiWindowInfo.engine`) :
+  l'appli tourne cachée et se lit par son propre arbre via DevTools.
 
 Noms comparés sans casse ni accents (comme tools/apps.py) : « discorde » trouve « Discord »,
 « envoie » trouve « Envoyer ».
@@ -116,6 +119,14 @@ class _BackendBase(ABC):
     @abstractmethod
     def set_text(self, node: Any, control: str, text: str) -> str:
         """Remplit un champ ; lève ToolError s'il refuse le texte."""
+
+    def submit(self, node: Any, control: str) -> str:
+        """Phase 17e : valide le champ rempli comme avec Entrée (lance la recherche). Les
+        arbres UIA et AX n'ont pas de touche Entrée sans mettre la fenêtre devant."""
+        raise ToolError(
+            f"« {control} » rempli, mais pas validé : Entrée n'est possible ici qu'avec la "
+            "fenêtre devant (focus_window puis press_keys) ; ou clique son bouton de recherche"
+        )
 
     def walk(self, root: Any, max_nodes: int) -> list[Any]:
         """Parcours en profondeur, borné : une fenêtre géante ne bloque pas l'outil.
@@ -480,6 +491,11 @@ class UiController:
     choisi une fois à la construction (UIA Windows ou AX macOS). L'état ambiant (présence
     vocale Discord) est rafraîchi en arrière-plan par un thread dédié, jamais loggé."""
 
+    # Phase 17e : les applis Chromium listées, tenues cachées et lues par DevTools (aucune
+    # par défaut : `uia.devtools_apps` vide).
+    _apps: Any = None
+    _devtools: _BackendBase | None = None
+
     def __init__(self, config: Config, desktop: Desktop) -> None:
         # Choix unique du moteur, à la construction, par la plateforme (mikata/plat.py,
         # via la config) : plus aucune branche sys.platform ni test de type de nœud
@@ -488,6 +504,17 @@ class UiController:
             UiaBackend(desktop) if config.uia.backend == "uia" else AxBackend(desktop)
         )
         self._desktop = desktop
+        if config.uia.devtools_apps and sys.platform == "win32":
+            from mikata.browser.apps import DevtoolsApps
+            from mikata.uia.devtools import DevtoolsBackend
+
+            self._apps = DevtoolsApps(
+                config.uia.devtools_apps,
+                desktop,
+                relaunch=config.uia.devtools_relaunch,
+                launch_timeout_s=config.uia.devtools_launch_timeout_s,
+            )
+            self._devtools = DevtoolsBackend(desktop, self._apps)
         self._state = AmbientState(config.uia.state_poll_s, self._snapshot)
         self._state.start()
         self._client = UiaAccessibilityClient()
@@ -505,11 +532,42 @@ class UiController:
     def aclose(self) -> None:
         self._client.stop()
         self._state.stop()
+        if self._apps is not None:
+            self._apps.aclose()
+
+    # -- applis tenues cachées (phase 17e) -----------------------------------------------
+
+    def background_apps(self) -> list[str]:
+        return self._apps.background_apps() if self._apps is not None else []
+
+    def quit_background(self, name: str) -> str | None:
+        return self._apps.quit(name) if self._apps is not None else None
+
+    def _engine(self, window: UiWindowInfo) -> _BackendBase:
+        """Le moteur de cette fenêtre : DevTools pour une appli listée, sinon celui de la
+        plateforme."""
+        if window.engine == "devtools" and self._devtools is not None:
+            return self._devtools
+        return self._backend
 
     # -- fenêtres ---------------------------------------------------------------------
 
     def window(self, title: str | None, process: str | None) -> UiWindowInfo:
-        """Fenêtre par nom de processus, par titre, ou la fenêtre active sans argument."""
+        """Fenêtre par nom de processus, par titre, ou la fenêtre active sans argument.
+        Une appli listée dans `uia.devtools_apps` est rendue lue par DevTools (lancée cachée
+        s'il le faut) ; si elle ne peut pas l'être maintenant, sa fenêtre UIA."""
+        if self._apps is not None:
+            app = self._apps.serves(process) or (
+                self._apps.serves(title) if process is None else None
+            )
+            if app is not None:
+                hidden = self._apps.window(app)
+                if hidden is not None:
+                    return hidden
+        return self._platform_window(title, process)
+
+    def _platform_window(self, title: str | None, process: str | None) -> UiWindowInfo:
+        """La fenêtre lue par le moteur de la plateforme (UIA, AX)."""
         windows = self._desktop.windows()
         if process is not None:
             wanted = fold(process)
@@ -545,21 +603,22 @@ class UiController:
     # -- contrôles --------------------------------------------------------------------
 
     def controls(self, window: UiWindowInfo, max_controls: int) -> list[UiControlInfo]:
-        root = self._backend.attach(window)
+        engine = self._engine(window)
+        root = engine.attach(window)
         found: list[UiControlInfo] = []
-        for node in self._backend.walk(root, _MAX_VISITED):
-            name = self._backend.node_name(node)
+        for node in engine.walk(root, _MAX_VISITED):
+            name = engine.node_name(node)
             if not name:
                 continue
-            kind = self._backend.node_kind(node)
+            kind = engine.node_kind(node)
             if kind in _SKIP_KINDS:
                 continue
             text = ""
             if kind in _VALUE_KINDS:  # phase 16g : ce qui est tapé dans un champ
-                value = self._backend.control_text(node).strip()
+                value = engine.control_text(node).strip()
                 text = value[:_NAME_MAX] if value != name else ""
             elif kind in _TOGGLE_KINDS:  # phase 17d : un interrupteur, son état
-                state = self._backend.toggle_state(node)
+                state = engine.toggle_state(node)
                 text = _STATE[state] if state is not None else ""
             found.append(UiControlInfo(name=name[:_NAME_MAX], kind=kind, text=text))
             if len(found) >= max_controls:
@@ -577,26 +636,29 @@ class UiController:
     ) -> Any:
         """Le contrôle `control` (un nom, approché ; ou plusieurs noms acceptables, exacts,
         par ordre de préférence), le plus proche des textes `near` s'ils sont donnés."""
-        root = self._backend.attach(window)
+        engine = self._engine(window)
+        root = engine.attach(window)
         labels = [control] if isinstance(control, str) else list(control)
         wanted = [fold(label) for label in labels]
         shown = " / ".join(labels)
         candidates: list[Any] = []
         seen: dict[str, float] = {}  # noms rencontrés -> ressemblance, pour l'erreur
-        for node in self._backend.walk(root, _MAX_VISITED):
-            name = self._backend.node_name(node)
+        for node in engine.walk(root, _MAX_VISITED):
+            name = engine.node_name(node)
             if not name:
                 continue
             if len(seen) < 2000:
                 seen.setdefault(name[:_NAME_MAX], fuzz.token_set_ratio(wanted[0], fold(name)))
-            node_kind = self._backend.node_kind(node)
+            node_kind = engine.node_kind(node)
             if kind is not None and fold(kind) != fold(node_kind):
                 continue
             if clickable and kind is None and node_kind not in _CLICKABLE:
                 continue
             folded = fold(name)
             if folded in wanted or (
-                len(wanted) == 1 and fuzz.ratio(wanted[0], folded) >= _MATCH_RATIO
+                len(wanted) == 1
+                and fuzz.ratio(wanted[0], folded) >= _MATCH_RATIO
+                and not _prefixed(wanted[0], folded)
             ):
                 candidates.append(node)
         if not candidates:
@@ -606,15 +668,15 @@ class UiController:
             raise ToolError(f"contrôle introuvable : « {shown} »{where}{hint}")
         # Phase 16g : un nom exact passe avant un nom approchant (« Play Jet Lag » et non
         # « Play Jet Lag Radio », qui ressemble assez pour être candidat).
-        exact = [node for node in candidates if fold(self._backend.node_name(node)) in wanted]
+        exact = [node for node in candidates if fold(engine.node_name(node)) in wanted]
         candidates = exact or candidates
         if near:  # phase 16g : le contrôle de la ligne (du groupe) qui mentionne `near`
             texts = [near] if isinstance(near, str) else list(near)
             ranked = []
             for index, node in enumerate(candidates):
-                level = self._near_level(node, texts)
+                level = self._near_level(engine, node, texts)
                 if level is not None:  # le plus proche, puis le nom préféré, puis l'ordre
-                    name = fold(self._backend.node_name(node))
+                    name = fold(engine.node_name(node))
                     rank = wanted.index(name) if name in wanted else len(wanted)
                     ranked.append((level, rank, index))
             candidates = [candidates[i] for _, _, i in sorted(ranked)]
@@ -625,7 +687,7 @@ class UiController:
             raise ToolError(f"« {shown} » : {len(candidates)} occurrence(s), pas la {nth}e")
         return candidates[nth - 1]
 
-    def _near_level(self, node: Any, texts: list[str]) -> int | None:
+    def _near_level(self, engine: _BackendBase, node: Any, texts: list[str]) -> int | None:
         """À combien de niveaux au-dessus du nœud (1 à 4) se trouve le premier groupe qui
         mentionne tous les `texts`, ou None. Ex. le bouton « Play » de la ligne « Jet Lag »
         qui cite « Tiakola » : niveau 1 ; un « Play » dont il faut remonter à toute la page
@@ -633,12 +695,12 @@ class UiController:
         wanted = [fold(text).strip() for text in texts if text.strip()]
         ancestor = node
         for level in range(1, _NEAR_LEVELS + 1):
-            ancestor = self._backend.parent(ancestor)
+            ancestor = engine.parent(ancestor)
             if ancestor is None:
                 return None
             seen = " | ".join(  # le nom du contrôle lui-même ne compte pas
-                fold(self._backend.node_name(other))
-                for other in [ancestor, *self._backend.walk(ancestor, _NEAR_NODES)]
+                fold(engine.node_name(other))
+                for other in [ancestor, *engine.walk(ancestor, _NEAR_NODES)]
                 if other is not node
             )
             if all(text in seen for text in wanted):
@@ -657,21 +719,22 @@ class UiController:
         vaut aussi « Play <titre> »). Ex. la ligne « Jet Lag » qui cite « Tiakola », son
         bouton « Play ». Les éléments au nom exact d'abord, puis ceux qui commencent par
         `item` (« Jet Lag (Radio Edit) »), dans l'ordre de la fenêtre."""
-        root = self._backend.attach(window)
+        engine = self._engine(window)
+        root = engine.attach(window)
         wanted = fold(item).strip()
         names = [fold(button).strip() for button in buttons]
         needs = [fold(text).strip() for text in contains or [] if text.strip()]
         close: list[Any] = []
-        for node in self._backend.iter_walk(root, _MAX_VISITED):  # s'arrête à la bonne
-            name = fold(self._backend.node_name(node)).strip()
+        for node in engine.iter_walk(root, _MAX_VISITED):  # s'arrête à la bonne
+            name = fold(engine.node_name(node)).strip()
             if name == wanted:
-                done = self._press_in(window, node, names, needs)
+                done = self._press_in(engine, window, node, names, needs)
                 if done is not None:
                     return done
             elif name.startswith(wanted) and not any(name.startswith(n) for n in names):
                 close.append(node)
         for row in close:
-            done = self._press_in(window, row, names, needs)
+            done = self._press_in(engine, window, row, names, needs)
             if done is not None:
                 return done
         mention = f" qui mentionne « {' / '.join(contains or [])} »" if needs else ""
@@ -681,78 +744,86 @@ class UiController:
         """Phase 17a : les éléments de liste de la fenêtre (les plus extérieurs : une ligne,
         pas ses cellules), dans l'ordre, avec leurs textes et leurs boutons ; ceux qui
         contiennent tous les mots de `query` s'il est donné."""
-        root = self._backend.attach(window)
+        engine = self._engine(window)
+        root = engine.attach(window)
         words = fold(query or "").split()
         found: list[UiItemInfo] = []
-        stack = list(reversed(self._backend.children(root)))
+        stack = list(reversed(engine.children(root)))
         visited = 0
         while stack and visited < _MAX_VISITED and len(found) < limit:
             node = stack.pop()
             visited += 1
-            name = self._backend.node_name(node)
-            if name and self._backend.node_kind(node) == "élément":
-                info = self._item(node, name)
+            name = engine.node_name(node)
+            if name and engine.node_kind(node) == "élément":
+                info = self._item(engine, node, name)
                 seen = fold(" ".join([info.name, *info.texts, *info.buttons]))
                 if all(word in seen for word in words):
                     found.append(info)
                 continue  # ses cellules ne sont pas d'autres éléments
             with contextlib.suppress(Exception):
-                stack.extend(reversed(self._backend.children(node)))
+                stack.extend(reversed(engine.children(node)))
         return found
 
-    def _item(self, node: Any, name: str) -> UiItemInfo:
+    def _item(self, engine: _BackendBase, node: Any, name: str) -> UiItemInfo:
         texts: list[str] = []
         buttons: list[str] = []
-        for inner in self._backend.walk(node, _ROW_NODES):
-            label = self._backend.node_name(inner).strip()
+        for inner in engine.walk(node, _ROW_NODES):
+            label = engine.node_name(inner).strip()
             if not label or label == name:
                 continue
-            target = buttons if self._backend.node_kind(inner) == "bouton" else texts
+            target = buttons if engine.node_kind(inner) == "bouton" else texts
             if label not in target and label not in buttons:
                 target.append(label[:_NAME_MAX])
-        return UiItemInfo(name[:_NAME_MAX], tuple(texts[:8]), tuple(buttons[:6]))
+        return UiItemInfo(name[:_NAME_MAX], tuple(_compact(texts, buttons)[:8]), tuple(buttons[:6]))
 
     def find_text(self, window: UiWindowInfo, text: str) -> str | None:
         """Phase 17a : le premier contrôle dont le nom, ou le contenu d'un champ, contient
         `text` ; None s'il n'y en a pas (encore). S'arrête dès qu'il le trouve."""
-        root = self._backend.attach(window)
+        engine = self._engine(window)
+        root = engine.attach(window)
         wanted = fold(text).strip()
-        for node in self._backend.iter_walk(root, _MAX_VISITED):
-            name = self._backend.node_name(node)
+        for node in engine.iter_walk(root, _MAX_VISITED):
+            name = engine.node_name(node)
             if wanted in fold(name):
                 return name
-            if self._backend.node_kind(node) in _VALUE_KINDS:
-                value = self._backend.control_text(node)
+            if engine.node_kind(node) in _VALUE_KINDS:
+                value = engine.control_text(node)
                 if wanted in fold(value.replace("+", " ")):
                     return f"{name} : {value}"
         return None
 
     def _press_in(
-        self, window: UiWindowInfo, row: Any, names: list[str], needs: list[str]
+        self,
+        engine: _BackendBase,
+        window: UiWindowInfo,
+        row: Any,
+        names: list[str],
+        needs: list[str],
     ) -> str | None:
         """Le bouton `names` de l'élément `row` s'il mentionne `needs` : cliqué."""
-        inside = self._backend.walk(row, _ROW_NODES)
+        inside = engine.walk(row, _ROW_NODES)
         if needs:
-            seen = " | ".join(fold(self._backend.node_name(n)) for n in inside)
+            seen = " | ".join(fold(engine.node_name(n)) for n in inside)
             if not all(text in seen for text in needs):
                 return None
         for node in inside:
-            name = fold(self._backend.node_name(node)).strip()
-            if self._backend.node_kind(node) == "bouton" and any(
+            name = fold(engine.node_name(node)).strip()
+            if engine.node_kind(node) == "bouton" and any(
                 name == n or name.startswith(n + " ") for n in names
             ):
-                return self._click(window, node, self._backend.node_name(node))
+                return self._click(window, node, engine.node_name(node))
         return None
 
     # -- lecture ----------------------------------------------------------------------
 
     def read(self, window: UiWindowInfo, control: str | None, max_chars: int) -> str:
+        engine = self._engine(window)
         if control is not None:
             node = self._find(window, control, None, 1)
-            text = self._backend.control_text(node)
+            text = engine.control_text(node)
         else:
-            root = self._backend.attach(window)
-            text = self._backend.document_text(root) or self._backend.visible_text(root)
+            root = engine.attach(window)
+            text = engine.document_text(root) or engine.visible_text(root)
         if not text.strip():
             raise ToolError("aucun texte lisible dans cette fenêtre")
         return _truncate(text, max_chars)
@@ -768,23 +839,29 @@ class UiController:
         near: str | list[str] | None = None,
     ) -> str:
         node = self._find(window, control, kind, nth, clickable=True, near=near)
-        name = self._backend.node_name(node) or "(sans nom)"
+        name = self._engine(window).node_name(node) or "(sans nom)"
         return self._click(window, node, name)
 
     def _click(self, window: UiWindowInfo, node: Any, name: str) -> str:
-        """Le clic, la fenêtre montrée s'il le faut (`_shown_for_click`)."""
+        """Le clic, la fenêtre montrée s'il le faut (`_shown_for_click`) ; une appli lue
+        par DevTools prend le clic cachée."""
+        engine = self._engine(window)
+        if engine is not self._backend:
+            return engine.click(node, name)
         with _shown_for_click(window.handle):
-            return self._backend.click(node, name)
+            return engine.click(node, name)
 
-    def set_text(self, window: UiWindowInfo, control: str, text: str) -> str:
+    def set_text(self, window: UiWindowInfo, control: str, text: str, submit: bool = False) -> str:
+        engine = self._engine(window)
         node = self._find(window, control, "champ", 1)
-        return self._backend.set_text(node, control, text)
+        done = engine.set_text(node, control, text)
+        return engine.submit(node, control) if submit else done
 
     # -- état ambiant ------------------------------------------------------------------
 
     def _snapshot(self) -> dict[str, str]:
         data: dict[str, str] = {}
-        voice = self._backend.discord_voice(lambda process: self.window(None, process))
+        voice = self._backend.discord_voice(lambda process: self._platform_window(None, process))
         if voice:
             data["discord"] = voice
         return data
@@ -827,6 +904,33 @@ def _shown_for_click(handle: int | None) -> Iterator[None]:
 
 
 SHOW_FOR_CLICK_S = 0.3  # le temps que l'appli prenne le clic, fenêtre visible
+
+
+def _prefixed(wanted: str, name: str) -> bool:
+    """Phase 17e : `name` est `wanted` avec un préfixe en plus, ou l'inverse (« Unmute » et
+    « Mute », « Unfollow » et « Follow », « Déverrouiller »...). Le préfixe dit souvent le
+    contraire : ce n'est pas une faute de transcription mais un autre contrôle. Approché
+    à 80, « Mute » cliquait « Unmute » (constaté sur Spotify le 14/10)."""
+    return wanted != name and (wanted.endswith(name) or name.endswith(wanted))
+
+
+def _compact(texts: list[str], buttons: list[str]) -> list[str]:
+    """Phase 17e : ce qu'affiche un élément de liste, sans redites. Une cellule porte souvent
+    le texte de tout ce qu'elle contient (« Explicit Song · Tiakola, Jorja Smith », puis
+    « Explicit », « E », « Tiakola »... un par un), parfois avec les noms de ses boutons :
+    on garde le texte entier, sans les boutons, ni ses morceaux, ni la ponctuation seule."""
+    kept: list[str] = []
+    seen: list[str] = []
+    for text in texts:
+        for button in buttons:
+            text = text.replace(button, " ")
+        text = " ".join(text.split())
+        flat = fold(text)
+        if not re.search(r"\w", flat) or any(flat in other for other in seen):
+            continue
+        kept.append(text)
+        seen.append(flat)
+    return kept
 
 
 def _discord_voice_from(nodes: list[Any]) -> tuple[str | None, list[str]]:

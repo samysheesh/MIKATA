@@ -56,6 +56,7 @@ class Learner:
             tools=ToolRegistry(self.ctx),
             playbook=self.playbook,
             traces=self.traces,
+            window_title=lambda: None,  # jamais la vraie fenêtre active du PC de test
         )
         self.sink = Sink()
 

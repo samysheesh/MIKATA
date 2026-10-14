@@ -427,6 +427,16 @@ class UiaConfig(_Section):
     # Client d'accessibilité à l'écoute (UiaClientsAreListening) : les applications
     # Chromium/Electron (Discord...) exposent leur arbre complet sans drapeau de lancement.
     accessibility_client: bool = True
+    # Phase 17e : applis Chromium (Electron, CEF) pilotées par DevTools, cachées, jamais
+    # montrées : leur arbre d'accessibilité (le même que voit UIA) lu en ~0,1 s, des clics
+    # qui prennent même fenêtre cachée. Seulement les noms de processus listés (« Spotify ») :
+    # tant qu'une appli tourne ainsi, un programme du PC peut la piloter et lire sa session
+    # par le port local. Vide : aucune (opt-in).
+    devtools_apps: list[str] = Field(default_factory=list)
+    # Appli listée déjà ouverte sans cet accès : relancée cachée avec, seulement si elle ne
+    # joue aucun son et n'est pas devant l'utilisateur (sinon : UIA, comme avant).
+    devtools_relaunch: bool = True
+    devtools_launch_timeout_s: float = Field(default=25.0, ge=5.0, le=120.0)
 
     @property
     def backend(self) -> Literal["uia", "appkit"]:

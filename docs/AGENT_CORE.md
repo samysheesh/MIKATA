@@ -404,6 +404,37 @@ Phase 17d : une appli réduite ou cachée derrière les autres se lit, mais Spot
 ignore « Play » ; le temps du clic, la fenêtre réduite est montrée sans être activée,
 puis réduite. Les interrupteurs disent leur état (un micro coupé n'est plus recoupé).
 
+Phase 17e : **un vrai arrière-plan pour les applis Chromium**. Spotify, Discord, VS Code...
+sont des pages web dans Chromium (Electron, CEF). Lancées avec `--remote-debugging-port`,
+elles se pilotent comme le navigateur de travail, fenêtre cachée (SW_HIDE). Appuis :
+
+- **Chrome DevTools Protocol**, domaine `Accessibility` : `getFullAXTree` rend l'arbre
+  d'accessibilité calculé par Chromium, celui-là même qu'il expose à UIA (mêmes rôles et
+  noms) ; chaque nœud porte son `backendDOMNodeId`, sur lequel `DOM.resolveNode` puis
+  `Runtime.callFunctionOn` agissent. C'est la voie de Puppeteer (`page.accessibility`) et
+  de Playwright pour Electron (`_electron.launch`, lancement avec le port de débogage).
+- **UFO²** (ci-dessus) : passer par les interfaces de l'appli plutôt que par l'écran, sans
+  gêner l'utilisateur.
+- **Sécurité** : depuis Chrome 111, une connexion WebSocket qui porte un en-tête Origin est
+  refusée sans `--remote-allow-origins` ; MIKATA n'en envoie pas et ne met jamais ce
+  drapeau : une page web ne peut pas joindre le port. Un programme local, lui, le peut :
+  d'où la liste explicite `uia.devtools_apps` (vide par défaut), le port tiré au hasard et
+  limité à 127.0.0.1.
+
+Ce n'est pas un pilote par appli : `DevtoolsBackend` est un troisième moteur des mêmes
+outils `uia_*` (après UIA et AX), choisi fenêtre par fenêtre ; toute la logique de
+`UiController` (éléments de liste, clic dans une ligne, « près de ») et les compétences
+apprises restent les mêmes. Mesuré sur le vrai Spotify (son coupé), avec le vrai
+`UiController` : relance cachée 4,8 s (une fois), recherche et Entrée 0,6 s, résultats
+lus en 1,6 s, clic sur « Play » de la bonne ligne 0,2 s, lecture constatée (session audio
+active), aucune fenêtre de Spotify visible (relevés toutes les 10 ms) ; l'arbre se lit en
+~0,1 s contre plusieurs secondes en UIA. Deux constats ont donné deux gestes généraux :
+une appli n'est prête que quand sa page ne bouge plus (deux résumés identiques à 0,5 s :
+à +0,5 s Spotify avait du texte mais pas sa barre de lecture) ; taper dans un champ de
+recherche n'ouvre souvent que des suggestions, la recherche part avec Entrée
+(`uia_set_text` avec `submit`). Un lien d'appli fait toujours passer Spotify devant (vérifié) :
+une appli tenue cachée se pilote dans son interface, jamais par un lien.
+
 ## 4. Ce qui part, ce qui reste
 
 | Élément | Décision | Raison |

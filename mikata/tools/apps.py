@@ -28,7 +28,7 @@ from collections.abc import Sequence
 from pydantic import BaseModel, Field
 
 from mikata.action.effects import Effect
-from mikata.tools.base import AppEntry, BaseTool, NoParams, ToolError, WindowInfo
+from mikata.tools.base import AppEntry, BaseTool, NoParams, ToolContext, ToolError, WindowInfo
 from mikata.tools.registry import register_tool
 
 # Mots de liaison dits autour d'un nom (« ouvre l'application Spotify »).
@@ -317,6 +317,12 @@ class CloseApp(BaseTool[AppName]):
         opened = await self.ctx.run_blocking(desktop.windows)
         windows = find_windows(args.name, opened)
         if not windows:
+            # Phase 17e : une appli tenue cachée n'a aucune fenêtre à fermer.
+            uia = self.ctx.uia
+            if uia is not None and self.ctx.config.uia.devtools_apps:
+                closed = await self.ctx.run_blocking(uia.quit_background, args.name)
+                if closed:
+                    return closed
             raise no_window_error(args.name, opened)
         for window in windows:
             await self.ctx.run_blocking(desktop.close_window, window)
@@ -473,6 +479,19 @@ LINK_SAFE = "/:?=&%#+@,;!$'()*~"
 LINK_SETTLE_S = 4.0  # attente de la vue demandée, pour un lien ouvert en arrière-plan
 
 
+async def _runs_hidden(ctx: ToolContext, process: str) -> bool:
+    """Phase 17e : `process` est une appli tenue cachée et pilotée par DevTools
+    (`uia.devtools_apps`) ? Elle est lancée cachée au passage si elle ne tournait pas."""
+    uia = ctx.uia
+    if uia is None or not ctx.config.uia.enabled or not ctx.config.uia.devtools_apps:
+        return False
+    try:
+        window = await ctx.run_blocking(uia.window, None, process)
+    except ToolError:
+        return False
+    return window.engine == "devtools"
+
+
 @register_tool
 class OpenAppLink(BaseTool[AppLinkParams]):
     name = "open_app_link"
@@ -504,6 +523,14 @@ class OpenAppLink(BaseTool[AppLinkParams]):
         if scheme in DENIED_SCHEMES or scheme not in links:
             raise ToolError(f"aucune appli installée n'ouvre les liens « {scheme}: »")
         app, process = links[scheme]
+        if args.background and await _runs_hidden(self.ctx, process):
+            # Phase 17e : l'appli tourne cachée (DevTools) ; un lien la ferait passer devant
+            # l'utilisateur (Spotify se montre à chaque lien, vérifié le 14/10).
+            raise ToolError(
+                f"{app} tourne caché, piloté dans son interface : un lien le mettrait devant "
+                "l'utilisateur. Agis dedans : uia_window pour voir ses champs, uia_set_text "
+                "pour écrire la recherche, puis uia_items et uia_click."
+            )
         await self.ctx.run_blocking(desktop.open_target, link, args.background, process)
         if args.background:  # on va agir dedans : la vue doit être celle que l'on a demandée
             await self._settle(process, link)

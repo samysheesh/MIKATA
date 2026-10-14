@@ -59,6 +59,10 @@ async def list_targets(port: int, timeout_s: float = 3.0) -> list[Target]:
             raw = response.json()
     except Exception as exc:
         raise CdpError(f"navigateur injoignable sur le port {port} : {exc}") from exc
+    return _parse_targets(raw)
+
+
+def _parse_targets(raw: list[dict[str, Any]]) -> list[Target]:
     targets: list[Target] = []
     for entry in raw:
         ws_url = entry.get("webSocketDebuggerUrl") or ""
@@ -74,6 +78,20 @@ async def list_targets(port: int, timeout_s: float = 3.0) -> list[Target]:
             )
         )
     return targets
+
+
+def list_targets_sync(port: int, timeout_s: float = 2.0) -> list[Target]:
+    """`list_targets` en bloquant, pour le thread des outils (phase 17e : applis Chromium
+    pilotées par l'arbre d'accessibilité). Sans proxy : 127.0.0.1 seulement."""
+    import urllib.request
+
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(f"http://127.0.0.1:{port}/json", timeout=timeout_s) as response:
+            raw = json.loads(response.read())
+    except Exception as exc:
+        raise CdpError(f"appli injoignable sur le port {port} : {exc}") from exc
+    return _parse_targets(raw if isinstance(raw, list) else [])
 
 
 async def close_target(port: int, target_id: str, timeout_s: float = 3.0) -> None:
@@ -210,8 +228,87 @@ class CdpClient:
     async def evaluate(self, expression: str) -> Any:
         """Évalue du JavaScript fixe et renvoie la valeur (JSON) du navigateur."""
         result = await self.command("Runtime.evaluate", expression=expression, returnByValue=True)
-        if result.get("exceptionDetails"):
-            details = result["exceptionDetails"]
-            description = details.get("exception", {}).get("description") or "erreur JavaScript"
-            raise CdpError(f"lecture de la page impossible : {description}")
-        return result.get("result", {}).get("value")
+        return _value(result)
+
+
+def _value(result: dict[str, Any]) -> Any:
+    """Valeur rendue par `Runtime.evaluate` / `Runtime.callFunctionOn`, ou CdpError."""
+    if result.get("exceptionDetails"):
+        details = result["exceptionDetails"]
+        description = details.get("exception", {}).get("description") or "erreur JavaScript"
+        raise CdpError(f"lecture de la page impossible : {description}")
+    return result.get("result", {}).get("value")
+
+
+class CdpSyncClient:
+    """Phase 17e : la même connexion, bloquante, pour le thread des outils `uia_*` (une appli
+    Chromium se pilote par son arbre d'accessibilité depuis ce thread, comme UIA). Les
+    événements du navigateur sont ignorés : on n'active aucun domaine qui en émet."""
+
+    def __init__(self, ws_url: str, timeout_s: float = 10.0) -> None:
+        self._ws_url = ws_url
+        self._timeout = timeout_s
+        self._ws: Any = None
+        self._stack = contextlib.ExitStack()
+        self._next_id = 0
+
+    @property
+    def connected(self) -> bool:
+        return self._ws is not None
+
+    def connect(self) -> None:
+        from websockets.sync.client import connect
+
+        stack = contextlib.ExitStack()  # la connexion vit au-delà de cette méthode
+        try:
+            # Pas d'en-tête Origin : Chromium accepte alors le client sans
+            # --remote-allow-origins (drapeau qui ouvrirait le port aux pages web).
+            self._ws = stack.enter_context(
+                connect(self._ws_url, open_timeout=self._timeout, max_size=MAX_WS_BYTES)
+            )
+        except Exception as exc:
+            stack.close()
+            raise CdpClosed(f"connexion impossible : {exc}") from exc
+        self._stack = stack
+
+    def close(self) -> None:
+        self._ws = None
+        stack, self._stack = self._stack, contextlib.ExitStack()
+        with contextlib.suppress(Exception):
+            stack.close()
+
+    def command(self, method: str, **params: Any) -> dict[str, Any]:
+        import time
+
+        from websockets.exceptions import ConnectionClosed
+
+        if self._ws is None:
+            raise CdpClosed("connexion à l'appli fermée")
+        self._next_id += 1
+        call_id = self._next_id
+        deadline = time.monotonic() + self._timeout
+        try:
+            self._ws.send(json.dumps({"id": call_id, "method": method, "params": params}))
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise CdpError(f"l'appli n'a pas répondu à temps ({method})")
+                try:
+                    raw = self._ws.recv(timeout=remaining)
+                except TimeoutError as exc:
+                    raise CdpError(f"l'appli n'a pas répondu à temps ({method})") from exc
+                try:
+                    message = json.loads(raw)
+                except ValueError:
+                    continue
+                if message.get("id") != call_id:
+                    continue  # événement, ou réponse tardive d'une commande abandonnée
+                if "error" in message:
+                    raise CdpError(message["error"].get("message") or "erreur de l'appli")
+                return message.get("result") or {}
+        except ConnectionClosed as exc:
+            self._ws = None
+            raise CdpClosed("connexion à l'appli fermée") from exc
+
+    def evaluate(self, expression: str) -> Any:
+        return _value(self.command("Runtime.evaluate", expression=expression, returnByValue=True))

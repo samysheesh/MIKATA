@@ -118,3 +118,18 @@ def test_a_node_that_vanishes_during_the_read_is_skipped() -> None:
     assert backend.node_name(Gone()) == "" and backend.node_kind(Gone()) == "contrôle"
     assert backend.visible_text(root) == "Rendre muet"
     assert _discord_voice_from([Gone()]) == (None, [])
+
+
+def test_a_name_with_a_prefix_is_another_control_not_a_typo() -> None:
+    """Phase 17e : « Mute » cliquait « Unmute » (approché à 80) et rallumait le son."""
+
+    class Player(FakeBackend):
+        NAMES = ("Unmute", "Unfollow", "Rechercher")
+
+    controller = _controller()
+    controller._backend = Player()  # type: ignore[assignment]
+    window = controller.window("Discord", None)
+    for wanted in ("Mute", "Follow"):
+        with pytest.raises(ToolError, match="contrôle introuvable"):
+            controller._find(window, wanted, None, 1)
+    assert controller._find(window, "Recherche", None, 1) == "Rechercher"  # faute tolérée

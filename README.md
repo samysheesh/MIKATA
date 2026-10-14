@@ -3360,3 +3360,46 @@ uv run python scripts/eval_bench.py --tag appli --trials 2
   croyait le micro ouvert et recliquait. Les interrupteurs disent maintenant leur état
   (« Rendre muet [bouton] : activé ») et un clic dit l'état obtenu.
 - `pick` voit jusqu'à 200 options (comme `uia_window`), au lieu de 80.
+
+## Phase 17e — Spotify piloté sans jamais s'afficher
+
+Tu voulais un vrai arrière-plan, comme pour Brave. C'est fait pour les applis que tu
+autorises, et **seulement elles** (`uia.devtools_apps` dans `config.yaml`, vide par défaut ;
+chez toi : `[Spotify]`). Spotify est une page web dans Chromium : MIKATA le lance **caché**
+avec un accès de pilotage (DevTools), lit son interface en 0,1 s et clique dedans sans
+qu'aucune fenêtre n'apparaisse.
+
+- **Spotify fermé** : MIKATA le lance caché.
+- **Spotify ouvert sans cet accès** (lancé par toi ou au démarrage de Windows) : MIKATA le
+  relance caché, **seulement s'il ne joue rien et n'est pas devant toi**. Sinon, il fait
+  comme avant (fenêtre réduite, montrée le temps d'un clic).
+- **Pour le revoir** : ouvre Spotify comme d'habitude (menu Démarrer) ; sa fenêtre revient.
+  « Ferme Spotify » le ferme même caché.
+- Pour chercher, MIKATA tape dans le champ de Spotify et valide par Entrée (nouvelle option
+  `submit` de `uia_set_text`, valable pour toute appli de ce type) : un lien `spotify:`
+  ferait passer Spotify devant, il ne s'en sert donc plus pour une appli cachée.
+- **Ce que tu acceptes** : tant que Spotify tourne ainsi, un autre programme de ton PC
+  pourrait le piloter et lire ta session Spotify par ce port local (127.0.0.1 seulement,
+  numéro tiré au hasard ; les pages web, elles, sont refusées par Chromium). Pour revenir en
+  arrière : `devtools_apps: []`, puis ferme et rouvre Spotify. Ne mets jamais Discord ou
+  une appli de messagerie dans cette liste.
+
+Mesuré sur ton PC, son de Spotify coupé : relance cachée 4,8 s (une seule fois), recherche
+0,6 s, résultats 1,6 s, clic 0,2 s, lecture constatée, aucune fenêtre visible (relevés
+toutes les 10 ms), ta fenêtre jamais déplacée.
+
+```powershell
+cd D:\projects\mikata
+git fetch origin
+git checkout phase-17e-devtools
+uv sync
+uv run ruff check . ; uv run ruff format --check .
+uv run pytest tests/test_devtools_apps.py tests/test_uia_items.py tests/test_tools_apps.py -q
+uv run pytest -q
+uv run python scripts/eval_bench.py --tag appli --trials 2
+# Dans config.yaml, section uia :  devtools_apps: [Spotify]
+# Relance MIKATA, puis à la voix : « MIKATA, lance Jet Lag de Tiakola sur Spotify »
+#   -> la musique part, aucune fenêtre de Spotify n'apparaît (la 1re fois : ~5 s de plus,
+#      le temps de relancer Spotify caché) ; « MIKATA, mets pause », « MIKATA, ferme Spotify ».
+# Le journal dit : « Spotify relancé caché avec l'accès DevTools » (data\logs\mikata.log).
+```

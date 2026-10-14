@@ -276,13 +276,21 @@ class FakeUi:
         hits = [c.name for c in self.scripted_controls if text.casefold() in c.name.casefold()]
         return hits[0] if hits else None
 
-    def set_text(self, window: UiWindowInfo, control: str, text: str) -> str:
-        self._record("set_text", (window.title, control, text))
-        return f"« {control} » rempli."
+    def set_text(self, window: UiWindowInfo, control: str, text: str, submit: bool = False) -> str:
+        self._record("set_text", (window.title, control, text) + (("validé",) if submit else ()))
+        return f"« {control} » rempli." + (" Validé." if submit else "")
 
     def state_summary(self) -> str:
         self._record("state")
         return self.state
+
+    def background_apps(self) -> list[str]:
+        return [w.process for w in self.windows if w.engine == "devtools"]
+
+    def quit_background(self, name: str) -> str | None:
+        self._record("quit_background", name)
+        hidden = [w for w in self.windows if w.engine == "devtools" and w.process == name]
+        return f"{name} fermé." if hidden else None
 
     def pause_state(self, paused: bool) -> None:
         self.paused.append(paused)

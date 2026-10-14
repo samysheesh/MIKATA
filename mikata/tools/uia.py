@@ -157,6 +157,10 @@ class UiaClick(BaseTool[UiaClickParams]):
 class UiaSetTextParams(WindowParams):
     control: str = Field(min_length=1, description="Nom du champ à remplir (ex. « Recherche »)")
     text: str = Field(min_length=1, max_length=2000, description="Texte à écrire dans le champ")
+    submit: bool = Field(
+        default=False,
+        description="true : valider ensuite comme avec Entrée (lancer la recherche, envoyer)",
+    )
 
 
 @register_tool
@@ -179,7 +183,7 @@ class UiaSetText(BaseTool[UiaSetTextParams]):
             raise GuardDenied(f"texte non écrit : {decision.reason} (« {decision.match} »)")
         uia = _uia(self.ctx)
         win = await self.ctx.run_blocking(uia.window, args.window, args.process)
-        return await self.ctx.run_blocking(uia.set_text, win, args.control, args.text)
+        return await self.ctx.run_blocking(uia.set_text, win, args.control, args.text, args.submit)
 
 
 class UiaStateParams(BaseModel):

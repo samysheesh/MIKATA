@@ -192,3 +192,7 @@ uia:                               # ajout phase 12a : pilotage fin des applicat
   max_controls: 200                # contrôles listés par uia_window (au plus)
   max_text_chars: 2000             # texte lu par uia_read, tronqué
   accessibility_client: true       # client UIA à l'écoute : Discord, VS Code... se lisent sans drapeau
+  devtools_apps: []                # ajout phase 17e : applis Chromium pilotées cachées par DevTools, ex. [Spotify]
+                                   #   (tant qu'elles tournent ainsi, un programme du PC peut les piloter)
+  devtools_relaunch: true          # appli listée ouverte sans cet accès : relancée cachée si elle ne joue rien
+  devtools_launch_timeout_s: 25    # attente maximale du démarrage caché d'une appli listée

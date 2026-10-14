@@ -263,7 +263,13 @@ def build_agent(config: Config, phrases: Any = None, *, tools: bool = True) -> A
 
     async def running_apps() -> list[str]:
         assert desktop is not None
-        return open_apps(await ctx.run_blocking(desktop.windows))
+        names = open_apps(await ctx.run_blocking(desktop.windows))
+        if ctx.uia is not None and config.uia.devtools_apps:
+            # Phase 17e : une appli tenue cachée n'a pas de fenêtre ; le modèle doit la
+            # savoir ouverte, et pilotée dans son interface plutôt que par un lien.
+            hidden = await ctx.run_blocking(ctx.uia.background_apps)
+            names += [f"{name} (en arrière-plan)" for name in hidden if name not in names]
+        return names
 
     agent = Agent(
         llm,

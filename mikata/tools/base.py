@@ -181,6 +181,9 @@ class UiWindowInfo:
     title: str
     process: str
     handle: int = 0  # natif Windows, 0 dans les simulations
+    # Phase 17e : « devtools » = appli Chromium lue par son propre arbre via DevTools
+    # (cachée) ; "" = moteur de la plateforme (UIA, AX).
+    engine: str = ""
 
 
 @dataclass(frozen=True)
@@ -266,7 +269,12 @@ class UiAutomation(Protocol):
         self, window: UiWindowInfo, query: str | None, limit: int
     ) -> list[UiItemInfo]: ...
     def find_text(self, window: UiWindowInfo, text: str) -> str | None: ...  # phase 17a
-    def set_text(self, window: UiWindowInfo, control: str, text: str) -> str: ...
+    def set_text(  # phase 17e : `submit`, valider comme avec Entrée
+        self, window: UiWindowInfo, control: str, text: str, submit: bool = False
+    ) -> str: ...
+    # Phase 17e : applis Chromium tenues cachées par DevTools (`uia.devtools_apps`).
+    def background_apps(self) -> list[str]: ...  # celles qui tournent cachées
+    def quit_background(self, name: str) -> str | None: ...  # la ferme ; None : pas l'une d'elles
     def state_summary(self) -> str: ...  # état ambiant en cache (Discord...), "" si rien
     def pause_state(self, paused: bool) -> None: ...  # le poller d'état saute ses lectures
     def aclose(self) -> None: ...  # arrête le poller d'état (arrêt propre)

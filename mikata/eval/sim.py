@@ -345,12 +345,18 @@ class SimUi:
                 return name
         return None
 
-    def set_text(self, window: UiWindowInfo, control: str, text: str) -> str:
+    def set_text(self, window: UiWindowInfo, control: str, text: str, submit: bool = False) -> str:
         self.texts.append((window.title, control, text))
-        return f"« {control} » rempli."
+        return f"« {control} » rempli." + (" Validé." if submit else "")
 
     def state_summary(self) -> str:
         return ""
+
+    def background_apps(self) -> list[str]:
+        return []
+
+    def quit_background(self, name: str) -> str | None:
+        return None
 
     def pause_state(self, paused: bool) -> None:
         pass
