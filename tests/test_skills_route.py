@@ -173,13 +173,29 @@ def test_a_slow_router_changes_nothing(tmp_path: Path) -> None:
     assert audio.volume == 20 and result.skill_via == ""
 
 
-def test_trial_skills_never_go_through_the_router(tmp_path: Path) -> None:
-    """Le cycle décidé : une compétence ne s'exécute sans le modèle qu'une fois active."""
+def test_a_trial_skill_recognized_by_the_router_runs_without_the_model(tmp_path: Path) -> None:
+    """Phase 17f (remplace la règle du 14/10 : le modèle appelait lui-même une compétence à
+    l'essai, trois fois, avant le rejeu local) : reconnue par l'aiguillage, elle s'exécute
+    et l'appel normal est coupé."""
     llm = RaceLLM(
-        {"competence": 1, "valeurs": {"niveau": "35"}}, 0.0, [TextDelta("Ok."), Done("stop")], 0.05
+        {"competence": 1, "valeurs": {"niveau": "35"}}, 0.0, [TextDelta("Ok."), Done("stop")], 0.3
     )
-    result, _, audio, _ = _run(tmp_path, llm, "baisse le volume à 35", status="trial")
-    assert llm.routes == 0 and audio.volume == 50 and result.answer == "Ok."
+    result, _, audio, store = _run(
+        tmp_path, llm, "baisse le volume à 35 puis stoppe la musique", status="trial"
+    )
+    assert llm.routes == 1 and llm.main_finished == 0
+    assert audio.volume == 35 and result.skill_via == "aiguillage"
+    skill = store.get("son_et_pause")
+    assert skill is not None and skill.status == "trial" and skill.successes == 1
+
+
+def test_a_trial_skill_matching_its_pattern_still_needs_the_router(tmp_path: Path) -> None:
+    """À l'essai, son motif seul ne suffit pas (« lance {titre} de {artiste} » capterait
+    « lance la vidéo de Squeezie ») : l'aiguillage dit non, le modèle répond, rien ne
+    s'exécute sans lui."""
+    llm = RaceLLM({"competence": 0, "valeurs": {}}, 0.0, [TextDelta("Ok."), Done("stop")], 0.05)
+    result, _, audio, _ = _run(tmp_path, llm, "mets le son à 35 et pause", status="trial")
+    assert llm.routes == 1 and audio.volume == 50 and result.answer == "Ok."
 
 
 @pytest.mark.parametrize(

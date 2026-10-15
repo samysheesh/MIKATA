@@ -28,6 +28,7 @@ import time
 import unicodedata
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from loguru import logger
@@ -52,6 +53,17 @@ _ROW_NODES = 60  # nœuds lus dans un élément de liste (click_in)
 _VALUE_KINDS = {"champ", "liste déroulante"}  # contrôles dont `controls` donne le contenu
 _TOGGLE_KINDS = {"bouton", "case"}  # contrôles dont `controls` donne l'état d'interrupteur
 _STATE = {True: "activé", False: "désactivé"}
+# Phase 17f : le parcours d'une fenêtre lue (uia_window) resservi au geste qui la suit.
+# Relire Discord prend 0,4 à 0,7 s (mesuré le 15/10, 634 nœuds), le geste UIA lui-même
+# 1 à 17 ms ; une compétence clique juste après avoir lu.
+_WALK_REUSE_S = 2.0
+
+
+@dataclass
+class _Walk:
+    window: UiWindowInfo
+    at: float
+    nodes: list[Any]
 
 
 def fold(text: str) -> str:
@@ -495,6 +507,7 @@ class UiController:
     # par défaut : `uia.devtools_apps` vide).
     _apps: Any = None
     _devtools: _BackendBase | None = None
+    _walk: _Walk | None = None  # phase 17f : la dernière lecture d'une fenêtre (UIA, AX)
 
     def __init__(self, config: Config, desktop: Desktop) -> None:
         # Choix unique du moteur, à la construction, par la plateforme (mikata/plat.py,
@@ -612,9 +625,11 @@ class UiController:
 
     def controls(self, window: UiWindowInfo, max_controls: int) -> list[UiControlInfo]:
         engine = self._engine(window)
-        root = engine.attach(window)
+        nodes = engine.walk(engine.attach(window), _MAX_VISITED)
+        if engine is self._backend:  # DevTools relit son arbre en 0,1 s : rien à garder
+            self._walk = _Walk(window, time.monotonic(), nodes)
         found: list[UiControlInfo] = []
-        for node in engine.walk(root, _MAX_VISITED):
+        for node in nodes:
             name = engine.node_name(node)
             if not name:
                 continue
@@ -643,15 +658,39 @@ class UiController:
         near: str | list[str] | None = None,
     ) -> Any:
         """Le contrôle `control` (un nom, approché ; ou plusieurs noms acceptables, exacts,
-        par ordre de préférence), le plus proche des textes `near` s'ils sont donnés."""
+        par ordre de préférence), le plus proche des textes `near` s'ils sont donnés.
+        Phase 17f : dans le parcours de la lecture qui vient de précéder, s'il y en a une
+        (les noms y sont relus en direct) ; sinon, ou si rien n'y colle (la fenêtre a pu
+        changer depuis), dans un parcours neuf."""
         engine = self._engine(window)
-        root = engine.attach(window)
+        walk = self._walk
+        if (
+            walk is not None
+            and engine is self._backend
+            and walk.window == window
+            and time.monotonic() - walk.at <= _WALK_REUSE_S
+        ):
+            with contextlib.suppress(ToolError):
+                return self._match(engine, walk.nodes, control, kind, nth, clickable, near)
+        nodes = engine.walk(engine.attach(window), _MAX_VISITED)
+        return self._match(engine, nodes, control, kind, nth, clickable, near)
+
+    def _match(
+        self,
+        engine: _BackendBase,
+        nodes: list[Any],
+        control: str | list[str],
+        kind: str | None,
+        nth: int,
+        clickable: bool,
+        near: str | list[str] | None,
+    ) -> Any:
         labels = [control] if isinstance(control, str) else list(control)
         wanted = [fold(label) for label in labels]
         shown = " / ".join(labels)
         candidates: list[Any] = []
         seen: dict[str, float] = {}  # noms rencontrés -> ressemblance, pour l'erreur
-        for node in engine.walk(root, _MAX_VISITED):
+        for node in nodes:
             name = engine.node_name(node)
             if not name:
                 continue
@@ -854,6 +893,7 @@ class UiController:
         """Le clic, la fenêtre montrée s'il le faut (`_shown_for_click`) ; une appli lue
         par DevTools prend le clic cachée."""
         engine = self._engine(window)
+        self._walk = None  # la fenêtre change : la prochaine recherche la relit
         if engine is not self._backend:
             return engine.click(node, name)
         with _shown_for_click(window.handle):
@@ -862,6 +902,7 @@ class UiController:
     def set_text(self, window: UiWindowInfo, control: str, text: str, submit: bool = False) -> str:
         engine = self._engine(window)
         node = self._find(window, control, "champ", 1)
+        self._walk = None
         done = engine.set_text(node, control, text)
         return engine.submit(node, control) if submit else done
 

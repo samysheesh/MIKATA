@@ -3427,3 +3427,34 @@ uv run pytest tests/test_background_apps_ui.py tests/test_ui_qt.py -q
 # Icône de MIKATA (clic droit) : « Fermer Spotify ».
 # À la voix : « MIKATA, mets Jet Lag de Tiakola en boucle » -> le titre seul se répète.
 ```
+
+## Phase 17f — une compétence apprise ne repasse plus par le modèle
+
+Ton retour du 15/10 : « coupe mon micro sur Discord » prenait encore 4 à 13 s une fois
+appris. Trois causes, relevées dans tes traces du 14/10, toutes générales :
+
+- **Une compétence « à l'essai » passait par le modèle** (règle du 14/10 : trois réussites
+  sous son contrôle avant le rejeu sans lui). Le modèle ne vérifiait rien de plus, pour 2 s
+  de plus à chaque fois. Maintenant, dès que Jev la reconnaît (~0,4 s), elle s'exécute sans
+  le modèle. Une fois « active » (trois réussites), sa phrase seule suffit (0 s). Une
+  compétence à l'essai ne part jamais sur sa seule phrase : « lance {titre} de {artiste} »
+  capterait « lance la vidéo de Squeezie » (Jev la classe « aucune », p = 0,97).
+- **Elle redemandait le bouton à chaque fois** : Jev choisissait « Rendre muet » parmi
+  200 contrôles (0,5 s), et une fois il a choisi le titre de la fenêtre. Le bouton choisi est
+  maintenant retenu après une réussite (`data/skills/<nom>/choices.json`) ; oublié si la
+  compétence échoue avec, ou si tu dis « non, c'est pas ça » juste après. Seulement pour des
+  boutons, cases, onglets, menus, champs : jamais pour une vidéo ou un lien (« le dernier
+  opening » change). Ni exporté, ni repris d'une compétence importée.
+- **Le clic relisait toute la fenêtre** (0,4 à 0,7 s sur Discord) juste après sa lecture.
+  La lecture sert maintenant au geste qui suit (2 s au plus, noms relus en direct).
+
+Résultat attendu pour « coupe mon micro sur Discord » : environ 1,5 s à l'essai (Jev, la
+lecture de la fenêtre, le clic), un peu plus d'1 s une fois active.
+
+```powershell
+uv run pytest tests/test_skills_fast.py tests/test_skills_route.py tests/test_skills_agent.py tests/test_uia_matching.py -q
+# À la voix, dans un salon vocal Discord : « MIKATA, coupe mon micro sur Discord ».
+# Le journal (data\logs\mikata.log) dit « Jev : compétence « couper-micro-application » »,
+# puis « Compétence « couper-micro-application » (aiguillage) », sans « Appel LLM » entre les deux.
+# La 2e fois : « Choix retenu par la compétence « couper-micro-application » : « Rendre muet — bouton #1 » ».
+```

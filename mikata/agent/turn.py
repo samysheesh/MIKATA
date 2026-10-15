@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from loguru import logger
 
 from mikata.action.effects import Trust
-from mikata.action.runtime import ScriptOutcome
+from mikata.action.runtime import ScriptOutcome, SkillChoice
 from mikata.llm.base import ToolCallReq, Usage
 from mikata.llm.reasoning import at_least
 from mikata.tts.cache import PHRASES
@@ -212,6 +212,7 @@ class TurnResult:
     # l'ordre de `scripts` ; compétences appelées (nom, réussie, erreur) ; rejeu local.
     script_sources: list[tuple[str, bool]] = field(default_factory=list)
     skill_uses: list[tuple[str, bool, str]] = field(default_factory=list)
+    skill_choices: list[SkillChoice] = field(default_factory=list)  # phase 17f : pick() retenus
     # Phase 15g : appels directs (appel, arguments écrits avant toute lecture non fiable ?),
     # dans l'ordre de `direct_results`.
     direct_sources: list[tuple[ToolCallReq, bool]] = field(default_factory=list)

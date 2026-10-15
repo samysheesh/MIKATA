@@ -133,3 +133,46 @@ def test_a_name_with_a_prefix_is_another_control_not_a_typo() -> None:
         with pytest.raises(ToolError, match="contrôle introuvable"):
             controller._find(window, wanted, None, 1)
     assert controller._find(window, "Recherche", None, 1) == "Rechercher"  # faute tolérée
+
+
+def test_a_gesture_right_after_a_read_reuses_that_read() -> None:
+    """Phase 17f : relire Discord prend 0,4 à 0,7 s (15/10), et une compétence clique juste
+    après avoir lu la fenêtre. La lecture sert au geste qui suit, 2 s au plus ; un contrôle
+    qui n'y est pas encore (la fenêtre a changé) fait relire ; après un clic, on relit."""
+
+    class Counting(FakeBackend):
+        def __init__(self) -> None:
+            self.walks = 0
+            self.names = list(FakeBackend.NAMES)
+
+        def walk(self, root: Any, max_nodes: int) -> list[str]:
+            self.walks += 1
+            return list(self.names)
+
+        def toggle_state(self, node: str) -> bool | None:
+            return None
+
+        def click(self, node: str, name: str) -> str:
+            return f"« {name} » cliqué."
+
+    backend = Counting()
+    controller = _controller()
+    controller._backend = backend  # type: ignore[assignment]
+    window = UiWindowInfo("Discord", "Discord")
+    controller.controls(window, 200)
+    assert controller._find(window, "Rendre muet", None, 1) == "Rendre muet"
+    assert backend.walks == 1  # la lecture a servi
+    backend.names.append("Quitter le salon")  # apparu après la lecture
+    assert controller._find(window, "Quitter le salon", None, 1) == "Quitter le salon"
+    assert backend.walks == 2
+    assert controller.click(window, "Rendre muet", None, 1) == "« Rendre muet » cliqué."
+    assert backend.walks == 2
+    controller._find(window, "Rendre muet", None, 1)
+    assert backend.walks == 3  # après un clic, la fenêtre est relue
+    controller.controls(window, 200)
+    controller._find(UiWindowInfo("Spotify", "Spotify"), "Rendre muet", None, 1)
+    assert backend.walks == 5  # une autre fenêtre
+    assert controller._walk is not None
+    controller._walk.at -= 3  # lue il y a plus de 2 s
+    controller._find(window, "Rendre muet", None, 1)
+    assert backend.walks == 6

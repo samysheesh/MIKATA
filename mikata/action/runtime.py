@@ -36,6 +36,12 @@ from mikata.tools.base import current_turn
 SKILL_TIMEOUT_S = 40.0  # une compétence appelée depuis un programme
 MAX_CALLS = 60  # appels au SDK par script
 MAX_PICK = 200  # options données à pick() : autant que les contrôles de uia_window (phase 17d)
+# Phase 17f : types des contrôles d'interface dont une compétence retient le choix. Pas les
+# contenus (lien, élément d'une liste, texte) : le bon choix peut y changer d'une fois sur
+# l'autre (« le dernier opening » d'un anime).
+REMEMBERED_KINDS = frozenset(
+    {"bouton", "case", "menu", "onglet", "champ", "liste déroulante", "curseur"}
+)
 MAX_ACTIONS = 25  # dont appels qui agissent
 ASK_TIMEOUT_S = 8.0
 REDACTED = "(détail masqué : il dépend d'un contenu lu ailleurs)"
@@ -48,6 +54,46 @@ def pick_label(item: Any) -> str:
         parts = [str(v).strip() for v in item.values() if isinstance(v, str | int | float)]
         return " — ".join(part for part in parts if part)
     return str(item).strip()
+
+
+def _identity(item: Any) -> tuple[str, str]:
+    if not isinstance(item, dict):
+        return "", ""
+    return str(item.get("name") or "").strip(), str(item.get("kind") or "").strip()
+
+
+def choice_key(items: list[Any], index: int) -> str:
+    """Phase 17f : identité stable de l'option `index` d'un pick(), pour qu'une compétence
+    la retienne : « Rendre muet — bouton #1 » (nom, type, rang parmi les homonymes ; pas
+    l'état, « désactivé », qui change). "" pour ce qui n'est pas un contrôle d'interface."""
+    name, kind = _identity(items[index])
+    if not name or kind not in REMEMBERED_KINDS:
+        return ""
+    nth = sum(1 for other in items[: index + 1] if _identity(other) == (name, kind))
+    return f"{name} — {kind} #{nth}"
+
+
+def find_choice(items: list[Any], key: str) -> int | None:
+    """L'option dont l'identité (`choice_key`) est `key`, ou None si elle n'y est plus."""
+    seen: dict[tuple[str, str], int] = {}
+    for index, item in enumerate(items):
+        name, kind = identity = _identity(item)
+        seen[identity] = seen.get(identity, 0) + 1
+        if name and kind in REMEMBERED_KINDS and f"{name} — {kind} #{seen[identity]}" == key:
+            return index
+    return None
+
+
+@dataclass
+class SkillChoice:
+    """Phase 17f : un choix fait par pick() dans une compétence, à retenir si elle réussit
+    (`recalled` : repris d'une fois précédente, à oublier si elle échoue)."""
+
+    skill: str
+    question: str
+    values: dict[str, Any]
+    key: str
+    recalled: bool = False
 
 
 class PolicyDenied(Exception):
@@ -129,7 +175,9 @@ class ScriptRuntime:
         self.jev = jev  # phase 15l : pick() choisit d'abord avec Jev
         self.skills = skills or {}  # phase 15e : compétences appelables, par nom d'appel
         self.skill_uses: list[tuple[str, bool, str]] = []  # (nom, réussie, erreur)
-        self._in_skill = False
+        self.skill_choices: list[SkillChoice] = []  # phase 17f : choix de pick() à retenir
+        self._skill: Any = None  # la compétence en cours d'exécution
+        self._skill_values: dict[str, Any] = {}
         self.records: list[ActionRecord] = []
         self.tool_calls: list[ToolCallReq] = []
         self.tool_results: list[Any] = []
@@ -218,7 +266,7 @@ class ScriptRuntime:
         """Phase 15e : exécute une compétence (son programme, avec ses paramètres comme
         variables) dans le même hôte : mêmes politiques, même budget, même trace."""
         skill = self.skills[name]
-        if self._in_skill:
+        if self._skill is not None:
             raise ScriptError("une compétence n'en appelle pas une autre", line)
         params: list[str] = list(skill.params)
         if len(args) > len(params):
@@ -233,7 +281,11 @@ class ScriptRuntime:
             raise ScriptError(f"skills.{name} : il manque {', '.join(missing)}", line)
         variables = {k: Val(v.value, join(pc, v.trust)) for k, v in values.items()}
         interpreter = Interpreter(self, timeout_s=SKILL_TIMEOUT_S, variables=variables)
-        self._in_skill = True
+        self._skill = skill
+        self._skill_values = {
+            key: v.value if isinstance(v.value, str | int | float | bool) else str(v.value)
+            for key, v in variables.items()
+        }
         try:
             result = await interpreter.run(skill.code)
         except ScriptError as exc:
@@ -243,7 +295,7 @@ class ScriptRuntime:
             self.skill_uses.append((name, False, str(exc)))
             raise
         finally:
-            self._in_skill = False
+            self._skill, self._skill_values = None, {}
         self.skill_uses.append((name, True, ""))
         return result
 
@@ -276,7 +328,9 @@ class ScriptRuntime:
         """pick(liste, question) : l'élément de la liste qui répond le mieux, recopié tel
         quel. Jev d'abord (~0,4 s) ; sans lui, ou s'il ne répond pas, un appel LLM qui
         rend le numéro de l'option la plus probable (phase 16b : `extract`, qui ne devine
-        jamais, répondait « rien » quand aucune option n'était certaine)."""
+        jamais, répondait « rien » quand aucune option n'était certaine). Phase 17f : dans
+        une compétence, le contrôle choisi la dernière fois qu'elle a réussi est repris
+        sans rien demander, s'il est encore là."""
         items = values[0] if values else named.get("items")
         if isinstance(items, dict):  # phase 17b : {window, items: [...]} -> sa seule liste
             lists = [value for value in items.values() if isinstance(value, list)]
@@ -292,9 +346,13 @@ class ScriptRuntime:
             raise ScriptFailure("rien à choisir : la liste est vide")
         originals, options = [item for item, _ in kept], [label for _, label in kept]
         result_trust = join(trust, Trust.LOCAL)
+        recalled = self._recall(question, originals)
+        if recalled is not None:
+            return Val(originals[recalled], result_trust)
         if self.jev is not None:
             picked = await self.jev.pick(question, options)
             if picked is not None:
+                self._note_choice(question, originals, picked[0])
                 return Val(originals[picked[0]], result_trust)
         if self.llm is None:
             raise ScriptFailure("choix impossible (pas de modèle)")
@@ -307,7 +365,32 @@ class ScriptRuntime:
             self.usage = usage if self.usage is None else self.usage + usage
         if index is None:
             raise ScriptFailure("aucune option ne répond à la question")
+        self._note_choice(question, originals, index)
         return Val(originals[index], result_trust)
+
+    def _recall(self, question: str, items: list[Any]) -> int | None:
+        """Phase 17f : dans une compétence, l'option retenue pour cette question et ces
+        valeurs, si elle est encore parmi `items`."""
+        if self._skill is None:
+            return None
+        key = self._skill.recall(question, self._skill_values)
+        index = find_choice(items, key) if key else None
+        if index is None:
+            return None
+        self.skill_choices.append(
+            SkillChoice(self._skill.call_name, question, dict(self._skill_values), key, True)
+        )
+        logger.info("Choix retenu par la compétence « {} » : « {} ».", self._skill.name, key)
+        return index
+
+    def _note_choice(self, question: str, items: list[Any], index: int) -> None:
+        if self._skill is None:
+            return
+        key = choice_key(items, index)
+        if key:
+            self.skill_choices.append(
+                SkillChoice(self._skill.call_name, question, dict(self._skill_values), key)
+            )
 
     async def _extract(
         self, values: list[Any], named: dict[str, Any], trust: Trust, line: int

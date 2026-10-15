@@ -243,7 +243,7 @@ suffit, et chaque chemin a un budget mesuré par le banc d'essai.
 
 | Chemin | Quand | Appels LLM | Budget visé |
 | --- | --- | --- | --- |
-| **0. Rejeu local** | La phrase colle à une compétence active | 0 | moins d'1 s |
+| **0. Rejeu local** | La phrase colle à une compétence active, ou l'aiguillage reconnaît une compétence apprise (phase 17f) | 0 (Jev : ~0,4 s, sans génération) | moins d'1 s, plus les gestes eux-mêmes |
 | **1. Direct** | Question, bavardage, action simple | 1 | premier son sous 2 s |
 | **2. Script** | La demande enchaîne ou dépend d'une information | 1 + extractions | moins de 10 s en médiane |
 | **3. Exploration** | Interface inconnue, à observer pas à pas | 8 pas au plus | moins de 30 s, en tâche de fond |
@@ -508,7 +508,15 @@ Fait en E (phase 15e) : compétences (`mikata/learn/skills.py`), qui remplacent
 `mikata/skills/`. Écarts à la section 3.6 : la vérification avant adoption se fait dans le
 code, sans rejouer la demande (rejouer une action sur le PC la referait deux fois) ; la
 première utilisation surveillée par le modèle tient lieu d'essai, et il en faut trois avant
-le rejeu local (décision du 14/10). Fait en E (phase 16b) : révision par un critique isolé quand une compétence échoue et
+le rejeu local (décision du 14/10). Revu en phase 17f, à la demande de l'utilisateur (« une
+tâche apprise doit être quasi instantanée ») et sur ses traces du 14/10 : le modèle appelait
+la compétence à l'essai sans rien vérifier de plus (il ne voit que ce qu'elle rend), pour
+2 s de plus à chaque fois, et ses échecs (deux versions de « couper le micro ») tombaient
+de la même façon avec ou sans lui. À l'essai, elle est donc rejouée sans le modèle dès que
+l'aiguillage la reconnaît ; son motif seul attend l'état actif (« lance {titre} de
+{artiste} » capterait « lance la vidéo de Squeezie », que Jev classe « aucune » à 0,97).
+Le contrôle choisi par `pick()` est retenu après une réussite (0,5 s et une erreur de choix
+en moins sur Discord, où Jev hésitait entre 200 contrôles). Fait en E (phase 16b) : révision par un critique isolé quand une compétence échoue et
 que la demande réussit autrement juste après ; nouvelle version vérifiée dans le code,
 ancienne archivée (`versions/`), trois derniers cas d'échec gardés (`failures.json`,
 plutôt qu'un dossier : rien ne se supprime). Pas encore faits : `recover.md`, l'import

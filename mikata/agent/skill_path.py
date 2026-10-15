@@ -1,15 +1,15 @@
-"""Le chemin des compétences dans un tour (docs/AGENT_CORE.md §3.6, phases 15e à 15l).
+"""Le chemin des compétences dans un tour (docs/AGENT_CORE.md §3.6, phases 15e à 15l, 17f).
 
 Avant le premier appel au modèle :
 - une compétence **active** dont un motif colle à la phrase est rejouée sans le modèle ;
 - sinon, celles qui correspondent sont signalées au modèle (note dans le contexte), et
   l'**aiguillage** (Jev, puis un petit appel LLM s'il hésite) part en même temps que le
-  premier appel normal : s'il reconnaît une compétence active avant que MIKATA ait parlé,
-  l'appel normal est coupé et la compétence s'exécute.
+  premier appel normal : s'il reconnaît une compétence, **à l'essai ou active** (phase
+  17f), avant que MIKATA ait parlé, l'appel normal est coupé et la compétence s'exécute.
 
-Après le tour : bilan des compétences utilisées (réussite surveillée, correction de
-l'utilisateur), et apprentissage en arrière-plan d'un programme réussi (induction puis
-vérification dans le code).
+Après le tour : bilan des compétences utilisées (réussite, correction de l'utilisateur),
+choix de pick() retenus ou oubliés (phase 17f), et apprentissage en arrière-plan d'un
+programme réussi (induction puis vérification dans le code).
 """
 
 from __future__ import annotations
@@ -157,8 +157,8 @@ class SkillPath:
             return {}
         return {skill.call_name: skill for skill in self.store.usable()}
 
-    def has_active(self) -> bool:
-        return any(skill.status == "active" for skill in self.store.usable())
+    def has_usable(self) -> bool:
+        return bool(self.store.usable())
 
     # -- avant le modèle ----------------------------------------------------------------------
 
@@ -235,14 +235,16 @@ class SkillPath:
     # -- aiguillage ---------------------------------------------------------------------------
 
     def start_router(self, command: str, follow_up: bool) -> asyncio.Task[Any] | None:
-        """Lance l'aiguillage s'il y a des compétences actives. Jamais dans la fenêtre de
-        suivi (la phrase n'est peut-être pas pour MIKATA)."""
+        """Lance l'aiguillage s'il y a des compétences à l'essai ou actives (phase 17f : une
+        compétence à l'essai reconnue est rejouée sans le modèle ; avant, le modèle
+        l'appelait lui-même, environ 2 s de plus). Jamais dans la fenêtre de suivi (la
+        phrase n'est peut-être pas pour MIKATA)."""
         if follow_up or not self.enabled() or not self._config().skills.route:
             return None
-        active = [s for s in self.store.usable() if s.status == "active"]
-        if not active:
+        usable = self.store.usable()
+        if not usable:
             return None
-        return asyncio.create_task(self._route(command, active), name="aiguillage")
+        return asyncio.create_task(self._route(command, usable), name="aiguillage")
 
     async def _route(self, command: str, active: list[Skill]) -> Routed | None:
         """Deux étages (phase 15k). Jev (~0,4 s) décide seul quand il est sûr (compétence ou
@@ -352,6 +354,12 @@ class SkillPath:
             )
             if not (ok and turn_ok):
                 self.store.note_failure(name, command, error or result.outcome)
+        for name in dict.fromkeys(name for name, _, _ in result.skill_uses):
+            self.store.settle_choices(
+                name,
+                [choice for choice in result.skill_choices if choice.skill == name],
+                turn_ok and all(ok for used, ok, _ in result.skill_uses if used == name),
+            )
         names = [name for name, _, _ in result.skill_uses]
         self._last_uses = (names, now) if names else None
         failed = [(name, error) for name, ok, error in result.skill_uses if not ok]

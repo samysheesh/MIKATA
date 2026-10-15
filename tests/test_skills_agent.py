@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from test_agent import NOW, Phrases, ScriptedLLM, Sink
+from test_skills_route import RaceLLM
 from tool_fakes import FakeAudio, FakeDesktop, make_ctx
 
 from mikata.action.runtime import ScriptOutcome
@@ -33,7 +34,7 @@ def _skill(status: str = "trial", code: str = CODE) -> Skill:
 
 
 def _setup(
-    tmp_path: Path, llm: ScriptedLLM, skill: Skill | None = None
+    tmp_path: Path, llm: ScriptedLLM | RaceLLM, skill: Skill | None = None
 ) -> tuple[Agent, SkillStore, FakeDesktop, FakeAudio]:
     desktop, audio = FakeDesktop(), FakeAudio()
     store = SkillStore(tmp_path / "skills")
@@ -44,7 +45,7 @@ def _setup(
         store.save(skill)
     ctx = make_ctx(tmp_path, desktop=desktop, audio=audio, skills=store)
     agent = Agent(
-        llm,
+        llm,  # type: ignore[arg-type]
         ctx.config,
         phrases=Phrases(),
         window_title=lambda: None,
@@ -104,26 +105,31 @@ def test_a_failing_active_skill_goes_back_to_trial_and_the_model_takes_over(
     assert "bouton disparu" in skill.last_error
 
 
-def test_a_trial_skill_is_offered_then_promoted_after_three_supervised_successes(
+def test_a_trial_skill_confirmed_by_the_router_becomes_active_after_three_successes(
     tmp_path: Path,
 ) -> None:
-    call = "return skills.son_et_pause(niveau='35')"
-    llm = ScriptedLLM(_script(call), _script(call), _script(call))
+    """Phase 17f : à l'essai, son motif la signale, l'aiguillage la confirme et elle
+    s'exécute sans le modèle ; après trois réussites, active, son motif seul la rejoue."""
+    llm = RaceLLM(
+        {"competence": 1, "valeurs": {"niveau": "35"}}, 0.0, [TextDelta("Ok."), Done("stop")], 0.3
+    )
     agent, store, _, audio = _setup(tmp_path, llm, _skill("trial"))
     results = _turns(agent, COMMAND, COMMAND, COMMAND)
-    hint = [m["content"] for m in llm.calls[0] if m["role"] == "system"][-1]
-    assert "skills.son_et_pause(niveau='35')" in hint  # valeurs déjà lues dans la phrase
-    assert all(r.answer == "C'est fait." for r in results) and audio.volume == 35
+    assert llm.routes == 3 and llm.main_finished == 0 and audio.volume == 35
+    assert all(r.answer == "C'est fait." and r.skill_via == "aiguillage" for r in results)
     skill = store.get("son_et_pause")
     assert skill is not None and skill.status == "active" and skill.successes == 3
     (local,) = _turns(_setup(tmp_path, ScriptedLLM())[0], COMMAND)  # relue sur disque
     assert local.llm_calls == 0 and local.local_skill == "son-et-pause"
+    assert local.skill_via == "motif"
 
 
 def test_a_correction_right_after_counts_as_a_failure(tmp_path: Path) -> None:
-    llm = ScriptedLLM(
-        _script("return skills.son_et_pause(niveau='35')"),
+    llm = RaceLLM(
+        {"competence": 1, "valeurs": {"niveau": "35"}},
+        0.0,
         [TextDelta("D'accord, je remets le son."), Done("stop")],
+        0.3,
     )
     agent, store, _, _ = _setup(tmp_path, llm, _skill("trial"))
     _turns(agent, COMMAND, "non c'est pas ça")

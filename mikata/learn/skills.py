@@ -16,22 +16,33 @@ Cycle de vie (décidé avec l'utilisateur le 14/10) :
 2. **Vérification** (code, sans LLM) : la phrase d'origine doit coller à un motif et en
    redonner les valeurs ; le programme n'appelle que des fonctions que l'original appelait ;
    chaque paramètre sert. Sinon, rien n'est gardé.
-3. **À l'essai** : quand une demande colle, la compétence est proposée au modèle, qui
-   l'appelle (`skills.<nom>(...)`) dans un programme ; chaque réussite ainsi surveillée
-   compte. Une correction de l'utilisateur juste après compte comme un échec.
+3. **À l'essai** (phase 17f) : quand l'aiguillage (6) reconnaît la demande, la compétence
+   est rejouée **sans le modèle** ; son motif seul ne suffit pas encore (« lance {titre}
+   de {artiste} » capterait « lance la vidéo de Squeezie ») : il la signale au modèle, et
+   l'aiguillage confirme ou non. Chaque réussite compte ; une correction de l'utilisateur
+   juste après compte comme un échec. Jusqu'à la phase 17e, le modèle l'appelait lui-même
+   trois fois avant le rejeu local : environ 2 s de plus à chaque fois, sans rien
+   vérifier de plus (il ne voit que ce que la compétence rend).
 4. **Active** après `skills.promote_after` réussites (3) : une phrase qui colle à un motif
-   la rejoue **en local, sans appel LLM**. Un échec la renvoie à l'essai, compteur à zéro ;
-   après `skills.max_failures` échecs de suite, elle est désactivée.
+   la rejoue **aussitôt, sans appel LLM ni aiguillage**. Un échec la renvoie à l'essai,
+   compteur à zéro ; après `skills.max_failures` échecs de suite, elle est désactivée.
 5. **Révision** (phase 16b) : quand une compétence échoue et que le modèle réussit la
    demande juste après, un critique isolé (il ne voit que la demande, le programme, l'erreur
    et ce qui a marché) écrit une nouvelle version du programme, vérifiée dans le code ;
    l'ancienne est archivée (`versions/`), les derniers cas d'échec gardés
    (`failures.json`). La nouvelle version repart à l'essai.
-6. **Aiguillage** (phase 15j) : pour toute autre formulation, dans toute langue, un appel
-   minuscule part en même temps que l'appel normal et reconnaît la compétence active
-   demandée, avec ses valeurs (vérifiées : chacune doit figurer dans la phrase). S'il
-   répond avant que MIKATA ait commencé à parler, l'appel normal est coupé et la
-   compétence s'exécute ; sinon il est ignoré. Aucune attente ajoutée.
+6. **Aiguillage** (phase 15j ; Jev en premier étage, phase 15k ; étendu aux compétences à
+   l'essai, phase 17f) : pour toute formulation, dans toute langue, Jev (~0,5 s), ou un
+   appel minuscule s'il hésite, part en même temps que l'appel normal et reconnaît la
+   compétence demandée, avec ses valeurs (vérifiées : chacune doit figurer dans la
+   phrase). S'il répond avant que MIKATA ait commencé à parler, l'appel normal est coupé
+   et la compétence s'exécute ; sinon il est ignoré. Aucune attente ajoutée.
+7. **Choix retenus** (phase 17f) : le contrôle d'interface qu'un `pick()` a choisi dans une
+   compétence (le bouton du micro parmi 200 contrôles) est retenu quand elle réussit
+   (`choices.json`) ; la fois suivante, même question et mêmes valeurs, il est repris sans
+   rien demander s'il est encore là. Oublié si elle échoue en s'en servant ou si
+   l'utilisateur corrige ; jamais pour un contenu (lien, vidéo, ligne de résultats), où
+   le bon choix peut changer. Personnel : ni exporté, ni lu d'une compétence importée.
 
 Les compétences de la phase 12c (`data/skills/skills.json`) ne sont pas reprises.
 """
@@ -46,15 +57,20 @@ import time
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 from loguru import logger
 
 from mikata.llm.base import Done, LLMClient, TextDelta, Usage
 
+if TYPE_CHECKING:
+    from mikata.action.runtime import SkillChoice
+
 SKILLS_DIR = "data/skills"
 FAILURES_FILE = "failures.json"  # phase 16b : derniers cas d'échec, pour la révision
+CHOICES_FILE = "choices.json"  # phase 17f : contrôles choisis par pick(), retenus
+MAX_CHOICES = 20
 MAX_FAILURE_CASES = 3
 STATUSES = ("trial", "active", "disabled", "proposed")
 STATUS_LABELS = {
@@ -338,6 +354,8 @@ class Skill:
     created: str = ""
     last_error: str = ""
     path: Path | None = field(default=None, compare=False)
+    # Phase 17f : {"question", "valeurs", "choix", "le"} des pick() d'utilisations réussies.
+    choices: list[dict[str, Any]] = field(default_factory=list, compare=False)
 
     @property
     def call_name(self) -> str:
@@ -346,6 +364,14 @@ class Skill:
     @property
     def signature(self) -> str:
         return f"skills.{self.call_name}({', '.join(self.params)})"
+
+    def recall(self, question: str, values: dict[str, Any]) -> str:
+        """Phase 17f : l'option (`choice_key`) retenue pour cette question avec ces valeurs
+        de paramètres, ou ""."""
+        for entry in reversed(self.choices):
+            if entry.get("question") == question and entry.get("valeurs") == values:
+                return str(entry.get("choix") or "")
+        return ""
 
     def match(self, command: str) -> dict[str, str] | None:
         for pattern in self.patterns:
@@ -409,7 +435,16 @@ def _read_skill(folder: Path) -> Skill:
         created=meta.get("mikata-created", ""),
         last_error=meta.get("mikata-last-error", ""),
         path=folder,
+        choices=_read_choices(folder),
     )
+
+
+def _read_choices(folder: Path) -> list[dict[str, Any]]:
+    try:
+        data = json.loads((folder / CHOICES_FILE).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    return [entry for entry in data if isinstance(entry, dict)] if isinstance(data, list) else []
 
 
 class SkillStore:
@@ -463,6 +498,12 @@ class SkillStore:
             render_program(skill.description, skill.params, skill.code), encoding="utf-8"
         )
         (folder / "SKILL.md").write_text(skill.to_markdown(), encoding="utf-8")
+        choices = folder / CHOICES_FILE
+        if skill.choices or choices.is_file():
+            choices.write_text(
+                json.dumps(skill.choices[-MAX_CHOICES:], ensure_ascii=False, indent=1),
+                encoding="utf-8",
+            )
         skill.path = folder
         self.skills[skill.call_name] = skill
 
@@ -510,12 +551,39 @@ class SkillStore:
         self.save(skill)
 
     def correct(self, call_names: list[str]) -> None:
-        """L'utilisateur a corrigé le tour qui les a utilisées : un échec chacune."""
+        """L'utilisateur a corrigé le tour qui les a utilisées : un échec chacune, et leurs
+        choix retenus oubliés (l'un d'eux était peut-être la faute)."""
         for name in call_names:
             skill = self.skills.get(name)
             if skill is not None:
                 self._fail(skill, "corrigée par l'utilisateur", local=False)
+                skill.choices = []
                 self.save(skill)
+
+    def settle_choices(self, call_name: str, choices: list[SkillChoice], ok: bool) -> None:
+        """Phase 17f : après une utilisation, les choix de pick() sont retenus si elle a
+        réussi (la fois suivante, plus rien à choisir) ; ceux qu'elle avait repris sont
+        oubliés si elle a échoué (le choix retenu en était peut-être la cause)."""
+        skill = self.skills.get(call_name)
+        if skill is None or not choices:
+            return
+
+        def same(entry: dict[str, Any], choice: SkillChoice) -> bool:
+            return entry.get("question") == choice.question and entry.get("valeurs") == (
+                choice.values
+            )
+
+        dropped = choices if ok else [c for c in choices if c.recalled]
+        kept = [e for e in skill.choices if not any(same(e, c) for c in dropped)]
+        if ok:
+            stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
+            kept += [
+                {"question": c.question, "valeurs": c.values, "choix": c.key, "le": stamp}
+                for c in choices
+            ]
+        if kept != skill.choices:
+            skill.choices = kept[-MAX_CHOICES:]
+            self.save(skill)
 
     def _fail(self, skill: Skill, error: str, *, local: bool) -> None:
         skill.successes = 0
@@ -646,6 +714,7 @@ class SkillStore:
             skill.status = "proposed"
             skill.successes = skill.failures = skill.uses = 0
             skill.last_error = ""
+            skill.choices = []  # phase 17f : des choix venus d'ailleurs ne sont pas crus
             skill.source = f"importée de {source.name}"
             skill.path = None
             self.save(skill)  # seuls SKILL.md et skill.py, réécrits par MIKATA
@@ -979,8 +1048,8 @@ Réponds UNIQUEMENT par un objet JSON : {{"competence": numéro ou 0, "valeurs":
 
 
 def route_prompt(skills: list[Skill]) -> str:
-    """Prompt de l'aiguillage : ne change que quand les compétences actives changent (il
-    reste dans le cache de prompt du fournisseur)."""
+    """Prompt de l'aiguillage : ne change que quand les compétences utilisables changent
+    (il reste dans le cache de prompt du fournisseur)."""
     lines = [f"{i}. {s.signature} : {s.description}" for i, s in enumerate(skills, 1)]
     return ROUTE_SYSTEM.format(skills="\n".join(lines))
 
@@ -1033,8 +1102,8 @@ def pick_route(text: str, skills: list[Skill], command: str) -> tuple[Skill, dic
 async def route(
     llm: LLMClient, command: str, skills: list[Skill], effort: str | None = "none"
 ) -> tuple[tuple[Skill, dict[str, str]] | None, Usage | None]:
-    """Un appel minuscule, sans outils : la compétence active que demande `command` (et
-    ses valeurs), ou None."""
+    """Un appel minuscule, sans outils : la compétence (à l'essai ou active) que demande
+    `command` (et ses valeurs), ou None."""
     messages = [
         {"role": "system", "content": route_prompt(skills)},
         {"role": "user", "content": f"Demande : « {command} »"},

@@ -4,7 +4,8 @@ Jev ne génère pas de texte : on lui donne la phrase et des questions à choix,
 pour chaque question une distribution de probabilités sur les options. Une seule requête
 pose deux sortes de questions, traitées en parallèle par Jev :
 
-- « competence » : laquelle des compétences actives la phrase demande, ou « aucune » ;
+- « competence » : laquelle des compétences apprises (à l'essai ou actives, phase 17f) la
+  phrase demande, ou « aucune » ;
 - une question par paramètre : lequel des morceaux de la phrase (1 à 5 mots, recopiés tels
   quels) en est la valeur. Jev ne sait pas extraire un mot ; il choisit donc parmi les
   morceaux de la phrase, et la valeur ne peut pas être inventée.
@@ -35,10 +36,14 @@ JEV_MODEL = "typesafe/jev-1.13"
 NONE_LABEL = "aucune"
 MAX_SPAN_WORDS = 5
 MAX_SPANS = 120
+# Phase 17f : relatif aux compétences, sans verbe cité. L'ancien critère citait « fermer,
+# couper, mettre en pause » comme autres actions (écrit quand les compétences lançaient de
+# la musique) : il poussait Jev vers « aucune » pour une compétence qui coupe un micro.
 NONE_CRITERION = (
-    "Toute autre demande : une autre action (fermer, couper, mettre en pause, chercher une "
-    "information sans rien lancer), plusieurs actions à la fois, une négation, ou une demande "
-    "sans rapport avec ces compétences."
+    "Toute demande qu'aucune de ces compétences ne fait exactement : une autre action ou un "
+    "autre objet que les leurs (fermer quand elle lance, le son quand elle coupe le micro, "
+    "une information quand elle agit), plusieurs actions à la fois, une négation, ou une "
+    "demande sans rapport avec elles."
 )
 _WORD = re.compile(r"[\w'’.-]+")
 _TRIM = ".,;:!?'’\"«»-"

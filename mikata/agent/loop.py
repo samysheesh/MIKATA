@@ -233,7 +233,7 @@ class Agent:
         prewarm = getattr(self.llm, "prewarm", None)
         if prewarm is not None:
             jobs.append(prewarm())
-        if self.jev is not None and self._skill_path is not None and self._skill_path.has_active():
+        if self.jev is not None and self._skill_path is not None and self._skill_path.has_usable():
             jobs.append(self.jev.prewarm())  # phase 15k : aiguillage prêt
         await asyncio.gather(*jobs)
 
@@ -409,7 +409,8 @@ class Agent:
         fallback_steps = self.config.llm.reasoning_fallback_steps
         skill_path = self._skill_path
         # Une compétence active dont un motif colle est rejouée sans le modèle ; sinon
-        # l'aiguillage part avec le premier appel normal.
+        # l'aiguillage part avec le premier appel normal (et reconnaît aussi les compétences
+        # à l'essai, phase 17f).
         replayed = await skill_path.before(turn) if skill_path is not None else None
         if replayed is not None:
             turn.spoken.extend(replayed)

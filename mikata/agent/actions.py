@@ -228,6 +228,7 @@ class ActionRunner:
         result.scripts.append(outcome)
         result.script_sources.append((code, state.trust is Trust.TRUSTED))
         result.skill_uses.extend(runtime.skill_uses)
+        result.skill_choices.extend(runtime.skill_choices)
         result.tool_calls.extend(runtime.tool_calls)
         result.tool_results.extend(runtime.tool_results)
         result.llm_calls += runtime.llm_calls

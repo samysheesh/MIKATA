@@ -225,13 +225,16 @@ class SkillsConfig(_Section):
 
     enabled: bool = True  # false : aucune compétence utilisée ni apprise
     learn: bool = True  # apprend en arrière-plan des programmes réussis
-    promote_after: int = Field(default=3, ge=1, le=20)  # réussites avant le rejeu local
+    # Réussites avant qu'une compétence soit « active » : son motif seul la rejoue alors,
+    # sans attendre l'aiguillage (phase 17f : à l'essai, l'aiguillage la rejoue déjà).
+    promote_after: int = Field(default=3, ge=1, le=20)
     max_failures: int = Field(default=3, ge=1, le=20)  # échecs de suite avant désactivation
     local_replay: bool = True  # false : même active, la compétence passe par le modèle
     max_skills: int = Field(default=40, ge=1, le=200)
     learn_effort: str | None = "low"  # réflexion de l'appel qui écrit la compétence
     # Phase 15j : aiguillage. Un appel minuscule en parallèle de l'appel normal reconnaît
-    # une compétence active dans n'importe quelle formulation ou langue.
+    # une compétence dans n'importe quelle formulation ou langue (phase 17f : à l'essai
+    # aussi, rejouée sans le modèle).
     route: bool = True
     route_timeout_s: float = Field(default=3.0, gt=0, le=20)
     # Phase 15k : Jev (TypeSafe, via OpenRouter) en premier étage de l'aiguillage, s'il y a
