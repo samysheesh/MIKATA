@@ -148,6 +148,9 @@ CHECKS: dict[str, Callable[[Env, Any], bool]] = {
     "shell": lambda e, v: any(_has(str(v), c) for c in e.sim().shell.commands),
     "notified": lambda e, v: any(_has(str(v), f"{t} {b}") for t, b in e.sim().notifier.sent),
     "ui_clicked": lambda e, v: any(_in(v, name) for _, name in e.sim().ui.clicked),
+    # phase 17f : {name, times} : au moins `times` clics dont le nom contient `name`
+    "ui_clicked_times": lambda e, v: sum(_in(v["name"], name) for _, name in e.sim().ui.clicked)
+    >= int(v["times"]),
     "trashed": lambda e, v: any(_has(str(v), item) for item in e.sim().trash.items),
     "locked": lambda e, v: e.sim().desktop.locked is bool(v),
     "power": lambda e, v: str(v) in e.sim().desktop.power_actions,

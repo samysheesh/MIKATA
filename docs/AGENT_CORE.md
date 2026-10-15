@@ -336,7 +336,10 @@ Garde-fous de l'auto-évolution, tirés de *Your Agent May Misevolve* :
    ne peut rien faire que les primitives n'autorisent pas.
 3. **Le signal de réussite vient d'une post-condition ou d'une correction de l'utilisateur**,
    jamais de l'agent qui se note lui-même. Avec un signal peu fiable, l'apprentissage dégrade
-   (−3,4 points dans ACE).
+   (−3,4 points dans ACE). Phase 17f : pour les actions dans une appli, la post-condition est
+   générale — la fenêtre a-t-elle changé ? (`mikata/uia/effects.py`, relue pendant que MIKATA
+   parle) ; une compétence dont l'action n'a rien changé échoue et se révise sans que
+   l'utilisateur ait à le dire.
 4. **Les leçons entrent dans le contexte comme des références, pas comme des règles** (ce seul
    changement réduit les comportements dangereux dans l'étude).
 5. **Rien n'est promu « actif » sans repasser le banc d'essai** ; tout est versionné et

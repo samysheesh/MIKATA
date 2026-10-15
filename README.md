@@ -3483,6 +3483,29 @@ conclure d'après les échanges d'avant que tu étais encore connecté.
   de choisir. Vérifié sur ton Discord, sans clic.
 - L'état ambiant vide dit maintenant qu'il ne prouve rien et qu'il faut relire la fenêtre.
 
+**MIKATA regarde ce que ses actions ont fait** (ta demande du 15/10 : vérifier pendant
+qu'elle parle, pour garder la latence) :
+
+- Avant un clic dans une appli, elle garde ce que montrait la fenêtre (déjà lu pour trouver
+  le bouton : rien de plus à lire). Un interrupteur qui bascule (« Rendre muet ») ou un
+  bouton qui change de nom (« Play » devenu « Pause ») suffit : rien d'autre à attendre.
+- Sinon, pendant qu'elle dit sa réponse, elle relit la fenêtre (environ 1 s sur Discord) et
+  compare, 3 s au plus (`uia.verify_timeout_s`). Les nombres ne comptent pas (minuteur
+  d'appel, ping) : vérifié sur ton Discord, une fenêtre au repos ne « change » pas.
+- Rien n'a changé : « Attends, ça n'a pas pris. », et elle reprend (« Voilà, c'est bon. »).
+  Une compétence dont le clic n'a rien fait compte comme un échec et sera révisée : elle
+  apprend de ce qu'elle voit, sans que tu aies à le lui dire.
+- Le modèle ne relit plus la fenêtre pour vérifier après un clic (une consigne) : rejoindre
+  un salon Discord passe de 4 à 2 appels au banc.
+- `uia.verify_effects: false` coupe tout ça.
+
+```powershell
+uv run pytest tests/test_effects.py tests/test_skills_fast.py -q
+uv run python scripts/eval_bench.py --trials 3 --only clic_sans_effet salon_discord
+# À la voix, dans Discord : « MIKATA, rejoins le salon Champions league » -> le journal
+# (data\logs\mikata.log) dit « Effet : après clic sur « Champions league (salon vocal)… » : apparu … ».
+```
+
 ```powershell
 uv run pytest tests/test_skills_fast.py tests/test_skills_route.py tests/test_skills_agent.py tests/test_uia_matching.py tests/test_action_runtime.py tests/test_agent_learning.py -q
 # À la voix, dans un salon vocal Discord : « MIKATA, coupe mon micro sur Discord ».

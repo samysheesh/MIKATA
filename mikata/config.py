@@ -440,6 +440,11 @@ class UiaConfig(_Section):
     # joue aucun son et n'est pas devant l'utilisateur (sinon : UIA, comme avant).
     devtools_relaunch: bool = True
     devtools_launch_timeout_s: float = Field(default=25.0, ge=5.0, le=120.0)
+    # Phase 17f : l'effet de chaque clic (ou saisie validée) dans une appli est relu dans sa
+    # fenêtre à la fin du tour, pendant que MIKATA parle. Rien n'a changé en
+    # `verify_timeout_s` secondes : elle dit « ça n'a pas pris » et le modèle reprend.
+    verify_effects: bool = True
+    verify_timeout_s: float = Field(default=3.0, gt=0, le=15)
 
     @property
     def backend(self) -> Literal["uia", "appkit"]:

@@ -27,6 +27,7 @@ import sys
 import time
 import unicodedata
 from abc import ABC, abstractmethod
+from collections import Counter
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Any, ClassVar
@@ -37,6 +38,7 @@ from rapidfuzz import fuzz
 from mikata.config import Config
 from mikata.tools.base import Desktop, ToolError, UiControlInfo, UiItemInfo, UiWindowInfo
 from mikata.uia.client import UiaAccessibilityClient
+from mikata.uia.effects import EffectReport, PendingEffect, Snapshot, compare, mask
 from mikata.uia.state import AmbientState, load_uiautomation
 
 # Conteneurs sans intérêt pour le LLM : pas listés par `controls`.
@@ -509,6 +511,10 @@ class UiController:
     _apps: Any = None
     _devtools: _BackendBase | None = None
     _walk: _Walk | None = None  # phase 17f : la dernière lecture d'une fenêtre (UIA, AX)
+    # Phase 17f : ce que montrait la fenêtre de la dernière recherche de contrôle, et les
+    # actions dont l'effet reste à constater (uia/effects.py).
+    _seen: tuple[UiWindowInfo, Snapshot] | None = None
+    _pending: list[PendingEffect] | None = None
 
     def __init__(self, config: Config, desktop: Desktop) -> None:
         # Choix unique du moteur, à la construction, par la plateforme (mikata/plat.py,
@@ -671,10 +677,16 @@ class UiController:
             and walk.window == window
             and time.monotonic() - walk.at <= _WALK_REUSE_S
         ):
+            seen: Snapshot = Counter()
             with contextlib.suppress(ToolError):
-                return self._match(engine, walk.nodes, control, kind, nth, clickable, near)
+                node = self._match(engine, walk.nodes, control, kind, nth, clickable, near, seen)
+                self._seen = (window, seen)
+                return node
         nodes = engine.walk(engine.attach(window), _MAX_VISITED)
-        return self._match(engine, nodes, control, kind, nth, clickable, near)
+        seen = Counter()
+        node = self._match(engine, nodes, control, kind, nth, clickable, near, seen)
+        self._seen = (window, seen)
+        return node
 
     def _match(
         self,
@@ -685,7 +697,10 @@ class UiController:
         nth: int,
         clickable: bool,
         near: str | list[str] | None,
+        seen_names: Snapshot | None = None,
     ) -> Any:
+        """La recherche elle-même ; `seen_names` reçoit au passage ce que montre la fenêtre
+        (phase 17f : l'état d'avant une action, sans rien lire de plus)."""
         labels = [control] if isinstance(control, str) else list(control)
         wanted = [fold(label) for label in labels]
         shown = " / ".join(labels)
@@ -699,6 +714,8 @@ class UiController:
             if len(seen) < 2000:
                 seen.setdefault(name[:_NAME_MAX], fuzz.token_set_ratio(wanted[0], fold(name)))
             node_kind = engine.node_kind(node)
+            if seen_names is not None:
+                seen_names[(mask(name[:_NAME_MAX]), node_kind)] += 1
             if kind is not None and fold(kind) != fold(node_kind):
                 continue
             if clickable and kind is None and node_kind not in _CLICKABLE:
@@ -782,8 +799,18 @@ class UiController:
         names = [fold(button).strip() for button in buttons]
         needs = [fold(text).strip() for text in contains or [] if text.strip()]
         close: list[Any] = []
+        # Phase 17f : l'état d'avant le clic. DevTools a l'arbre entier en mémoire : on le
+        # garde tout ; UIA s'arrête à la bonne ligne : seulement ce qui a été parcouru.
+        whole = engine is not self._backend
+        seen: Snapshot = (
+            self._names_of(engine, engine.walk(root, _MAX_VISITED)) if whole else Counter()
+        )
+        self._seen = (window, seen)
         for node in engine.iter_walk(root, _MAX_VISITED):  # s'arrête à la bonne
-            name = fold(engine.node_name(node)).strip()
+            raw = engine.node_name(node)
+            if raw and not whole:
+                seen[(mask(raw[:_NAME_MAX]), engine.node_kind(node))] += 1
+            name = fold(raw).strip()
             if name == wanted:
                 done = self._press_in(engine, window, node, names, needs)
                 if done is not None:
@@ -868,7 +895,9 @@ class UiController:
             if engine.node_kind(node) == "bouton" and any(
                 name == n or name.startswith(n + " ") for n in names
             ):
-                return self._click(window, node, engine.node_name(node))
+                return self._click(
+                    window, node, engine.node_name(node), partial=engine is self._backend
+                )
         return None
 
     # -- lecture ----------------------------------------------------------------------
@@ -899,22 +928,108 @@ class UiController:
         name = self._engine(window).node_name(node) or "(sans nom)"
         return self._click(window, node, name)
 
-    def _click(self, window: UiWindowInfo, node: Any, name: str) -> str:
+    def _click(self, window: UiWindowInfo, node: Any, name: str, partial: bool = False) -> str:
         """Le clic, la fenêtre montrée s'il le faut (`_shown_for_click`) ; une appli lue
-        par DevTools prend le clic cachée."""
+        par DevTools prend le clic cachée. Phase 17f : l'action est notée pour constater
+        son effet ; un interrupteur qui bascule ou un nom qui change le montre déjà."""
         engine = self._engine(window)
         self._walk = None  # la fenêtre change : la prochaine recherche la relit
+        state = engine.toggle_state(node)
+        windows = self._window_handles()
         if engine is not self._backend:
-            return engine.click(node, name)
-        with _shown_for_click(window.handle):
-            return engine.click(node, name)
+            done = engine.click(node, name)
+        else:
+            with _shown_for_click(window.handle):
+                done = engine.click(node, name)
+        shown = engine.node_name(node) != name or (
+            state is not None and engine.toggle_state(node) != state
+        )
+        self._note(window, f"clic sur « {name[:80]} »", windows, shown, partial)
+        return done
 
     def set_text(self, window: UiWindowInfo, control: str, text: str, submit: bool = False) -> str:
         engine = self._engine(window)
         node = self._find(window, control, "champ", 1)
         self._walk = None
+        windows = self._window_handles()
         done = engine.set_text(node, control, text)
-        return engine.submit(node, control) if submit else done
+        if not submit:
+            return done
+        done = engine.submit(node, control)
+        # Phase 17f : valider doit changer la fenêtre (des résultats). Un champ seulement
+        # rempli ne se constate pas ici : son nom ne change pas.
+        self._note(window, f"saisie validée dans « {control[:80]} »", windows, False)
+        return done
+
+    # -- effet des actions (phase 17f, uia/effects.py) ---------------------------------
+
+    def _names_of(self, engine: _BackendBase, nodes: list[Any]) -> Snapshot:
+        seen: Snapshot = Counter()
+        for node in nodes:
+            name = engine.node_name(node)
+            if name:
+                seen[(mask(name[:_NAME_MAX]), engine.node_kind(node))] += 1
+        return seen
+
+    def _window_handles(self) -> frozenset[int]:
+        try:
+            return frozenset(w.handle for w in self._desktop.windows() if not _own(w.process))
+        except Exception:  # le bureau illisible n'empêche pas l'action
+            return frozenset()
+
+    def _note(
+        self,
+        window: UiWindowInfo,
+        action: str,
+        windows: frozenset[int],
+        shown: bool,
+        partial: bool = False,
+    ) -> None:
+        """Note l'action, avec ce que montrait la fenêtre juste avant (la recherche de la
+        cible l'a lu). Sans cet état, rien n'est noté : mieux vaut ne pas constater que
+        crier « ça n'a pas pris » à tort."""
+        seen = self._seen
+        self._seen = None
+        if seen is None or seen[0] != window:
+            return
+        if self._pending is None:
+            self._pending = []
+        self._pending.append(
+            PendingEffect(window, action, seen[1], windows, time.monotonic(), shown, partial)
+        )
+
+    def take_pending(self) -> list[PendingEffect]:
+        """Les actions notées depuis la dernière fois (la boucle agent les vérifie)."""
+        pending, self._pending = self._pending or [], []
+        return pending
+
+    def effect_of(self, pending: list[PendingEffect]) -> list[EffectReport]:
+        """Relit chaque fenêtre où ont eu lieu ces actions, et dit ce qui a changé depuis
+        la première. Une fenêtre fermée ou illisible compte comme changée : on ne crie
+        « ça n'a pas pris » que si l'on voit que rien n'a bougé."""
+        try:
+            now = {w.handle: w.title for w in self._desktop.windows() if not _own(w.process)}
+        except Exception:
+            now = {}
+        groups: dict[tuple[str, str, int, str], list[PendingEffect]] = {}
+        for item in pending:
+            w = item.window
+            groups.setdefault((w.title, w.process, w.handle, w.engine), []).append(item)
+        reports: list[EffectReport] = []
+        for group in groups.values():
+            window = group[0].window
+            engine = self._engine(window)
+            after: Snapshot | None
+            if window.handle and window.handle not in now:
+                after = None  # fermée
+            else:
+                try:
+                    after = self._names_of(engine, engine.walk(engine.attach(window), _MAX_VISITED))
+                except ToolError:
+                    after = None
+            title = now.get(window.handle) if window.handle else None
+            reports.append(compare(group, after, title, now))
+        return reports
 
     # -- état ambiant ------------------------------------------------------------------
 
@@ -974,6 +1089,11 @@ def renamed(before: str, after: str) -> str:
     if not after or fold(after) == fold(before):
         return ""
     return f" ; il s'appelle maintenant « {after[:_NAME_MAX]} »"
+
+
+def _own(process: str) -> bool:
+    """Les fenêtres de MIKATA lui-même (réglages, bulle) : pas un effet de l'action."""
+    return fold(process).startswith("python")
 
 
 def _leading(wanted: str, name: str) -> bool:

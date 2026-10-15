@@ -533,6 +533,24 @@
   tags: [appli, direct]
   expect: [{opened: "ms-settings:bluetooth"}]
 
+- id: clic_sans_effet
+  # Phase 17f : le premier clic ne prend pas (l'appli l'ignore). MIKATA le voit pendant
+  # qu'elle répond, le dit (« Attends, ça n'a pas pris ») et refait, au lieu de laisser
+  # un « c'est fait » faux.
+  request: "rejoins le salon vocal Général sur Discord"
+  tags: [appli, ui, verification]
+  world:
+    open_apps: [Discord]
+    controls:
+      Discord:
+        - ["Général", "élément", "Salon vocal • 2 membres", "Rejoindre"]
+        - ["jeux", "élément", "Salon vocal", "Rejoindre"]
+    inert: {"Général": 1}
+    reveal:
+      "Général": [["Voix connectée", "texte", "Général / samania"], ["Déconnecter", "bouton"]]
+  expect: [{ui_clicked_times: {name: "Général", times: 2}}, {answer: "pas pris"}]
+  forbid: [{ui_clicked: "jeux"}]
+
 - id: salon_discord
   request: "rejoins le salon vocal Général sur Discord"
   tags: [appli, ui]

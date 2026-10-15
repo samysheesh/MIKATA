@@ -95,6 +95,17 @@ _inducible = inducible
 OPEN_APPS_FRESH_S = 10.0
 OPEN_APPS_TIMEOUT_S = 0.3  # le contexte ne doit pas retarder l'appel LLM
 OPEN_APPS_PREWARM_TIMEOUT_S = 2.0
+EFFECT_POLL_S = 0.4  # phase 17f : relecture de l'effet des actions, pendant la réponse
+
+
+def no_effect_note(unseen: list[str]) -> str:
+    """Phase 17f : ce que le modèle apprend quand ses actions n'ont rien changé."""
+    return (
+        "Vérification faite après coup (MIKATA vient de dire « Attends, ça n'a pas pris. ») : "
+        f"{' ; '.join(unseen)}. L'action n'a sans doute pas pris, et ce que tu as annoncé est "
+        "peut-être faux. Relis la fenêtre (uia_window) et fais ce qui manque autrement, sans "
+        "refaire ce qui a pris ; si la demande était en fait déjà faite, dis-le en une phrase."
+    )
 
 
 class Agent:
@@ -429,7 +440,6 @@ class Agent:
         if self._actions is not None and self.config.agent.explore:
             schemas = [*schemas, EXPLORE_SCHEMA]  # phase 16d
         max_rounds = self.config.llm.max_tool_rounds
-        fallback_steps = self.config.llm.reasoning_fallback_steps
         skill_path = self._skill_path
         # Une compétence active dont un motif colle est rejouée sans le modèle ; sinon
         # l'aiguillage part avec le premier appel normal (et reconnaît aussi les compétences
@@ -442,6 +452,78 @@ class Agent:
         router = None
         if replayed is None and skill_path is not None:
             router = skill_path.start_router(command, follow_up)
+        if not await self._steps(turn, schemas, max_rounds, router, follow_up):
+            return
+        # Phase 17f : pendant que MIKATA dit sa réponse, l'effet de ses actions dans les
+        # applis est relu ; rien n'a bougé : elle le dit, et le modèle reprend une fois.
+        unseen = await self._unseen_effects(turn)
+        if unseen and not turn.state.no_tools:
+            self._say_phrase(speech, "no_effect")
+            turn.spoken.append(PHRASES["no_effect"])
+            result.shortcut = False
+            result.skill_uses = [
+                (name, False, "aucun effet visible") if ok else (name, ok, error)
+                for name, ok, error in result.skill_uses
+            ]
+            turn.messages.append({"role": "system", "content": no_effect_note(unseen)})
+            spoken = len(turn.spoken)
+            if not await self._steps(turn, schemas, self.config.llm.max_tool_rounds, None, False):
+                return
+            result.no_effect = await self._unseen_effects(turn)
+            if result.no_effect:
+                self._say_phrase(speech, "still_no_effect")
+                turn.spoken.append(PHRASES["still_no_effect"])
+            elif len(turn.spoken) == spoken:  # refait par un outil qui conclut, sans phrase
+                self._say_phrase(speech, "fixed")
+                turn.spoken.append(PHRASES["fixed"])
+        self._finish(turn, lessons, time.monotonic() - started)
+
+    async def _unseen_effects(self, turn: Turn) -> list[str]:
+        """Phase 17f (uia/effects.py) : les actions de ce tour dans les applis dont aucun
+        effet ne se voit. Relues pendant que la réponse se dit, jusqu'à `uia.verify_timeout_s`
+        après la dernière action ; [] si tout a pris ou s'il n'y a rien à vérifier."""
+        cfg = self.config.uia
+        ctx = self.tools.ctx if self.tools is not None else None
+        uia = ctx.uia if ctx is not None else None
+        if not cfg.verify_effects or uia is None or not hasattr(uia, "take_pending"):
+            return []
+        assert ctx is not None
+        pending = [item for item in uia.take_pending() if not item.confirmed]
+        if not pending:
+            return []
+        deadline = max(item.at for item in pending) + cfg.verify_timeout_s
+        reports: list[Any] = []
+        while pending:
+            try:
+                fresh = await ctx.run_blocking(uia.effect_of, pending)
+            except Exception as exc:  # une relecture impossible ne fait jamais crier
+                logger.debug("Effet des actions illisible : {}", exc)
+                return []
+            reports = [r for r in reports if r.changed] + list(fresh)
+            missing = [r for r in fresh if not r.changed]
+            if not missing or time.monotonic() >= deadline:
+                break
+            pending = [p for p in pending if any(p.window == r.window for r in missing)]
+            await asyncio.sleep(EFFECT_POLL_S)
+        summaries = [r.summary() for r in reports]
+        turn.result.effects.extend(summaries)
+        for text in summaries:
+            logger.info("Effet : {}.", text)
+        return [r.summary() for r in reports if not r.changed]
+
+    async def _steps(
+        self,
+        turn: Turn,
+        schemas: list[dict[str, Any]],
+        max_rounds: int,
+        router: asyncio.Task[Any] | None,
+        follow_up: bool,
+    ) -> bool:
+        """Appels au modèle et actions jusqu'à la réponse. False : le tour s'arrête là, sans
+        bilan (serveur injoignable, phrase de la fenêtre de suivi ignorée)."""
+        command, speech, result = turn.command, turn.speech, turn.result
+        fallback_steps = self.config.llm.reasoning_fallback_steps
+        skill_path = self._skill_path
         for round_no in range(max_rounds + 1):
             last = round_no == max_rounds  # dernier appel : sans outils, réponse obligée
             gate = FollowUpGate(follow_up and round_no == 0)
@@ -461,11 +543,11 @@ class Agent:
             if reply is None:
                 result.outcome = "server"
                 self._say_phrase(speech, "server")
-                return
+                return False
             if reply.ignored:  # rien n'est dit ni fait, rien n'entre dans l'historique
                 logger.info("Fenêtre de suivi : « {} » ignorée ({}).", command, gate.reason)
                 result.outcome = "ignored"
-                return
+                return False
             if reply.text.strip():
                 turn.spoken.append(reply.text.strip())
             if not reply.calls:
@@ -504,7 +586,7 @@ class Agent:
                 result.raise_effort("low", "outil en échec")
             elif result.rounds >= fallback_steps:
                 result.raise_effort("low", f"plus de {fallback_steps} étape(s)")
-        self._finish(turn, lessons, time.monotonic() - started)
+        return True
 
     def _redo_unfinished(self, turn: Turn, results: list[Any]) -> bool:
         """Phase 16g : une correction (« non, sur Spotify ») refait la demande précédente.

@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -237,12 +238,54 @@ class SimUi:
         self,
         controls: dict[str, list[tuple[str, str, str]]],
         buttons: dict[tuple[str, str], list[str]] | None = None,
+        inert: dict[str, int] | None = None,
+        reveal: dict[str, list[tuple[str, str, str]]] | None = None,
     ) -> None:
         self.controls_by_app = controls
         # Phase 17a : les boutons d'un élément de liste (4e colonne d'une ligne de contrôles).
         self.buttons = buttons or {}
         self.clicked: list[tuple[str, str]] = []
         self.texts: list[tuple[str, str, str]] = []
+        # Phase 17f : nom de contrôle -> clics à venir sans effet visible (l'appli les
+        # ignore, comme Spotify réduit) ; l'effet des autres se voit.
+        self.inert = dict(inert or {})
+        # Ce qu'un clic qui prend fait apparaître dans la fenêtre (« Voix connectée »).
+        self.reveal = dict(reveal or {})
+        self._pending: list[Any] = []
+        self._effective: dict[int, bool] = {}
+
+    def _note(self, window: UiWindowInfo, label: str) -> None:
+        from collections import Counter
+
+        from mikata.uia.effects import PendingEffect
+
+        key = next(
+            (k for k, n in self.inert.items() if n and k.casefold() in label.casefold()), None
+        )
+        if key is not None:
+            self.inert[key] -= 1
+        else:
+            for name, rows in list(self.reveal.items()):
+                if name.casefold() in label.casefold():
+                    self.controls_by_app.setdefault(window.title, []).extend(rows)
+                    del self.reveal[name]
+        pending = PendingEffect(
+            window, f"clic sur « {label} »", Counter(), frozenset(), time.monotonic()
+        )
+        self._effective[id(pending)] = key is None
+        self._pending.append(pending)
+
+    def take_pending(self) -> list[Any]:
+        pending, self._pending = self._pending, []
+        return pending
+
+    def effect_of(self, pending: list[Any]) -> list[Any]:
+        from mikata.uia.effects import EffectReport
+
+        report = EffectReport(pending[0].window, [p.action for p in pending])
+        if any(self._effective.get(id(p), True) for p in pending):
+            report.appeared = ["(la fenêtre a changé)"]
+        return [report]
 
     def _match(self, title: str | None, process: str | None) -> str:
         wanted = (title or process or "").casefold()
@@ -287,10 +330,12 @@ class SimUi:
             for name, _, _ in rows:
                 if name.casefold() == label.casefold():
                     self.clicked.append((window.title, name))
+                    self._note(window, name)
                     return f"« {name} » cliqué."
         for name, _, _ in rows if isinstance(control, str) else []:
             if control.casefold() in name.casefold():
                 self.clicked.append((window.title, name))
+                self._note(window, name)
                 return f"« {name} » cliqué."
         raise ToolError(f"contrôle introuvable : « {control} »")
 
@@ -323,6 +368,7 @@ class SimUi:
                     raise ToolError(f"pas de bouton « {buttons[0]} » dans « {name} »")
                 pressed = match[0]
             self.clicked.append((window.title, f"{pressed} ({name})"))
+            self._note(window, f"{pressed} ({name})")
             return f"« {pressed} » de « {name} » cliqué."
         raise ToolError(f"aucun élément « {item} »")
 
@@ -603,6 +649,10 @@ class WorldSpec:
     shell: dict[str, str] = field(default_factory=dict)
     facts: list[str] = field(default_factory=list)
     weather: dict[str, float] = field(default_factory=dict)  # ville -> température
+    inert: dict[str, int] = field(default_factory=dict)  # phase 17f : clics sans effet visible
+    reveal: dict[str, list[list[str]]] = field(
+        default_factory=dict
+    )  # ce qu'un clic fait apparaître
 
 
 class SimWorld:
@@ -631,6 +681,9 @@ class SimWorld:
              for app, rows in spec.controls.items()},
             {(app, r[0]): [b.strip() for b in r[3].split(",") if b.strip()]
              for app, rows in spec.controls.items() for r in rows if len(r) > 3},
+            spec.inert,
+            {name: [(r[0], r[1], r[2] if len(r) > 2 else "") for r in rows]
+             for name, rows in spec.reveal.items()},
         )  # fmt: skip
         self.trash = _Trash(root / "Corbeille")
         self.spoken: list[str] = []

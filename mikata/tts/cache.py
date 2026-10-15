@@ -34,6 +34,10 @@ PHRASES: dict[str, str] = {
     "wait_app": "Je regarde dans l'application.",
     "wait_work": "Je m'en occupe, un instant.",
     "wait_long": "Ça prend un peu plus de temps, je continue.",
+    # Phase 17f : l'action n'a rien changé dans la fenêtre (vérifié pendant la réponse).
+    "no_effect": "Attends, ça n'a pas pris.",
+    "fixed": "Voilà, c'est bon.",
+    "still_no_effect": "Je ne vois toujours aucun changement, regarde de ton côté.",
 }
 FALLBACK_KEY = "voice_fallback"
 

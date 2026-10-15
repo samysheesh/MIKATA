@@ -224,6 +224,10 @@ class FakeUi:
         self.paused: list[bool] = []
         self.log: list[tuple[str, Any]] = []
         self.fail: set[str] = set()
+        # Phase 17f : contrôle -> nombre de clics à venir sans effet visible.
+        self.inert: dict[str, int] = {}
+        self._pending: list[Any] = []
+        self._effective: dict[int, bool] = {}
 
     def _record(self, name: str, value: Any = None) -> None:
         if name in self.fail:
@@ -251,7 +255,34 @@ class FakeUi:
         near: str | list[str] | None = None,
     ) -> str:
         self._record("click", (window.title, control, kind, nth) + ((near,) if near else ()))
+        self._note(window, f"clic sur « {control} »", str(control))
         return f"« {control} » cliqué."
+
+    def _note(self, window: UiWindowInfo, action: str, control: str) -> None:
+        import time
+        from collections import Counter
+
+        from mikata.uia.effects import PendingEffect
+
+        left = self.inert.get(control, 0)
+        if left:
+            self.inert[control] = left - 1
+        pending = PendingEffect(window, action, Counter(), frozenset(), time.monotonic())
+        self._effective[id(pending)] = not left
+        self._pending.append(pending)
+
+    def take_pending(self) -> list[Any]:
+        pending, self._pending = self._pending, []
+        return pending
+
+    def effect_of(self, pending: list[Any]) -> list[Any]:
+        from mikata.uia.effects import EffectReport
+
+        self._record("effect_of", [p.action for p in pending])
+        report = EffectReport(pending[0].window, [p.action for p in pending])
+        if any(self._effective.get(id(p), True) for p in pending):
+            report.appeared = ["Voix connectée"]
+        return [report]
 
     def click_in(
         self,

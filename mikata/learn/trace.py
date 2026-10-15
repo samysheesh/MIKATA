@@ -102,7 +102,8 @@ def trace_from_result(
         confirmations=int(getattr(result, "confirmations", 0)),
         scripts=scripts,
         direct=[r.name for r in direct],
-        failures=[f"{r.name} : {r.content[:160]}" for r in direct if not r.ok],
+        failures=[f"{r.name} : {r.content[:160]}" for r in direct if not r.ok]
+        + [f"sans effet : {text[:160]}" for text in getattr(result, "no_effect", []) or []],
         tainted=tainted or any(script.tainted for script in scripts),
         lessons=lessons,
     )

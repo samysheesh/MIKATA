@@ -213,6 +213,9 @@ class TurnResult:
     script_sources: list[tuple[str, bool]] = field(default_factory=list)
     skill_uses: list[tuple[str, bool, str]] = field(default_factory=list)
     skill_choices: list[SkillChoice] = field(default_factory=list)  # phase 17f : pick() retenus
+    # Phase 17f : effets des actions dans les applis, relus après coup ; celles sans effet.
+    effects: list[str] = field(default_factory=list)
+    no_effect: list[str] = field(default_factory=list)
     # Phase 15g : appels directs (appel, arguments écrits avant toute lecture non fiable ?),
     # dans l'ordre de `direct_results`.
     direct_sources: list[tuple[ToolCallReq, bool]] = field(default_factory=list)

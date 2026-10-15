@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from test_agent import NOW, Phrases, Sink
-from tool_fakes import FakeUi, make_ctx
+from tool_fakes import FakeUi, make_config, make_ctx
 
 from mikata.action.runtime import SkillChoice, choice_key, find_choice
 from mikata.agent.loop import Agent, TurnResult
@@ -99,7 +99,8 @@ def _turn(
     tmp_path: Path, jev: FakeJev, ui: FakeUi, llm: SlowLLM | None = None
 ) -> tuple[TurnResult, SkillStore]:
     store = SkillStore(tmp_path / "skills")
-    ctx = make_ctx(tmp_path, uia=ui, skills=store)
+    config = make_config(tmp_path, uia={"verify_timeout_s": 0.2})
+    ctx = make_ctx(tmp_path, config=config, uia=ui, skills=store)
     agent = Agent(
         llm or SlowLLM(),  # type: ignore[arg-type]
         ctx.config,
@@ -244,3 +245,18 @@ def test_choices_stay_personal(tmp_path: Path) -> None:
     assert skill.path is not None and (skill.path / CHOICES_FILE).is_file()
     imported = SkillStore(tmp_path / "b").import_package(skill.path)  # dossier, avec choix
     assert imported.choices == []
+
+
+def test_a_skill_whose_click_changes_nothing_counts_as_a_failure(tmp_path: Path) -> None:
+    """Le signal de réussite vient de ce qui se voit : une compétence dont le clic ne change
+    rien dans la fenêtre échoue (et sera révisée), même sans erreur d'outil ; le bouton
+    qu'elle a choisi n'est pas retenu."""
+    _adopted(tmp_path)
+    ui = FakeUi([WINDOW], CONTROLS)
+    ui.inert = {"Rendre muet": 1}
+    jev = FakeJev("couper_micro_application", 2)
+    result, store = _turn(tmp_path, jev, ui, SlowLLM("Je réessaie."))
+    assert result.answer == "C'est fait. Attends, ça n'a pas pris. Je réessaie."
+    skill = store.get("couper_micro_application")
+    assert skill is not None and skill.failures == 1 and skill.successes == 0
+    assert skill.choices == []

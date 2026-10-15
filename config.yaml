@@ -196,3 +196,5 @@ uia:                               # ajout phase 12a : pilotage fin des applicat
                                    #   (tant qu'elles tournent ainsi, un programme du PC peut les piloter)
   devtools_relaunch: true          # appli listée ouverte sans cet accès : relancée cachée si elle ne joue rien
   devtools_launch_timeout_s: 25    # attente maximale du démarrage caché d'une appli listée
+  verify_effects: true              # phase 17f : effet de chaque clic relu pendant la réponse
+  verify_timeout_s: 3               # rien n'a changé après N s : « ça n'a pas pris », on reprend

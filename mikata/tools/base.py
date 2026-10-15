@@ -278,6 +278,10 @@ class UiAutomation(Protocol):
     def background_status(self) -> list[dict[str, Any]]: ...  # pour l'interface
     def background_action(self, name: str, action: str) -> str: ...  # show | hide | close
     def state_summary(self) -> str: ...  # état ambiant en cache (Discord...), "" si rien
+    # Phase 17f (mikata/uia/effects.py) : les actions dont l'effet reste à constater, et ce
+    # qu'elles ont changé dans leur fenêtre.
+    def take_pending(self) -> list[Any]: ...
+    def effect_of(self, pending: list[Any]) -> list[Any]: ...
     def pause_state(self, paused: bool) -> None: ...  # le poller d'état saute ses lectures
     def aclose(self) -> None: ...  # arrête le poller d'état (arrêt propre)
 
