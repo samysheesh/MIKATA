@@ -551,6 +551,27 @@
   expect: [{ui_clicked_times: {name: "Général", times: 2}}, {answer: "pas pris"}]
   forbid: [{ui_clicked: "jeux"}]
 
+- id: quitte_salon_apres_coup
+  # Phase 17f (15/10) : après deux « C'est fait », « quitte le salon vocal » recevait
+  # « C'est fait. » sans aucun outil : le modèle imitait les réponses d'avant.
+  request: "quitte le salon vocal"
+  tags: [appli, ui, verification]
+  history:
+    - user: "coupe mon micro sur Discord"
+      assistant: "C'est fait."
+      calls: [{name: uia_click, args: {window: Discord, control: "Rendre muet"}, result: "« Rendre muet » basculé : maintenant activé."}]
+    - user: "réactive-le"
+      assistant: "C'est fait."
+      calls: [{name: uia_click, args: {window: Discord, control: "Rendre muet"}, result: "« Rendre muet » basculé : maintenant désactivé."}]
+  world:
+    open_apps: [Discord]
+    controls:
+      Discord:
+        - ["Rendre muet", "bouton"]
+        - ["Déconnecter", "bouton"]
+        - ["Voix connectée", "texte", "Champions league / samania"]
+  expect: [{ui_clicked: "Déconnecter"}]
+
 - id: salon_discord
   request: "rejoins le salon vocal Général sur Discord"
   tags: [appli, ui]

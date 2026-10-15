@@ -98,6 +98,16 @@ OPEN_APPS_PREWARM_TIMEOUT_S = 2.0
 EFFECT_POLL_S = 0.4  # phase 17f : relecture de l'effet des actions, pendant la réponse
 
 
+def unbacked_note(text: str) -> str:
+    """Phase 17f : le modèle allait dire « c'est fait » sans avoir rien fait."""
+    return (
+        f"Tu allais répondre « {text[:120]} » alors que rien n'a été fait dans ce tour (aucun "
+        "outil appelé) : rien n'a été dit à l'utilisateur. Si sa demande appelle une action, "
+        "fais-la maintenant avec un outil, sans rien écrire avant ; si elle était déjà faite "
+        "dans un échange précédent, dis-le en une phrase (« c'était déjà fait »)."
+    )
+
+
 def no_effect_note(unseen: list[str]) -> str:
     """Phase 17f : ce que le modèle apprend quand ses actions n'ont rien changé."""
     return (
@@ -548,6 +558,14 @@ class Agent:
                 logger.info("Fenêtre de suivi : « {} » ignorée ({}).", command, gate.reason)
                 result.outcome = "ignored"
                 return False
+            if reply.unbacked:  # phase 17f : « c'est fait » sans action, pas dit
+                if not turn.state.claim_checked and not turn.state.no_tools and not last:
+                    turn.state.claim_checked = True
+                    turn.messages.append({"role": "system", "content": unbacked_note(reply.held)})
+                    continue
+                self._say_phrase(speech, "unbacked")
+                turn.spoken.append(PHRASES["unbacked"])
+                break
             if reply.text.strip():
                 turn.spoken.append(reply.text.strip())
             if not reply.calls:

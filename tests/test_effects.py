@@ -11,7 +11,7 @@ from typing import Any
 from test_agent_learning import Learner
 from test_uia_matching import FakeDesktop
 
-from mikata.llm.base import ToolCallReq
+from mikata.llm.base import TextDelta, ToolCallReq
 from mikata.tools.base import UiWindowInfo
 from mikata.uia.controller import UiController
 from mikata.uia.effects import PendingEffect, compare, mask
@@ -151,3 +151,38 @@ def test_a_visible_effect_or_the_setting_off_changes_nothing(tmp_path: Path) -> 
     off.ui.inert = {"Rendre muet": 1}
     assert off.respond("coupe mon micro sur Discord").answer == "C'est fait."
     assert not any(name == "effect_of" for name, _ in off.ui.log)
+
+
+# -- « c'est fait » sans rien avoir fait --------------------------------------------------
+
+LEAVE = [ToolCallReq("b", "uia_click", {"control": "Déconnecter", "window": "Discord"})]
+
+
+def test_a_claim_without_any_action_is_never_said(tmp_path: Path) -> None:
+    """15/10 : « Quitte le salon vocal ? » a reçu « C'est fait. » sans aucun outil (le
+    modèle imitait les réponses d'avant). Ce « C'est fait » n'est pas dit ; le modèle,
+    prévenu, agit, et c'est l'action qui conclut."""
+    learner = Learner(tmp_path, [TextDelta("C'est fait.")], LEAVE, uia=SHORT)
+    result = learner.respond("quitte le salon vocal")
+    assert result.answer == "C'est fait." and learner.sink.said == ["C'est fait."]
+    assert "rien n'a été fait dans ce tour" in learner.system(1)[-1]
+    assert [v[1] for n, v in learner.ui.log if n == "click"] == ["Déconnecter"]
+
+
+def test_twice_without_acting_is_said_honestly(tmp_path: Path) -> None:
+    learner = Learner(tmp_path, [TextDelta("C'est fait.")], [TextDelta("Voilà, c'est bon.")])
+    assert learner.respond("quitte le salon vocal").answer == "Je n'ai rien pu faire, désolé."
+
+
+def test_answers_about_the_past_or_after_acting_are_said() -> None:
+    from mikata.agent.model import claims_done
+
+    assert claims_done("C'est fait.") and claims_done("J'ai quitté le salon vocal.")
+    assert claims_done("Tu es déconnecté du salon.") and claims_done("Voilà, c'est bon.")
+    for text in (
+        "Oui, c'est fait.",
+        "C'était déjà fait.",
+        "Il fait 12 degrés.",
+        "Voilà une blague",
+    ):
+        assert not claims_done(text), text

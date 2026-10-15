@@ -118,6 +118,7 @@ class TurnState:
     no_tools: bool = False  # après un refus ou un « non » : plus aucun outil dans ce tour
     script_failures: int = 0
     strong: bool = False  # rôle « fort » du modèle pour la suite du tour
+    claim_checked: bool = False  # phase 17f : un « c'est fait » sans action déjà renvoyé
 
 
 @dataclass
@@ -128,6 +129,9 @@ class Reply:
     calls: list[ToolCallReq]
     reasoning: str
     ignored: bool = False  # fenêtre de suivi : phrase pas adressée à MIKATA
+    # Phase 17f : « c'est fait » sans action dans le tour, retenu (jamais dit) ; son texte.
+    unbacked: bool = False
+    held: str = ""
 
 
 class FollowUpGate:

@@ -38,6 +38,7 @@ PHRASES: dict[str, str] = {
     "no_effect": "Attends, ça n'a pas pris.",
     "fixed": "Voilà, c'est bon.",
     "still_no_effect": "Je ne vois toujours aucun changement, regarde de ton côté.",
+    "unbacked": "Je n'ai rien pu faire, désolé.",  # « c'est fait » sans action, deux fois
 }
 FALLBACK_KEY = "voice_fallback"
 

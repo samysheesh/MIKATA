@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+import unicodedata
 from collections.abc import Callable
 from typing import Any
 
@@ -46,6 +47,28 @@ ENGLISH_NARRATION = re.compile(
 )
 _SENTENCES = re.compile(r"(?<=[.!?])\s+")
 
+# Phase 17f : une réponse qui commence par dire qu'une action est faite. Le 15/10, « Quitte
+# le salon vocal ? » a reçu « C'est fait. » sans aucun outil appelé : le modèle imitait les
+# réponses d'avant. Sans action dans le tour, une telle réponse n'est pas dite (texte replié :
+# minuscules, sans accents).
+CLAIM = re.compile(
+    r"\s*(?:(?:voila|ok|d'?accord|parfait)\W+)?(?:"
+    r"c'?est (?:fait|bon|lance|lancee|coupe|coupee|ferme|fermee|ouvert|ouverte|regle|reglee"
+    r"|parti|eteint|allume|active|activee|desactive|desactivee|envoye|envoyee|note|termine)"
+    r"|j'?ai (?:bien )?(?:coupe|lance|ferme|ouvert|quitte|rejoint|envoye|active|desactive|mis"
+    r"|regle|baisse|monte|deconnecte|connecte|supprime|deplace|copie|cree|ecrit|tape|clique"
+    r"|retire|ajoute|coupe)"
+    r"|tu es (?:bien |maintenant |desormais )?(?:de)?connecte"
+    r"|tu n'?es plus (?:dans|connecte))\b"
+)
+
+
+def claims_done(text: str) -> bool:
+    """Le texte commence-t-il par annoncer une action faite (« C'est fait », « J'ai
+    quitté… ») ? « Oui, c'est fait » (une réponse sur le passé) ne compte pas."""
+    folded = unicodedata.normalize("NFKD", text.casefold().replace("’", "'"))
+    return CLAIM.match("".join(c for c in folded if not unicodedata.combining(c))) is not None
+
 
 def drop_english_narration(text: str) -> str:
     """Le texte sans ses phrases d'annonce en anglais (« I'll find... »)."""
@@ -68,17 +91,28 @@ class ModelCaller:
         gate: FollowUpGate | None = None,
         strong: bool = False,
     ) -> Reply | None:
-        """Un appel (avec son retry) ; None si le serveur reste injoignable."""
+        """Un appel (avec son retry) ; None si le serveur reste injoignable. Phase 17f : une
+        réponse qui commence par « c'est fait » alors que rien n'a été fait dans le tour est
+        retenue (`Reply.unbacked`), jamais dite."""
         config = self._config()
         gate = gate or FollowUpGate(active=False)
+        acted = bool(result.tool_calls or result.scripts or result.skill_uses)
+        held: list[str] = []
+        spoke = False
 
         def say(fragments: list[str]) -> None:
+            nonlocal spoke
             for fragment in fragments:
                 if ENGLISH_NARRATION.match(fragment):  # tic du modèle, jamais dit
                     logger.info("Annonce en anglais non dite : « {} »", fragment.strip())
                     continue
-                if gate.allow(fragment):
-                    speech.say(fragment)
+                if not gate.allow(fragment):
+                    continue
+                if not acted and not spoke and (held or claims_done(fragment)):
+                    held.append(fragment)  # la suite dira si une action l'appuie
+                    continue
+                spoke = True
+                speech.say(fragment)
 
         splitter = FragmentSplitter(config.tts.first_chunk_min_words)
         effort = result.effort_final
@@ -131,11 +165,22 @@ class ModelCaller:
         if done is not None and done.usage is not None:
             result.usage = done.usage if result.usage is None else result.usage + done.usage
         _log_call(result.llm_calls, effort, start, first_at, done, calls)
+        text = drop_english_narration("".join(parts))
+        if held:
+            # Annoncée avant d'agir (des outils suivent) : l'action conclura elle-même. Sans
+            # outil : une action jamais faite, rien n'est dit.
+            logger.info(
+                "Réponse « {} » non dite : {}.",
+                "".join(held).strip()[:80],
+                "l'action suit" if calls else "rien n'a été fait dans ce tour",
+            )
         return Reply(
-            drop_english_narration("".join(parts)),
+            "" if held else text,
             calls,
             done.reasoning if done is not None else "",
             gate.ignored,
+            unbacked=bool(held) and not calls,
+            held=text if held else "",
         )
 
 

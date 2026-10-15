@@ -3498,6 +3498,12 @@ qu'elle parle, pour garder la latence) :
 - Le modèle ne relit plus la fenêtre pour vérifier après un clic (une consigne) : rejoindre
   un salon Discord passe de 4 à 2 appels au banc.
 - `uia.verify_effects: false` coupe tout ça.
+- **« C'est fait » sans rien avoir fait** (ton essai : « quitte le salon vocal » a reçu
+  « C'est fait. » sans qu'aucun outil ne soit appelé, le modèle imitait les deux réponses
+  d'avant) : une réponse qui **commence** par annoncer une action faite (« C'est fait »,
+  « J'ai quitté… », « Tu es déconnecté ») alors que rien n'a été fait dans le tour n'est
+  jamais dite ; le modèle est prévenu et agit. S'il recommence : « Je n'ai rien pu faire,
+  désolé. ». « Oui, c'est fait » (une réponse sur le passé) ou « C'était déjà fait » passent.
 
 ```powershell
 uv run pytest tests/test_effects.py tests/test_skills_fast.py -q
