@@ -43,6 +43,18 @@ REMEMBERED_KINDS = frozenset(
     {"bouton", "case", "menu", "onglet", "champ", "liste déroulante", "curseur"}
 )
 MAX_ACTIONS = 25  # dont appels qui agissent
+# Phase 17f : actions d'un programme sur une cible tirée d'un contenu lu (une ligne de
+# résultats, un lien, un contrôle lu à l'écran). Le 15/10, pour « lance Jet Lag de
+# Tiakola », un programme a cliqué « Play » sur chacun des 18 résultats qui citaient le
+# titre (une boucle sans arrêt après le premier) : la musique a été relancée 18 fois en
+# 10 s. Une demande qui vise plusieurs choses lues les fait une à une, par l'outil direct,
+# chacune vue par le modèle ; c'est aussi une limite de plus contre un contenu piégé.
+MAX_CONTENT_ACTIONS = 1
+CONTENT_ACTIONS_REASON = (
+    "un programme n'agit qu'une fois sur une cible lue à l'écran (ligne, lien, contrôle "
+    "lus) : la première action est faite, celle-ci ne l'est pas. Pour une seule chose "
+    "demandée, c'est fini ; pour en viser une autre, utilise l'outil direct"
+)
 ASK_TIMEOUT_S = 8.0
 REDACTED = "(détail masqué : il dépend d'un contenu lu ailleurs)"
 
@@ -186,6 +198,7 @@ class ScriptRuntime:
         self.llm_calls = 0
         self._calls = 0
         self._actions = 0
+        self._content_actions = 0  # phase 17f : actions sur une cible lue (MAX_CONTENT_ACTIONS)
 
     # -- interface de l'interpréteur ------------------------------------------------------
 
@@ -231,6 +244,11 @@ class ScriptRuntime:
             self._record(entry, bound, arg_trust, "refusé", False, decision.reason, 0.0)
             logger.warning("Politique : {} refusé ({}).", entry.name, decision.reason)
             raise PolicyDenied(decision.reason)
+        on_content = entry.effect is not Effect.READ and arg_trust is Trust.UNTRUSTED
+        if on_content and self._content_actions >= MAX_CONTENT_ACTIONS:
+            self._record(entry, bound, arg_trust, "refusé", False, CONTENT_ACTIONS_REASON, 0.0)
+            logger.warning("Programme : {} non fait ({}).", entry.name, "une action par cible lue")
+            raise ScriptFailure(CONTENT_ACTIONS_REASON)
         if decision.verdict is Verdict.CONFIRM:
             guard = self.registry.ctx.guard
             accepted = guard is not None and await guard.confirm(
@@ -243,6 +261,8 @@ class ScriptRuntime:
         result = await self.registry.execute(call)
         self.tool_calls.append(call)
         self.tool_results.append(result)
+        if on_content and result.ok:  # seule une action faite compte
+            self._content_actions += 1
         self._record(
             entry, bound, arg_trust, decision.verdict.value, result.ok, result.content,
             result.duration_s,
@@ -445,6 +465,7 @@ class ScriptRuntime:
     ) -> ScriptOutcome:
         """Exécute `code` ; ne lève jamais (sauf annulation de la tâche asyncio)."""
         interpreter = Interpreter(self, timeout_s=timeout_s, variables=variables)
+        self._content_actions = 0  # par programme
         start = time.monotonic()
         outcome = ScriptOutcome(ok=False)
         try:

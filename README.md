@@ -3457,8 +3457,22 @@ appris. Trois causes, relevées dans tes traces du 14/10, toutes générales :
 Résultat attendu pour « coupe mon micro sur Discord » : environ 1,5 s à l'essai (Jev, la
 lecture de la fenêtre, le clic), un peu plus d'1 s une fois active.
 
+**Suite du 15/10** (ton essai : « lance Jet Lag de Tiakola » relançait la musique en boucle) :
+
+- Ce n'était pas une vérification sans rafraîchissement : le modèle a écrit un programme qui
+  cliquait « Play » sur **chaque** résultat contenant « Jet Lag » (le titre, puis 17 playlists
+  et pages de paroles), sans s'arrêter après le premier. 18 relances en 10 s.
+- Règle générale, dans le code : **un programme n'agit qu'une fois sur une cible lue à
+  l'écran** (une ligne, un lien, un contrôle lus). La deuxième action est arrêtée avant de
+  se faire, et le modèle reçoit la raison. Plusieurs cibles lues se font une à une, par
+  l'outil direct. C'est aussi une protection de plus contre une page piégée.
+- La même consigne écrite dans le guide du modèle faisait rater d'autres tâches du banc
+  (« ouvre la page et dis-moi les horaires » s'arrêtait à l'ouverture) : elle n'y est pas.
+- Ton « Stop » effaçait la trace du tour : une commande arrêtée garde maintenant sa trace
+  (« arrêté »), pour comprendre après coup.
+
 ```powershell
-uv run pytest tests/test_skills_fast.py tests/test_skills_route.py tests/test_skills_agent.py tests/test_uia_matching.py -q
+uv run pytest tests/test_skills_fast.py tests/test_skills_route.py tests/test_skills_agent.py tests/test_uia_matching.py tests/test_action_runtime.py tests/test_agent_learning.py -q
 # À la voix, dans un salon vocal Discord : « MIKATA, coupe mon micro sur Discord ».
 # Le journal (data\logs\mikata.log) dit « Jev : compétence « couper-micro-application » »,
 # puis « Compétence « couper-micro-application » (aiguillage) », sans « Appel LLM » entre les deux.

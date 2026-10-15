@@ -8,6 +8,7 @@ l'utilisateur donne une leçon, tirée en arrière-plan. Rien n'est appris d'un 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from pathlib import Path
 from typing import Any
@@ -70,6 +71,43 @@ class Learner:
 
     def system(self, call: int = 0) -> list[str]:
         return [m["content"] for m in self.llm.messages[call] if m["role"] == "system"]
+
+
+def test_a_stopped_turn_still_leaves_its_trace(tmp_path: Path) -> None:
+    """Phase 17f : « stop » pendant le tour ; ce qui a été fait reste lisible après coup."""
+    from mikata.llm.base import Done
+
+    class Hanging:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def stream(self, messages: Any, tools: Any, **kwargs: Any) -> Any:
+            self.calls += 1
+            if self.calls == 1:
+                yield script("set_volume(level=20)\nset_volume(level=30)\nreturn {'volume': 30}")
+                yield Done("tool_calls")
+                return
+            await asyncio.Event().wait()  # le modèle réfléchit encore quand « stop » arrive
+            yield Done("stop")
+
+    learner = Learner(tmp_path)
+    llm = Hanging()
+    learner.agent._model.llm = llm  # type: ignore[assignment]
+
+    async def scenario() -> None:
+        task = asyncio.create_task(learner.agent.respond("baisse le son", learner.sink))
+        for _ in range(200):
+            if llm.calls >= 2:
+                break
+            await asyncio.sleep(0.01)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+    (trace,) = learner.traces.recent(5)
+    assert trace.outcome == "arrêté" and learner.audio.volume == 30
+    assert "set_volume(level=30)" in trace.scripts[0].code
 
 
 def test_a_relevant_lesson_joins_the_context_and_is_scored(tmp_path: Path) -> None:

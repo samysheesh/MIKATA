@@ -64,7 +64,7 @@ from mikata.learn.playbook import Playbook, render
 from mikata.learn.preferences import PreferenceStore
 from mikata.learn.reflect import is_correction
 from mikata.learn.skills import SkillStore
-from mikata.learn.trace import TraceStore
+from mikata.learn.trace import TraceStore, trace_from_result
 from mikata.llm.base import LLMClient
 from mikata.llm.prompts import active_window_title, build_messages, dynamic_context
 from mikata.llm.reasoning import detect_reasoning
@@ -392,8 +392,31 @@ class Agent:
         self._turns[id(turn)] = turn
         try:
             await self._rounds(turn, lessons, started, follow_up)
+        except asyncio.CancelledError:
+            self._keep_stopped_trace(turn, time.monotonic() - started)
+            raise
         finally:
             self._turns.pop(id(turn), None)
+
+    def _keep_stopped_trace(self, turn: Turn, seconds: float) -> None:
+        """Phase 17f : « stop » annule le tour avant sa trace. On la garde quand même
+        (« arrêté » : ce qui a été fait, les programmes en entier), pour comprendre après
+        coup ce qui s'est passé ; rien n'en est appris. Le 15/10, le programme qui relançait
+        Jet Lag 18 fois n'était plus lisible que tronqué dans actions.log."""
+        traces = self._learner.traces
+        if traces is None or not self.config.learning.traces:
+            return
+        result = turn.result
+        result.outcome = "arrêté"
+        result.answer = " ".join(turn.spoken).strip()
+        trace = trace_from_result(
+            turn.command, result, seconds, [], tainted=turn.state.trust is Trust.UNTRUSTED
+        )
+        if trace.acted:
+            try:
+                traces.save(trace)
+            except OSError as exc:
+                logger.debug("Trace d'un tour arrêté non écrite : {}", exc)
 
     async def _rounds(
         self, turn: Turn, lessons: list[Any], started: float, follow_up: bool

@@ -358,6 +358,43 @@ def test_say_and_ask_go_through_the_turn(tmp_path: Path) -> None:
     )
 
 
+# -- une action par cible lue (phase 17f) ------------------------------------------------
+
+
+def test_a_program_acts_only_once_on_targets_read_on_screen(tmp_path: Path) -> None:
+    """Le 15/10, « lance Jet Lag de Tiakola » : le programme cliquait « Play » sur chaque
+    résultat qui citait le titre (18 relances en 10 s). La première action sur une cible
+    lue est faite, la suivante est arrêtée avant d'agir, et le modèle sait pourquoi."""
+    world = World(tmp_path)
+    world.browser.page = (
+        "Titre : Recherche\nURL : https://music\nTexte :\nx\n"
+        "Liens : Jet Lag | Jet Lag (paroles) | Jet Lag Radio"
+    )
+    outcome = world.run(
+        "page = browser.read()\nfor link in page.links:\n    browser.click(link)\nreturn 'ok'"
+    )
+    assert outcome.kind == "outil" and "qu'une fois sur une cible lue" in outcome.error
+    clicks = [entry for entry in world.browser.log if entry[0] == "click"]
+    assert len(clicks) == 1 and clicks[0][1][0] == "Jet Lag"
+    assert [r.verdict for r in outcome.records if r.tool == "browser_click"] == [
+        "autorisé",
+        "refusé",
+    ]
+
+
+def test_actions_on_what_the_user_said_or_on_local_lists_are_not_limited(
+    tmp_path: Path,
+) -> None:
+    """« Ferme tout sauf Spotify » parcourt la liste des fenêtres (pas un contenu lu), et des
+    clics écrits dans le programme ne viennent pas de l'écran : rien n'est limité."""
+    world = World(tmp_path)
+    outcome = world.run(
+        "page = browser.read()\nbrowser.click('Accepter')\nbrowser.click('Lecture')\n"
+        "for w in list_windows().windows:\n    close_app(w.app)\nreturn 'ok'"
+    )
+    assert outcome.ok, outcome.error
+
+
 # -- pick : choisir dans une liste (phase 15l) -------------------------------------------
 
 

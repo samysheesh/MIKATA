@@ -188,6 +188,15 @@ Règles :
    inconnue, par exemple), le tour devient « teinté » : les actions conséquentes demandent
    alors une confirmation orale.
 4. **Les actions destructives restent interdites**, toujours (corbeille uniquement).
+5. **Une action par cible lue, dans un programme** (phase 17f) : un programme n'agit qu'une
+   fois avec un argument tiré d'un contenu non fiable (une ligne de résultats, un lien, un
+   contrôle lu) ; la suivante est arrêtée avant d'agir, et le modèle en reçoit la raison.
+   Plusieurs cibles lues se traitent une à une, par l'outil direct, chacune vue par le
+   modèle. Vu le 15/10 : pour « lance Jet Lag de Tiakola », un programme cliquait « Play »
+   sur chacun des 18 résultats qui citaient le titre (la musique relancée 18 fois en 10 s).
+   Une consigne dans le guide des programmes (« une chose demandée, une action ») faisait
+   échouer d'autres tâches du banc (« ouvre la page et dis-moi… » s'arrêtait à l'ouverture,
+   0/3) : la règle vit dans le code seulement.
 
 `agent/guard.py` reste la bibliothèque de règles (liste noire, dossiers autorisés,
 corbeille, sauvegardes) et ses tests de la phase 5 restent le critère. Il devient un filet
