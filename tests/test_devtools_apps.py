@@ -521,16 +521,23 @@ def test_a_link_never_brings_a_hidden_app_to_the_front(tmp_path: Path) -> None:
     result = _run_tool(tmp_path, "open_app_link", args, desktop=desktop, uia=ui)
     assert not result.ok and "tourne caché" in result.content and "uia_set_text" in result.content
     assert not any(entry[0] == "open" for entry in desktop.log)
+    # Phase 17f : même « à montrer » : le 15/10, la recherche ouverte dans le Spotify visible
+    # a été perdue à sa relance cachée. Et rien n'est lancé pour le savoir.
     shown = _run_tool(
         tmp_path, "open_app_link", {"link": "spotify:search:x"}, desktop=desktop, uia=ui
     )
-    assert shown.ok  # à montrer : le lien s'ouvre, l'utilisateur veut la voir
+    assert not shown.ok and "tourne caché" in shown.content
+    assert not any(entry[0] == "open" for entry in desktop.log)
+    assert not any(name == "window" for name, _ in ui.log)
 
 
-def test_a_link_still_opens_an_app_driven_by_uia(tmp_path: Path) -> None:
+def test_a_link_still_opens_an_app_not_driven_hidden(tmp_path: Path) -> None:
+    """Une appli hors de `uia.devtools_apps` reçoit ses liens comme avant (phase 17f :
+    une appli listée n'en reçoit jamais, même pilotée par sa fenêtre à ce moment-là)."""
     desktop = FakeDesktop()
     args = {"link": "spotify:search:Jet Lag", "background": True}
-    result = _run_tool(tmp_path, "open_app_link", args, desktop=desktop, uia=FakeUi())
+    registry = ToolRegistry(make_ctx(tmp_path, desktop=desktop, uia=FakeUi()))
+    result = asyncio.run(registry.execute(ToolCallReq("1", "open_app_link", args)))
     assert result.ok and any(entry[0] == "open" for entry in desktop.log)
 
 

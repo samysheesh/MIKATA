@@ -3505,6 +3505,18 @@ qu'elle parle, pour garder la latence) :
   jamais dite ; le modèle est prévenu et agit. S'il recommence : « Je n'ai rien pu faire,
   désolé. ». « Oui, c'est fait » (une réponse sur le passé) ou « C'était déjà fait » passent.
 
+**Spotify ne se pilotait plus (15/10, après midi)** :
+
+- « Jetlag » (ta prononciation transcrite) ne trouvait pas « Jet Lag » : la recherche des
+  lignes comparait mot à mot. Les lignes, l'attente d'un texte et le clic dans une ligne
+  comparent maintenant aussi sans espaces ni ponctuation (vérifié sur ton Spotify : 0 puis
+  10 résultats pour « Jetlag »), dans toutes les applis.
+- Un lien « visible » (`spotify:search:…`) était encore permis vers Spotify : la recherche
+  s'ouvrait dans ton Spotify à l'écran, puis la relance cachée de MIKATA le fermait et
+  repartait sur l'accueil. Une appli pilotée cachée (`uia.devtools_apps`) ne reçoit plus
+  aucun lien : elle se pilote dans son interface. Pour la voir : « Afficher » dans les
+  réglages.
+
 ```powershell
 uv run pytest tests/test_effects.py tests/test_skills_fast.py -q
 uv run python scripts/eval_bench.py --trials 3 --only clic_sans_effet salon_discord

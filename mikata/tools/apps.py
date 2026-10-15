@@ -479,17 +479,12 @@ LINK_SAFE = "/:?=&%#+@,;!$'()*~"
 LINK_SETTLE_S = 4.0  # attente de la vue demandée, pour un lien ouvert en arrière-plan
 
 
-async def _runs_hidden(ctx: ToolContext, process: str) -> bool:
-    """Phase 17e : `process` est une appli tenue cachée et pilotée par DevTools
-    (`uia.devtools_apps`) ? Elle est lancée cachée au passage si elle ne tournait pas."""
-    uia = ctx.uia
-    if uia is None or not ctx.config.uia.enabled or not ctx.config.uia.devtools_apps:
+def _driven_hidden(ctx: ToolContext, process: str) -> bool:
+    """Phase 17e-17f : `process` est une appli que MIKATA pilote cachée (`uia.devtools_apps`).
+    Lu dans les réglages, sans rien lancer ni relancer."""
+    if ctx.uia is None or not ctx.config.uia.enabled:
         return False
-    try:
-        window = await ctx.run_blocking(uia.window, None, process)
-    except ToolError:
-        return False
-    return window.engine == "devtools"
+    return any(fold(name) == fold(process) for name in ctx.config.uia.devtools_apps)
 
 
 @register_tool
@@ -528,13 +523,17 @@ class OpenAppLink(BaseTool[AppLinkParams]):
         if scheme in DENIED_SCHEMES or scheme not in links:
             raise ToolError(f"aucune appli installée n'ouvre les liens « {scheme}: »")
         app, process = links[scheme]
-        if args.background and await _runs_hidden(self.ctx, process):
-            # Phase 17e : l'appli tourne cachée (DevTools) ; un lien la ferait passer devant
-            # l'utilisateur (Spotify se montre à chaque lien, vérifié le 14/10).
+        if _driven_hidden(self.ctx, process):
+            # Phase 17e : un lien ferait passer l'appli devant l'utilisateur (Spotify se montre
+            # à chaque lien, 14/10). Phase 17f : même un lien « à montrer » ; le 15/10, la
+            # recherche ouverte ainsi dans le Spotify visible a été perdue à sa relance cachée
+            # (il ne jouait rien), et la commande a échoué. Une appli pilotée cachée se pilote
+            # dans son interface, toujours.
             raise ToolError(
                 f"{app} tourne caché, piloté dans son interface : un lien le mettrait devant "
-                "l'utilisateur. Agis dedans : uia_window pour voir ses champs, uia_set_text "
-                "pour écrire la recherche, puis uia_items et uia_click."
+                "l'utilisateur et sa page serait perdue. Agis dedans : uia_window pour voir ses "
+                "champs, uia_set_text (submit=True) pour écrire la recherche, puis uia_items et "
+                "uia_click."
             )
         await self.ctx.run_blocking(desktop.open_target, link, args.background, process)
         if args.background:  # on va agir dedans : la vue doit être celle que l'on a demandée

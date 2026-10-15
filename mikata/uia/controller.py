@@ -75,6 +75,16 @@ def fold(text: str) -> str:
     return "".join(c for c in text if not unicodedata.combining(c))
 
 
+_GLUE = re.compile(r"[\W_]+")
+
+
+def squash(text: str) -> str:
+    """Phase 17f : le texte replié sans espaces ni ponctuation. La transcription écrit
+    « Jetlag » ce que l'appli affiche « Jet Lag » (15/10 : trois recherches « Jetlag » sans
+    résultat, alors que Spotify montrait le titre)."""
+    return _GLUE.sub("", fold(text))
+
+
 def _truncate(text: str, max_chars: int) -> str:
     text = text.strip()
     return text if len(text) <= max_chars else text[:max_chars] + " […tronqué]"
@@ -806,12 +816,13 @@ class UiController:
             self._names_of(engine, engine.walk(root, _MAX_VISITED)) if whole else Counter()
         )
         self._seen = (window, seen)
+        glued = squash(item)
         for node in engine.iter_walk(root, _MAX_VISITED):  # s'arrête à la bonne
             raw = engine.node_name(node)
             if raw and not whole:
                 seen[(mask(raw[:_NAME_MAX]), engine.node_kind(node))] += 1
             name = fold(raw).strip()
-            if name == wanted:
+            if name == wanted or (glued and squash(raw) == glued):
                 done = self._press_in(engine, window, node, names, needs)
                 if done is not None:
                     return done
@@ -831,6 +842,7 @@ class UiController:
         engine = self._engine(window)
         root = engine.attach(window)
         words = fold(query or "").split()
+        glued = squash(query or "")
         found: list[UiItemInfo] = []
         stack = list(reversed(engine.children(root)))
         visited = 0
@@ -841,7 +853,7 @@ class UiController:
             if name and engine.node_kind(node) == "élément":
                 info = self._item(engine, node, name)
                 seen = fold(" ".join([info.name, *info.texts, *info.buttons]))
-                if all(word in seen for word in words):
+                if all(word in seen for word in words) or (glued and glued in squash(seen)):
                     found.append(info)
                 continue  # ses cellules ne sont pas d'autres éléments
             with contextlib.suppress(Exception):
@@ -866,9 +878,10 @@ class UiController:
         engine = self._engine(window)
         root = engine.attach(window)
         wanted = fold(text).strip()
+        glued = squash(text)
         for node in engine.iter_walk(root, _MAX_VISITED):
             name = engine.node_name(node)
-            if wanted in fold(name):
+            if wanted in fold(name) or (glued and glued in squash(name)):
                 return name
             if engine.node_kind(node) in _VALUE_KINDS:
                 value = engine.control_text(node)

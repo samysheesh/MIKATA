@@ -106,6 +106,18 @@ WINDOW = UiWindowInfo("Spotify Free", "Spotify")
 PLAY = ["Play", "Lire"]
 
 
+def test_a_title_spoken_without_its_space_is_still_found() -> None:
+    """Phase 17f (15/10) : la transcription écrit « Jetlag » ; Spotify affiche « Jet Lag ».
+    Trois recherches « Jetlag » ne trouvaient rien alors que le titre était là."""
+    root, buttons = spotify_tree()
+    controller, backend = _controller(root)
+    found = controller.items(WINDOW, "Jetlag", 10)
+    assert [item.name for item in found][:2] == ["Jet Lag", "Jet lag (Evasion #2)"]
+    assert controller.find_text(WINDOW, "Jetlag") is not None
+    controller.click_in(WINDOW, "Jetlag", PLAY, ["Tiakola"])
+    assert backend.clicked == [buttons["jet_lag"]]
+
+
 def test_the_play_button_of_the_row_titled_and_by_the_artist() -> None:
     root, buttons = spotify_tree()
     controller, backend = _controller(root)
