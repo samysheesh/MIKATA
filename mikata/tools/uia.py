@@ -233,7 +233,12 @@ class UiaState(BaseTool[UiaStateParams]):
         if not summary:
             # Un état vide ne prouve rien (Discord fermé, illisible...) : surtout pas « tu
             # n'es pas en vocal », dont le modèle concluait qu'il n'y avait rien à faire.
-            raise ToolError("état ambiant vide : rien à lire pour l'instant")
+            # Phase 17f : et ce vide ne dit rien de l'état des applis ; MIKATA concluait
+            # alors d'après les échanges d'avant (« tu es encore connecté », 15/10).
+            raise ToolError(
+                "état ambiant vide : rien à lire pour l'instant, ce qui ne dit rien de l'état "
+                "des applis ; pour le savoir, lis leur fenêtre maintenant (uia_window)"
+            )
         return summary
 
 

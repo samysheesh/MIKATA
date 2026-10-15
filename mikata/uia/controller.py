@@ -57,6 +57,7 @@ _STATE = {True: "activé", False: "désactivé"}
 # Relire Discord prend 0,4 à 0,7 s (mesuré le 15/10, 634 nœuds), le geste UIA lui-même
 # 1 à 17 ms ; une compétence clique juste après avoir lu.
 _WALK_REUSE_S = 2.0
+_LEADING_MIN = 6  # caractères d'un nom demandé pour valoir comme début d'un nom (_leading)
 
 
 @dataclass
@@ -689,6 +690,7 @@ class UiController:
         wanted = [fold(label) for label in labels]
         shown = " / ".join(labels)
         candidates: list[Any] = []
+        leading: list[Any] = []  # phase 17f : noms qui commencent par le nom demandé
         seen: dict[str, float] = {}  # noms rencontrés -> ressemblance, pour l'erreur
         for node in nodes:
             name = engine.node_name(node)
@@ -708,6 +710,14 @@ class UiController:
                 and not _prefixed(wanted[0], folded)
             ):
                 candidates.append(node)
+            elif len(wanted) == 1 and _leading(wanted[0], folded):
+                leading.append(node)
+        if not candidates and len(leading) > 1:
+            names = ", ".join(f"« {engine.node_name(n)[:80]} »" for n in leading[:5])
+            raise ToolError(
+                f"plusieurs contrôles commencent par « {shown} » : {names} ; donne le nom entier"
+            )
+        candidates = candidates or leading
         if not candidates:
             where = f" (type « {kind} »)" if kind else ""
             close = [n for n, score in sorted(seen.items(), key=lambda kv: -kv[1]) if score >= 40]
@@ -964,6 +974,21 @@ def renamed(before: str, after: str) -> str:
     if not after or fold(after) == fold(before):
         return ""
     return f" ; il s'appelle maintenant « {after[:_NAME_MAX]} »"
+
+
+def _leading(wanted: str, name: str) -> bool:
+    """Phase 17f : `name` commence par `wanted`, suivi d'une ponctuation. Un élément de
+    liste porte souvent ses détails dans son nom : le salon Discord rejoint par d'autres
+    s'appelle « Champions league (salon vocal), Bassim - Chômeur, cupi, durée de
+    l'appel… » ; « Champions league (salon vocal) » ne le trouvait pas (trop court pour
+    être approché), et MIKATA a fini par croire l'utilisateur encore connecté (15/10).
+    Pas pour un nom court (« Play » n'est pas « Play (Jet Lag) »), ni quand le nom continue
+    par un mot (« Play Jet Lag »)."""
+    head, full = wanted.strip(), name.strip()
+    if len(head) < _LEADING_MIN or len(full) <= len(head) or not full.startswith(head):
+        return False
+    rest = full[len(head) :].lstrip()
+    return bool(rest) and not rest[0].isalnum()
 
 
 def _prefixed(wanted: str, name: str) -> bool:

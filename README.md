@@ -3471,6 +3471,18 @@ lecture de la fenêtre, le clic), un peu plus d'1 s une fois active.
 - Ton « Stop » effaçait la trace du tour : une commande arrêtée garde maintenant sa trace
   (« arrêté »), pour comprendre après coup.
 
+**Discord, « reconnecte-moi » (15/10)** : MIKATA relit bien la fenêtre à chaque commande
+(aucun cache, sauf 2 s entre une lecture et le clic qui suit, vidé après chaque clic). Ce
+qui a déraillé : le salon s'appelle « Champions league (salon vocal), Bassim - Chômeur,
+cupi, durée de l'appel… » (Discord met les membres dans le nom) ; « Champions league (salon
+vocal) » était introuvable, puis l'état ambiant vide (« rien à lire ») a laissé le modèle
+conclure d'après les échanges d'avant que tu étais encore connecté.
+
+- Un nom demandé qui **commence** un nom de contrôle, suivi d'une ponctuation, le désigne
+  (dans toutes les applis) ; deux contrôles qui commencent pareil : MIKATA les liste au lieu
+  de choisir. Vérifié sur ton Discord, sans clic.
+- L'état ambiant vide dit maintenant qu'il ne prouve rien et qu'il faut relire la fenêtre.
+
 ```powershell
 uv run pytest tests/test_skills_fast.py tests/test_skills_route.py tests/test_skills_agent.py tests/test_uia_matching.py tests/test_action_runtime.py tests/test_agent_learning.py -q
 # À la voix, dans un salon vocal Discord : « MIKATA, coupe mon micro sur Discord ».

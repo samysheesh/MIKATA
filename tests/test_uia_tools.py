@@ -100,6 +100,7 @@ def test_an_empty_ambient_state_is_neutral(tmp_path: Path) -> None:
     result = _execute(make_ctx(tmp_path, uia=FakeUi(state="")), "uia_state")
     assert not result.ok and "rien à lire" in result.content
     assert "vocal" not in result.content
+    assert "lis leur fenêtre" in result.content  # phase 17f : relire, pas se souvenir
 
 
 @pytest.mark.parametrize(

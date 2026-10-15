@@ -135,6 +135,32 @@ def test_a_name_with_a_prefix_is_another_control_not_a_typo() -> None:
     assert controller._find(window, "Recherche", None, 1) == "Rechercher"  # faute tolérée
 
 
+def test_a_name_that_starts_a_longer_list_item_finds_it() -> None:
+    """Phase 17f (15/10) : un salon Discord rejoint par d'autres s'appelle « Champions
+    league (salon vocal), Bassim - Chômeur, cupi, durée de l'appel… » ; « Champions league
+    (salon vocal) » ne le trouvait pas. Deux noms qui commencent pareil : rien n'est
+    choisi au hasard. « Play » ne trouve pas « Play Jet Lag »."""
+
+    class Channels(FakeBackend):
+        NAMES = (
+            "Champions league (salon vocal), Bassim - Chômeur, cupi, durée de l'appel 5 heures",
+            "Champions league / samania",
+            "Play Jet Lag",
+            "Rendre muet",
+        )
+
+    controller = _controller()
+    controller._backend = Channels()  # type: ignore[assignment]
+    window = controller.window("Discord", None)
+    found = controller._find(window, "Champions league (salon vocal)", None, 1)
+    assert found.startswith("Champions league (salon vocal), Bassim")
+    with pytest.raises(ToolError, match="plusieurs contrôles commencent par « Champions league »"):
+        controller._find(window, "Champions league", None, 1)
+    with pytest.raises(ToolError, match="contrôle introuvable"):
+        controller._find(window, "Play", None, 1)
+    assert controller._find(window, "Rendre muet", None, 1) == "Rendre muet"
+
+
 def test_a_gesture_right_after_a_read_reuses_that_read() -> None:
     """Phase 17f : relire Discord prend 0,4 à 0,7 s (15/10), et une compétence clique juste
     après avoir lu la fenêtre. La lecture sert au geste qui suit, 2 s au plus ; un contrôle
