@@ -3447,6 +3447,12 @@ appris. Trois causes, relevées dans tes traces du 14/10, toutes générales :
   opening » change). Ni exporté, ni repris d'une compétence importée.
 - **Le clic relisait toute la fenêtre** (0,4 à 0,7 s sur Discord) juste après sa lecture.
   La lecture sert maintenant au geste qui suit (2 s au plus, noms relus en direct).
+  Mesuré sur ton Discord, sans clic : la recherche du bouton passe de 0,70-0,86 s à
+  0,22-0,26 s.
+- **Deux compétences pour une même demande** : tu en as deux pour la musique (Spotify et
+  YouTube), toutes deux à l'essai. Pour « lance Jet Lag de Tiakola », Jev hésite (Spotify
+  0,77, YouTube 0,21) : l'aiguillage s'abstient et c'est le modèle qui choisit, comme avant,
+  avec tes habitudes. « … sur Spotify » ou « … sur YouTube » partent directement.
 
 Résultat attendu pour « coupe mon micro sur Discord » : environ 1,5 s à l'essai (Jev, la
 lecture de la fenêtre, le clic), un peu plus d'1 s une fois active.

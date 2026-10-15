@@ -516,7 +516,10 @@ de la même façon avec ou sans lui. À l'essai, elle est donc rejouée sans le 
 l'aiguillage la reconnaît ; son motif seul attend l'état actif (« lance {titre} de
 {artiste} » capterait « lance la vidéo de Squeezie », que Jev classe « aucune » à 0,97).
 Le contrôle choisi par `pick()` est retenu après une réussite (0,5 s et une erreur de choix
-en moins sur Discord, où Jev hésitait entre 200 contrôles). Fait en E (phase 16b) : révision par un critique isolé quand une compétence échoue et
+en moins sur Discord, où Jev hésitait entre 200 contrôles). Quand deux compétences se
+partagent la demande (Jev : Spotify 0,77, YouTube 0,21), l'aiguillage s'abstient et le
+modèle choisit : le petit appel LLM tranchait au hasard, sans les habitudes de
+l'utilisateur. Fait en E (phase 16b) : révision par un critique isolé quand une compétence échoue et
 que la demande réussit autrement juste après ; nouvelle version vérifiée dans le code,
 ancienne archivée (`versions/`), trois derniers cas d'échec gardés (`failures.json`,
 plutôt qu'un dossier : rien ne se supprime). Pas encore faits : `recover.md`, l'import

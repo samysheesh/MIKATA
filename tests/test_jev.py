@@ -75,6 +75,9 @@ def test_request_asks_the_skill_and_each_value_in_one_call() -> None:
         ({"lancer_opening": 0.68, NONE_LABEL: 0.32}, "m3", "incertain", {}),  # doute
         ({"lancer_opening": 0.97, NONE_LABEL: 0.03}, "m99", "incertain", {}),  # option hors liste
         ({"autre": 0.97, NONE_LABEL: 0.03}, None, "incertain", {}),  # compétence inconnue
+        # Phase 17f : deux compétences se partagent la demande (Spotify ou YouTube ?).
+        ({"lancer_opening": 0.77, "autre": 0.21, NONE_LABEL: 0.02}, "m3", "ambiguë", {}),
+        ({"lancer_opening": 0.80, "autre": 0.05, NONE_LABEL: 0.15}, "m3", "incertain", {}),
         ({}, None, "incertain", {}),
     ],
 )
@@ -174,6 +177,17 @@ def test_a_confident_no_from_jev_keeps_the_normal_call(
 ) -> None:
     _with_jev(monkeypatch, FakeJev("aucune"))
     llm = RaceLLM({"competence": 1, "valeurs": {"niveau": "35"}}, 0.3, ANSWER, 0.5)
+    result, _, audio, _ = _run(tmp_path, llm, COMMAND)
+    assert audio.volume == 50 and result.answer == "Très bien." and result.skill_via == ""
+
+
+def test_two_skills_sharing_the_request_are_left_to_the_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Phase 17f : « lance Jet Lag de Tiakola » va-t-il sur Spotify ou sur YouTube ? Ni Jev
+    ni le petit appel LLM ne tranchent : le modèle, qui connaît les habitudes, choisit."""
+    _with_jev(monkeypatch, FakeJev("ambiguë"))
+    llm = RaceLLM({"competence": 1, "valeurs": {"niveau": "35"}}, 0.1, ANSWER, 0.6)
     result, _, audio, _ = _run(tmp_path, llm, COMMAND)
     assert audio.volume == 50 and result.answer == "Très bien." and result.skill_via == ""
 

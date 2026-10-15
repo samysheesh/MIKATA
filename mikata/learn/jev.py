@@ -11,7 +11,8 @@ pose deux sortes de questions, traitées en parallèle par Jev :
   morceaux de la phrase, et la valeur ne peut pas être inventée.
 
 Décision : compétence si sa probabilité atteint `threshold` (0,9) ; « aucune » si celle-ci
-l'atteint ; sinon « incertain », et le petit appel LLM de la phase 15j décide. Mesuré le
+l'atteint ; « ambiguë » (phase 17f) si deux compétences se partagent la demande, et le
+modèle choisit ; sinon « incertain », et le petit appel LLM de la phase 15j décide. Mesuré le
 14/10 (16 phrases, 4 langues, 3 passages) : les cas nets à p >= 0,96, les cas douteux
 entre 0,63 et 0,77, médiane 375 à 391 ms, environ 0,00004 $ par phrase.
 
@@ -45,6 +46,11 @@ NONE_CRITERION = (
     "une information quand elle agit), plusieurs actions à la fois, une négation, ou une "
     "demande sans rapport avec elles."
 )
+# Phase 17f : une deuxième compétence a au moins cette part de la demande : elle peut être
+# l'une ou l'autre (« lance Jet Lag de Tiakola » : Spotify 0,77, YouTube 0,21, mesuré le
+# 15/10). Le choix revient au modèle, qui connaît les habitudes de l'utilisateur ; le petit
+# appel LLM tranchait au hasard (YouTube, puis rien, sur la même phrase).
+AMBIGUOUS_SHARE = 0.15
 _WORD = re.compile(r"[\w'’.-]+")
 _TRIM = ".,;:!?'’\"«»-"
 
@@ -108,7 +114,7 @@ def build_request(sentence: str, skills: list[Skill]) -> tuple[dict[str, Any], l
 
 @dataclass
 class JevDecision:
-    kind: str  # « compétence », « aucune » ou « incertain »
+    kind: str  # « compétence », « aucune », « ambiguë » (phase 17f) ou « incertain »
     skill: Skill | None = None
     values: dict[str, str] = field(default_factory=dict)
     probability: float = 0.0
@@ -124,9 +130,16 @@ def read_answers(
     probabilities = (answers.get("competence") or {}).get("probabilities") or {}
     if not probabilities:
         return JevDecision("incertain", cost_usd=cost)
-    label, best = max(probabilities.items(), key=lambda item: float(item[1]))
-    best = float(best)
+    ranked = sorted(probabilities.items(), key=lambda item: -float(item[1]))
+    label, best = ranked[0][0], float(ranked[0][1])
     if best < threshold:
+        runner_up = ranked[1] if len(ranked) > 1 else (NONE_LABEL, 0.0)
+        if (
+            label != NONE_LABEL
+            and runner_up[0] != NONE_LABEL
+            and float(runner_up[1]) >= AMBIGUOUS_SHARE
+        ):
+            return JevDecision("ambiguë", probability=best, cost_usd=cost)
         return JevDecision("incertain", probability=best, cost_usd=cost)
     if label == NONE_LABEL:
         return JevDecision("aucune", probability=best, cost_usd=cost)

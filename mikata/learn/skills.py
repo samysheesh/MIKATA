@@ -1041,7 +1041,9 @@ valeur de chaque paramètre dans la demande, recopiée telle qu'elle y est dite.
 
 Réponds 0 si l'action demandée est une autre (fermer au lieu de lancer, chercher au lieu \
 de jouer...), si la demande en contient plusieurs, si elle est niée ou au conditionnel \
-(« ne lance pas », « je voudrais savoir si »), ou s'il manque une valeur.
+(« ne lance pas », « je voudrais savoir si »), s'il manque une valeur, ou si plusieurs \
+compétences conviennent (la même action dans deux applis) sans que la demande dise \
+laquelle : MIKATA choisira selon les habitudes de l'utilisateur.
 
 Réponds UNIQUEMENT par un objet JSON : {{"competence": numéro ou 0, "valeurs": \
 {{"paramètre": "valeur"}}}}."""

@@ -260,8 +260,8 @@ class SkillPath:
                 except TimeoutError:
                     logger.info("Jev : trop lent, l'aiguillage LLM décide.")
                 else:
-                    if decision.kind == "aucune":
-                        return None
+                    if decision.kind in ("aucune", "ambiguë"):
+                        return None  # phase 17f : entre deux compétences, le modèle choisit
                     if decision.kind == "compétence" and decision.skill is not None:
                         values = {k: locate(command, v) for k, v in decision.values.items()}
                         if all(values.values()):
