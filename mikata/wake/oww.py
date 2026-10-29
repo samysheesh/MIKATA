@@ -53,7 +53,7 @@ def required_model_files(model: Path, verifier: Path | None = None) -> list[Path
 
 def resolve_wake_files(model: Path, verifier: Path | None) -> tuple[Path, Path | None]:
     """Rend les artefacts entraînés facultatifs : si `model` (ex. `mikata.onnx`, produit sur
-    Colab phase 7) est absent, on retombe sur le modèle de développement livré
+    Colab, voir docs/MOT_ACTIVATION.md) est absent, on retombe sur le modèle de développement livré
     (`hey_jarvis.onnx`, même dossier) avec un avertissement. Un `verifier` absent est ignoré.
     Si aucun modèle n'est présent, on rend le chemin d'origine : `OpenWakeWordDetector` lève
     alors son erreur canonique (« lance download_models.py »)."""
@@ -63,7 +63,7 @@ def resolve_wake_files(model: Path, verifier: Path | None) -> tuple[Path, Path |
             logger.warning(
                 "Mot d'activation entraîné introuvable ({}) : repli sur le modèle de "
                 "développement « {} » (il réagit à « hey jarvis », pas « MIKATA » ; voir "
-                "README, phase 7).",
+                "docs/MOT_ACTIVATION.md).",
                 model.name,
                 DEV_MODEL_NAME,
             )
@@ -98,7 +98,11 @@ class OpenWakeWordDetector:
                 "Modèle(s) de mot d'activation introuvable(s) :\n"
                 + "\n".join(f"  - {p}" for p in missing)
                 + "\nLance : uv run python scripts/download_models.py"
-                + (" (et pour mikata.onnx : README, phase 7)" if "mikata" in model.stem else "")
+                + (
+                    " (et pour mikata.onnx : docs/MOT_ACTIVATION.md)"
+                    if "mikata" in model.stem
+                    else ""
+                )
             )
         from openwakeword.model import Model
 

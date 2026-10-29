@@ -24,8 +24,7 @@
 
 4. Phrases courtes (ajout phase 6b : « et à Tokyo ? » lu « Yeah, Tokyo ») : jeu à part
    enregistré avec `--dir data/stt_eval_courtes record --phrases
-   scripts/stt_phrases_courtes_fr.txt`, puis `run` sur ce dossier (commandes exactes dans le
-   README, phase 6b).
+   scripts/stt_phrases_courtes_fr.txt`, puis `run` sur ce dossier.
 
    `--initial-prompt` remplace `stt.initial_prompt` le temps de la mesure. `--noise DOSSIER`
    transcrit aussi des extraits sans commande (data/negatives, data/wake_logs) et compte

@@ -1,5 +1,5 @@
-# Configuration volontairement invalide, pour vérifier le message d'erreur
-# (README, phase 0) : seuil hors de [0, 1] et clé inconnue.
+# Configuration volontairement invalide, pour vérifier le message d'erreur :
+# seuil hors de [0, 1] et clé inconnue.
 wake:
   threshold: 1.5
   treshold: 0.4

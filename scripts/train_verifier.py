@@ -95,7 +95,9 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     if not args.model.is_file():
-        print(f"Modèle introuvable : {args.model} (entraînement sur Colab : README, phase 7).")
+        print(
+            f"Modèle introuvable : {args.model} (entraînement sur Colab : docs/MOT_ACTIVATION.md)."
+        )
         return 1
     positive_paths, negative_paths = reference_clips(WakewordData(args.root), args.stt_eval)
     if len(positive_paths) < MIN_POSITIVES or not negative_paths:

@@ -395,7 +395,7 @@ FORBIDDEN_CALLS = re.compile(
 
 
 def test_no_permanent_deletion_anywhere_in_mikata() -> None:
-    """CLAUDE.md : aucune suppression définitive nulle part (corbeille via send2trash)."""
+    """Règle du projet : aucune suppression définitive nulle part (corbeille via send2trash)."""
     offenders = []
     for folder in ("mikata", "scripts"):
         for path in (PROJECT_ROOT / folder).rglob("*.py"):

@@ -319,7 +319,7 @@ def format_report(
                 *config_lines(near),
                 "Pistes : le vérificateur de ta voix (train_verifier.py) s'il n'est pas activé ;"
                 " plus de vie courante (collect_negatives) et d'autres prises « MIKATA », puis"
-                " réentraînement (README, phase 7).",
+                " réentraînement (docs/MOT_ACTIVATION.md).",
             ]
             if near.missed:
                 lines.append(f"Ratés : {', '.join(near.missed[:10])}")

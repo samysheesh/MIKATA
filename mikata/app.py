@@ -682,6 +682,10 @@ class App:
 
     async def _switch_input(self, config: Any) -> None:
         """Phase 15g : nouveau micro choisi dans les réglages, sans redémarrer."""
+        reopen = getattr(self._audio, "reopen", None)
+        if reopen is None:
+            return
+        # Import après le test : sans capture à rouvrir, PortAudio n'est jamais chargé.
         import sounddevice as sd
 
         from mikata.audio.devices import (
@@ -691,9 +695,6 @@ class App:
             find_device,
         )
 
-        reopen = getattr(self._audio, "reopen", None)
-        if reopen is None:
-            return
         try:
             device = await asyncio.to_thread(
                 find_device,

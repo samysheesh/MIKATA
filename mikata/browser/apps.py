@@ -36,7 +36,7 @@ import threading
 import time
 import unicodedata
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from loguru import logger
@@ -321,7 +321,8 @@ class DevtoolsApps:
             if not exe:
                 logger.info("{} : programme introuvable, pas de lancement caché (UIA).", app)
                 return None
-            process = Path(exe).stem
+            # Chemin Windows lu comme tel sur toute plateforme (tests sous Linux compris).
+            process = PureWindowsPath(exe).stem
         port = free_port()
         _launch_hidden(exe, port)
         logger.info("{} lancé caché (DevTools, 127.0.0.1:{}).", app, port)

@@ -1,0 +1,7 @@
+# Config de gitleaks (job « secrets » de la CI) : règles par défaut, plus une exception.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Fausse clé de test (tests/test_app_ui.py), commitée sans marqueur gitleaks:allow"
+regexes = ['''^sk-nouvelle-1234$''']

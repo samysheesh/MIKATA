@@ -127,7 +127,7 @@ appel LLM) ; une donnée, ou ce qu'il a affiché par `print`, revient au modèle
 ### 3.3 L'espace d'action
 
 - **Les outils existants restent l'implémentation.** Un outil = une classe `@register_tool`
-  (règle de `CLAUDE.md` inchangée). Le SDK est une façade typée générée depuis le registre.
+  (règle du projet inchangée). Le SDK est une façade typée générée depuis le registre.
 - **Chaque outil déclare son effet** : `lire`, `agir` (réversible), `conséquent` (sortant ou
   difficile à défaire : shell, écriture, envoi, saisie clavier), `destructif` (interdit).
 - **Chaque outil renvoie un résultat structuré** (`texte` pour le modèle, `données` pour le

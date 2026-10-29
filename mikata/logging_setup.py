@@ -42,7 +42,7 @@ class _InterceptHandler(logging.Handler):
 
 def trash_old_logs(keep: int) -> Callable[[list[str]], None]:
     """Rétention loguru : garde les `keep` archives les plus récentes, envoie les autres à la
-    corbeille (jamais de suppression définitive, cf. CLAUDE.md)."""
+    corbeille (jamais de suppression définitive)."""
 
     def retention(files: list[str]) -> None:
         for path in sorted(files, key=lambda f: (-os.stat(f).st_mtime, f))[keep:]:
