@@ -1,83 +1,83 @@
-# Composants tiers
+# Third-party components
 
-MIKATA est sous licence Apache-2.0 (`LICENSE`, `NOTICE`). Il utilise les composants
-ci-dessous, chacun sous sa propre licence. Les **modèles** ne sont pas dans le dépôt
-(`models/` est ignoré par git) : `scripts/download_models.py` les télécharge depuis leur
-source officielle, et leur licence s'applique à leur usage.
+MIKATA is licensed under Apache-2.0 (`LICENSE`, `NOTICE`). It uses the components
+below, each under its own license. The **models** are not in the repository
+(`models/` is ignored by git): `scripts/download_models.py` downloads them from their
+official source, and their license applies to their use.
 
-Les licences ont été relevées le 2026-10-08, dans les métadonnées des paquets installés
-(`uv.lock`) et sur les pages des projets. En cas de doute, la licence publiée par le projet
-fait foi.
+The licenses were checked on 2026-10-08, in the metadata of the installed packages
+(`uv.lock`) and on the project pages. When in doubt, the license published by the project
+is authoritative.
 
-## Modèles téléchargés
+## Downloaded models
 
-| Composant | Fichier(s) | Licence | Usage dans MIKATA | Remarques |
+| Component | File(s) | License | Use in MIKATA | Notes |
 | --- | --- | --- | --- | --- |
-| [openWakeWord](https://github.com/dscripka/openWakeWord) : modèle `hey_jarvis` v0.1 | `models/hey_jarvis.onnx` | **CC BY-NC-SA 4.0 (non commercial)** | mot d'activation provisoire (phases 1 à 6), tests sur les vrais modèles | Les modèles pré-entraînés d'openWakeWord sont sous licence non commerciale. **Pas d'usage commercial**, et un travail dérivé doit garder la même licence. Remplacé par `mikata.onnx` (phase 7). |
-| openWakeWord : extraction des caractéristiques | `models/melspectrogram.onnx`, `models/embedding_model.onnx` | Apache-2.0 (code d'openWakeWord). Le modèle d'embedding dérive de *speech_embedding* de Google (Apache-2.0). | calcul des caractéristiques audio avant `mikata.onnx` / `hey_jarvis.onnx` | Le README d'openWakeWord place ses modèles pré-entraînés sous CC BY-NC-SA 4.0 : à vérifier avant tout usage commercial. |
-| `mikata.onnx`, `mikata_verifier.pkl` | `models/` | les tiens | mot d'activation « MIKATA » et vérificateur de ta voix (phase 7) | Entraînés sur ton PC, jamais commités. Avant de publier `mikata.onnx`, vérifie les licences des données d'entraînement (voix de synthèse, jeux de négatifs du notebook openWakeWord). Certaines sont non commerciales. |
-| [Silero VAD](https://github.com/snakers4/silero-vad) v5.1.2 | `models/silero_vad.onnx` | MIT | détection de parole (fin de commande) | |
-| [Whisper](https://github.com/openai/whisper) (OpenAI), via [faster-whisper](https://github.com/SYSTRAN/faster-whisper) | téléchargé par faster-whisper (cache Hugging Face) | MIT (poids et code) | transcription | Conversion CTranslate2 publiée par Systran (MIT). |
-| [Piper](https://github.com/OHF-Voice/piper1-gpl) : voix `fr_FR-siwis-medium` | `models/fr_FR-siwis-medium.onnx` (+ `.json`) | voix : CC BY 4.0 (jeu de données SIWIS, d'après la fiche du modèle) | voix de MIKATA par défaut | Attribution requise si tu rediffuses la voix ou des enregistrements. |
-| [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M), fichiers ONNX de [kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx) | `models/kokoro-v1.0.onnx`, `models/voices-v1.0.bin` | Apache-2.0 (poids), MIT (kokoro-onnx) | voix alternative (`tts.backend: kokoro`) | |
+| [openWakeWord](https://github.com/dscripka/openWakeWord): `hey_jarvis` model v0.1 | `models/hey_jarvis.onnx` | **CC BY-NC-SA 4.0 (non-commercial)** | provisional wake word (phases 1 to 6), tests on the real models | openWakeWord's pre-trained models are under a non-commercial license. **No commercial use**, and a derivative work must keep the same license. Replaced by `mikata.onnx` (phase 7). |
+| openWakeWord: feature extraction | `models/melspectrogram.onnx`, `models/embedding_model.onnx` | Apache-2.0 (openWakeWord code). The embedding model is derived from Google's *speech_embedding* (Apache-2.0). | computes the audio features before `mikata.onnx` / `hey_jarvis.onnx` | openWakeWord's README places its pre-trained models under CC BY-NC-SA 4.0: check this before any commercial use. |
+| `mikata.onnx`, `mikata_verifier.pkl` | `models/` | yours | "MIKATA" wake word and verifier for your voice (phase 7) | Trained on your PC, never committed. Before publishing `mikata.onnx`, check the licenses of the training data (synthetic voices, negative datasets from the openWakeWord notebook). Some are non-commercial. |
+| [Silero VAD](https://github.com/snakers4/silero-vad) v5.1.2 | `models/silero_vad.onnx` | MIT | speech detection (end of command) | |
+| [Whisper](https://github.com/openai/whisper) (OpenAI), via [faster-whisper](https://github.com/SYSTRAN/faster-whisper) | downloaded by faster-whisper (Hugging Face cache) | MIT (weights and code) | transcription | CTranslate2 conversion published by Systran (MIT). |
+| [Piper](https://github.com/OHF-Voice/piper1-gpl): `fr_FR-siwis-medium` voice | `models/fr_FR-siwis-medium.onnx` (+ `.json`) | voice: CC BY 4.0 (SIWIS dataset, according to the model card) | MIKATA's default voice | Attribution required if you redistribute the voice or recordings. |
+| [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M), ONNX files from [kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx) | `models/kokoro-v1.0.onnx`, `models/voices-v1.0.bin` | Apache-2.0 (weights), MIT (kokoro-onnx) | alternative voice (`tts.backend: kokoro`) | |
 
-## Services en ligne
+## Online services
 
-| Service | Licence et conditions | Usage dans MIKATA | Remarques |
+| Service | License and terms | Use in MIKATA | Notes |
 | --- | --- | --- | --- |
-| [ElevenLabs](https://elevenlabs.io) : synthèse vocale (modèle `eleven_v4_turbo`), voix Lucie, Théo, Émilie et celles que tu ajoutes | **Service payant externe**, [conditions d'utilisation](https://elevenlabs.io/terms-of-use) d'ElevenLabs et licence de chaque voix de la bibliothèque. Avec un abonnement payant (Starter ou plus), l'audio généré peut être utilisé commercialement, d'après les conditions en vigueur. | voix des profils `gars` et `femme` (phase 11), quand `tts.elevenlabs` est choisi | **Rien n'est embarqué** : ni modèle ni voix dans le dépôt. Le texte des réponses est envoyé à ElevenLabs. L'audio reçu est gardé en cache sur ton PC (`data/tts_cache/elevenlabs/`, jamais commité). La clé reste dans `.env`. Les crédits sont facturés par ElevenLabs. Une voix de la bibliothèque appartient à son auteur : respecte ses conditions avant toute rediffusion. Sans clé, sans crédit ou sans connexion, MIKATA parle avec Kokoro. |
+| [ElevenLabs](https://elevenlabs.io): speech synthesis (`eleven_v4_turbo` model), voices Lucie, Théo, Émilie and the ones you add | **External paid service**, ElevenLabs [terms of use](https://elevenlabs.io/terms-of-use) and the license of each voice in the library. With a paid subscription (Starter or higher), the generated audio can be used commercially, according to the current terms. | voices of the `gars` and `femme` profiles (phase 11), when `tts.elevenlabs` is selected | **Nothing is bundled**: no model or voice in the repository. The text of the replies is sent to ElevenLabs. The audio received is cached on your PC (`data/tts_cache/elevenlabs/`, never committed). The key stays in `.env`. Credits are billed by ElevenLabs. A library voice belongs to its author: respect their terms before any redistribution. Without a key, credits or a connection, MIKATA speaks with Kokoro. |
 
-## Fichiers du dépôt
+## Repository files
 
-| Fichier | Origine | Licence |
+| File | Origin | License |
 | --- | --- | --- |
-| `assets/sounds/*.wav` (wake, end, error, thinking, timer, miss) | **Sons originaux générés par MIKATA** (`mikata/audio/earcons.py`, `synthesize()`). Vérifié le 2026-10-08 : chaque fichier est identique, à 1 bit de quantification près, à ce que produit ce code. Aucun son tiers. | Apache-2.0 (licence du projet) |
-| `assets/mascot/default/` | Skin par défaut « Mika », **dessinée en code** (`mikata/ui/qt/painter.py`), sans image ni police tierce | Apache-2.0 |
-| `assets/mascot/gars/`, `assets/mascot/femme/` | Personnages de l'auteur du projet, mis en forme par `scripts/make_skin.py`. Auteur et licence : champs `author` et `license` de leur `skin.json`. | **Tous droits réservés (samysheesh)**, hors licence Apache-2.0 |
-| `assets/mascot/<skin>/` (tes skins) | Images que tu génères (Nano Banana...) ou importes, mises en forme par `scripts/make_skin.py`. **Pas dans le dépôt** (`.gitignore`) : elles restent sur ton PC. Auteur et licence de chaque skin : champs `author` et `license` de son `skin.json`. | celle que tu indiques |
-| `tests/fixtures/hey_jarvis_ouvre_spotify.wav` | **Voix de synthèse** (confirmé : ce n'est pas ta voix), ajoutée à la phase 2 (commit a478e7f) pour les tests sur les vrais modèles. 16 kHz mono, 1,8 s, pic normalisé à 0,5, écrit par le code du projet (`mikata/audio/wavfile.py`). **Voix exacte non retrouvée** : aucun script de génération n'est dans le dépôt ni dans son historique, et la session de travail de la phase 2 n'est plus accessible. L'analyse du son (hauteur, bande passante) ne suffit pas à identifier la voix. | **Inconnue** tant que la voix n'est pas identifiée. Avant une publication : régénérer ce fichier avec une voix de licence connue (par exemple Kokoro, Apache-2.0), puis revérifier les tests sur les vrais modèles sur le PC. |
-| `docs/ui/*.png`, `docs/ui/*.gif` | Captures de l'interface, rendues par `scripts/ui_screenshots.py` (données fictives ; le skin de démonstration « Mika recolorée » est Mika, recolorée puis passée par `make_skin.py`) | Apache-2.0 |
+| `assets/sounds/*.wav` (wake, end, error, thinking, timer, miss) | **Original sounds generated by MIKATA** (`mikata/audio/earcons.py`, `synthesize()`). Checked on 2026-10-08: each file is identical, to within 1 quantization bit, to what this code produces. No third-party sounds. | Apache-2.0 (the project's license) |
+| `assets/mascot/default/` | Default skin "Mika", **drawn in code** (`mikata/ui/qt/painter.py`), with no third-party image or font | Apache-2.0 |
+| `assets/mascot/gars/`, `assets/mascot/femme/` | Characters by the project's author, processed by `scripts/make_skin.py`. Author and license: the `author` and `license` fields of their `skin.json`. | **All rights reserved (samysheesh)**, not covered by the Apache-2.0 license |
+| `assets/mascot/<skin>/` (your skins) | Images you generate (Nano Banana...) or import, processed by `scripts/make_skin.py`. **Not in the repository** (`.gitignore`): they stay on your PC. Author and license of each skin: the `author` and `license` fields of its `skin.json`. | the one you specify |
+| `tests/fixtures/hey_jarvis_ouvre_spotify.wav` | **Synthetic voice** (confirmed: it is not your voice), added in phase 2 (commit a478e7f) for the tests on the real models. 16 kHz mono, 1.8 s, peak normalized to 0.5, written by the project's code (`mikata/audio/wavfile.py`). **Exact voice not found**: no generation script is in the repository or its history, and the phase 2 work session is no longer accessible. Analyzing the sound (pitch, bandwidth) is not enough to identify the voice. | **Unknown** until the voice is identified. Before a release: regenerate this file with a voice under a known license (for example Kokoro, Apache-2.0), then re-check the tests on the real models on the PC. |
+| `docs/ui/*.png`, `docs/ui/*.gif` | Interface screenshots, rendered by `scripts/ui_screenshots.py` (fictitious data; the demo skin "Mika recolorée" is Mika, recolored then run through `make_skin.py`) | Apache-2.0 |
 
-## Bibliothèques Python (dépendances de `pyproject.toml`)
+## Python libraries (`pyproject.toml` dependencies)
 
-| Paquet | Licence | Usage |
+| Package | License | Use |
 | --- | --- | --- |
-| ctranslate2 | MIT | moteur d'inférence de faster-whisper |
+| ctranslate2 | MIT | faster-whisper's inference engine |
 | faster-whisper | MIT | transcription |
-| openwakeword | Apache-2.0 (code) | mot d'activation |
-| onnxruntime | MIT | modèles ONNX (mot d'activation, VAD, Kokoro, Piper) |
-| piper-tts | **GPL-3.0-or-later** | synthèse vocale Piper. MIKATA l'importe comme bibliothèque : une distribution qui l'embarque (exécutable tout-en-un, par exemple) relève de la GPL-3.0. Le dépôt ne contient que le code de MIKATA (Apache-2.0, compatible GPL-3.0) ; chacun installe piper-tts avec `uv sync`. |
-| kokoro-onnx | MIT | synthèse vocale Kokoro |
-| openai | Apache-2.0 | client LLM (API compatible OpenAI) |
-| httpx2, h2 | BSD-3-Clause, MIT | HTTP/2 persistant |
+| openwakeword | Apache-2.0 (code) | wake word |
+| onnxruntime | MIT | ONNX models (wake word, VAD, Kokoro, Piper) |
+| piper-tts | **GPL-3.0-or-later** | Piper speech synthesis. MIKATA imports it as a library: a distribution that bundles it (an all-in-one executable, for example) falls under the GPL-3.0. The repository contains only MIKATA's code (Apache-2.0, compatible with GPL-3.0); everyone installs piper-tts with `uv sync`. |
+| kokoro-onnx | MIT | Kokoro speech synthesis |
+| openai | Apache-2.0 | LLM client (OpenAI-compatible API) |
+| httpx2, h2 | BSD-3-Clause, MIT | persistent HTTP/2 |
 | pydantic, pydantic-settings | MIT | configuration |
-| pyyaml | MIT | lecture de config.yaml |
-| ruamel.yaml | MIT | réécriture de config.yaml sans perdre les commentaires (réglages, phase 8) |
-| python-dotenv | BSD-3-Clause | lecture et écriture de .env (réglages, phase 8) |
-| **PySide6-Essentials**, shiboken6 (Qt 6) | **LGPL-3.0** (ou GPL-2.0/3.0) | interface : mascotte et réglages (phase 8). Liée dynamiquement, installée par pip/uv, non modifiée : les obligations de la LGPL sont respectées tant qu'on ne la fige pas dans un exécutable sans permettre de la remplacer. |
-| numpy | BSD-3-Clause (+ 0BSD, MIT, Zlib, CC0 pour des parties) | calcul audio |
-| scipy | BSD-3-Clause | détourage des images de skins (`scripts/make_skin.py`) ; déjà installé par openwakeword |
+| pyyaml | MIT | reading config.yaml |
+| ruamel.yaml | MIT | rewriting config.yaml without losing the comments (settings, phase 8) |
+| python-dotenv | BSD-3-Clause | reading and writing .env (settings, phase 8) |
+| **PySide6-Essentials**, shiboken6 (Qt 6) | **LGPL-3.0** (or GPL-2.0/3.0) | interface: mascot and settings (phase 8). Dynamically linked, installed by pip/uv, unmodified: the LGPL obligations are met as long as it is not frozen into an executable without allowing it to be replaced. |
+| numpy | BSD-3-Clause (+ 0BSD, MIT, Zlib, CC0 for some parts) | audio computation |
+| scipy | BSD-3-Clause | background removal for skin images (`scripts/make_skin.py`); already installed by openwakeword |
 | sounddevice | MIT | audio (PortAudio, MIT) |
-| soxr | LGPL-2.1-or-later | rééchantillonnage audio |
-| pillow | MIT-CMU (HPND) | images (icône, thèmes de la mascotte) |
-| loguru | MIT | journal |
-| psutil | BSD-3-Clause | charge CPU, processus |
-| nvidia-ml-py | BSD-3-Clause | charge GPU |
-| send2trash | BSD-3-Clause | corbeille (aucune suppression définitive) |
-| rapidfuzz | MIT | recherche approximative (applis, phrases) |
-| trafilatura | Apache-2.0 | extraction de texte des pages web |
-| pyperclip | BSD-3-Clause | presse-papiers |
+| soxr | LGPL-2.1-or-later | audio resampling |
+| pillow | MIT-CMU (HPND) | images (icon, mascot themes) |
+| loguru | MIT | logging |
+| psutil | BSD-3-Clause | CPU load, processes |
+| nvidia-ml-py | BSD-3-Clause | GPU load |
+| send2trash | BSD-3-Clause | Recycle Bin (no permanent deletion) |
+| rapidfuzz | MIT | fuzzy search (apps, phrases) |
+| trafilatura | Apache-2.0 | text extraction from web pages |
+| pyperclip | BSD-3-Clause | clipboard |
 
-Windows uniquement :
+Windows only:
 
-| Paquet | Licence | Usage |
+| Package | License | Use |
 | --- | --- | --- |
-| nvidia-cublas-cu12, nvidia-cudnn-cu12 | licence NVIDIA (redistribuable via PyPI) | CUDA pour Whisper |
-| pystray | LGPL-3.0 | icône de la zone de notification |
-| pynput | LGPL-3.0 | raccourci clavier global |
-| pywin32 | PSF-2.0 | API Windows (corbeille sûre, fenêtres) |
-| pycaw, comtypes | MIT | volume Windows |
+| nvidia-cublas-cu12, nvidia-cudnn-cu12 | NVIDIA license (redistributable via PyPI) | CUDA for Whisper |
+| pystray | LGPL-3.0 | notification area icon |
+| pynput | LGPL-3.0 | global keyboard shortcut |
+| pywin32 | PSF-2.0 | Windows API (safe Recycle Bin, windows) |
+| pycaw, comtypes | MIT | Windows volume |
 | win11toast | MIT | notifications |
 
-Outils de développement : pytest (MIT), ruff (MIT). En CI : [gitleaks](https://github.com/gitleaks/gitleaks)
-(MIT), qui cherche des secrets dans l'historique.
+Development tools: pytest (MIT), ruff (MIT). In CI: [gitleaks](https://github.com/gitleaks/gitleaks)
+(MIT), which scans the history for secrets.

@@ -1,7 +1,7 @@
 [project]
 name = "mikata"
 version = "0.0.1"
-description = "MIKATA — assistant vocal local pour PC Windows"
+description = "MIKATA — French-speaking voice assistant for Windows PCs"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]

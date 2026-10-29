@@ -138,9 +138,7 @@ def plan_report(data: WakewordData, negatives_dir: Path) -> str:
         if missing[split]:
             lines.append(f"  - {label} : {missing[split]} prise(s)")
     if not any(missing.values()) and hours >= MIN_NEGATIVE_HOURS:
-        lines.append(
-            "  - tout est prêt : pack, puis entraînement sur Colab (docs/MOT_ACTIVATION.md)"
-        )
+        lines.append("  - tout est prêt : pack, puis entraînement sur Colab (docs/WAKE_WORD.md)")
     return "\n".join(lines)
 
 
@@ -305,7 +303,7 @@ def _pack(args: argparse.Namespace) -> int:
         f"{output} ({size_mb:.0f} Mo) : {counts['positives']} « MIKATA », "
         f"{counts['hard_negatives']} mots proches, {counts['negatives']} extraits de vie courante."
     )
-    print("Étape suivante : entraînement sur Colab (docs/MOT_ACTIVATION.md).")
+    print("Étape suivante : entraînement sur Colab (docs/WAKE_WORD.md).")
     return 0
 
 

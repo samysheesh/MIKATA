@@ -1,163 +1,167 @@
 <p align="center">
-  <img src="assets/mascot/femme/apercu.png" alt="La mascotte de MIKATA dans ses dix états : repos, réveil, écoute, réflexion, action, parole, succès, erreur, suivi, micro coupé" width="720">
+  <img src="assets/mascot/femme/apercu.png" alt="MIKATA's mascot in its ten states: idle, wake, listening, thinking, acting, speaking, success, error, follow-up, mic off" width="720">
 </p>
 
 # MIKATA
 
-Assistant vocal pour PC Windows, en français. Tu dis « MIKATA », tu parles naturellement,
-elle agit sur ton PC et te répond à voix haute dans le casque.
+A voice assistant for Windows PCs. Say "MIKATA", speak naturally, and she acts on your PC and
+answers out loud in your headset.
 
-L'écoute, la transcription et la voix tournent en local : ce n'est pas ton audio qui part sur
-Internet, mais la phrase transcrite, envoyée à un LLM cloud qui décide quoi répondre et quoi
-faire.
+Listening, transcription and voice run locally: your audio never leaves the PC, only the
+transcribed sentence is sent to a cloud LLM, which decides what to answer and what to do.
 
-> **Statut** : projet personnel, développement en pause. Le code est fourni tel quel.
+> **Language**: MIKATA only understands and speaks **French** for now (transcription, prompts,
+> voice and interface are set up for French).
+>
+> **Status**: personal project, development on hold. The code is provided as is.
 
-## Ce qu'elle fait
+## What she does
 
-- **Écoute en continu, presque sans consommer** : mot d'activation détecté sur le CPU
-  (openWakeWord), avec un vérificateur qui reconnaît ta voix. Raccourci Ctrl+Alt+M en secours.
-- **Transcrit en local** avec Whisper large-v3-turbo sur le GPU, dès ta première pause, sans
-  attendre d'être sûre que tu as fini de parler.
-- **Répond vite** : la voix démarre pendant que le modèle écrit encore (Kokoro ou Piper en
-  local, ElevenLabs en option).
-- **Agit sur le PC** avec plus de 60 outils : applications et fenêtres, volume et médias,
-  minuteurs et rappels, fichiers, presse-papiers, clavier et souris, PowerShell, mise en
-  veille et extinction.
-- **Pilote les applis et le web en arrière-plan** : lecture et clics par l'accessibilité de
-  Windows (UI Automation), navigateur Brave dédié et invisible, recherche web et météo.
-- **Apprend** : mémoire à long terme, et les tâches réussies deviennent des compétences
-  rejouées ensuite sans appel au modèle.
-- **Reste prudente** : aucune suppression définitive (tout part à la corbeille), sauvegarde
-  avant d'écraser un fichier, confirmation orale des actions risquées.
-- **Converse naturellement** : on enchaîne sans redire « MIKATA », on la coupe en parlant, on
-  l'arrête avec « stop ».
-- **S'affiche en mascotte de bureau** animée (skins personnalisables), avec une fenêtre de
-  réglages.
+- **Listens all the time at almost no cost**: the wake word is detected on the CPU
+  (openWakeWord), with a verifier that recognizes your voice. Ctrl+Alt+M works as a backup.
+- **Transcribes locally** with Whisper large-v3-turbo on the GPU, starting at your first pause,
+  before she is even sure you have finished speaking.
+- **Answers fast**: the voice starts while the model is still writing (Kokoro or Piper locally,
+  ElevenLabs as an option).
+- **Acts on the PC** with 60+ tools: apps and windows, volume and media, timers and reminders,
+  files, clipboard, keyboard and mouse, PowerShell, sleep and shutdown.
+- **Drives apps and the web in the background**: reads and clicks through Windows
+  accessibility (UI Automation), uses a dedicated, invisible Brave browser, searches the web
+  and checks the weather.
+- **Learns**: long-term memory, and successful tasks become skills that are replayed later
+  without calling the model.
+- **Stays careful**: nothing is ever permanently deleted (everything goes to the Recycle Bin),
+  files are backed up before being overwritten, and risky actions need a spoken confirmation.
+- **Talks naturally**: follow up without saying "MIKATA" again, interrupt her by speaking, stop
+  her with "stop".
+- **Lives on your desktop** as an animated mascot (customizable skins), with a settings window.
 
 <p align="center">
-  <img src="docs/ui/reglages_accueil.png" alt="Fenêtre de réglages de MIKATA" width="560">
+  <img src="docs/ui/reglages_accueil.png" alt="MIKATA's settings window (in French)" width="560">
 </p>
 
-## Prérequis
+## Requirements
 
-- Windows 11, un micro et un casque.
-- Une carte graphique NVIDIA (Whisper sur CUDA, environ 1,6 Go de mémoire vidéo). Sans GPU :
-  `stt.device: cpu` et `stt.compute_type: int8` dans `config.yaml`, en plus lent.
-- Une clé d'API pour un LLM compatible OpenAI. Par défaut : DeepSeek V4.1 Flash via
-  [OpenCode Zen](https://opencode.ai/zen), moins d'un centime par commande.
-- Facultatif : [Brave](https://brave.com) pour la navigation pilotée, une clé
-  [Tavily](https://app.tavily.com) (gratuite) pour la recherche web, une clé ElevenLabs pour
-  une voix plus naturelle.
+- Windows 11, a microphone and a headset.
+- An NVIDIA graphics card (Whisper on CUDA, about 1.6 GB of video memory). Without one:
+  `stt.device: cpu` and `stt.compute_type: int8` in `config.yaml`, slower.
+- An API key for an OpenAI-compatible LLM (default model: DeepSeek V4.1 Flash; set
+  `llm.base_url` and `llm.model` in `config.yaml` for your provider).
+- Optional: [Brave](https://brave.com) for browser automation, a [Tavily](https://app.tavily.com)
+  key (free) for web search, an ElevenLabs key for a more natural voice.
 
-Un port macOS (Apple Silicon) est inclus, mais les fonctions les plus récentes (pilotage des
-applis, navigateur) visent Windows.
+A macOS port (Apple Silicon) is included, but the most recent features (app automation,
+browser) target Windows.
 
 ## Installation
 
-Dans PowerShell :
+In PowerShell:
 
 ```powershell
-# 1. uv, le gestionnaire Python (rouvrir PowerShell ensuite)
+# 1. uv, the Python manager (reopen PowerShell afterwards)
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 
-# 2. Le code et ses dépendances (Python 3.11 est installé au besoin)
+# 2. The code and its dependencies (Python 3.11 is installed if needed)
 git clone https://github.com/samysheesh/MIKATA.git
 cd MIKATA
 uv sync
 
-# 3. Les modèles locaux, environ 2 Go (Whisper, voix, détection de parole, mot d'activation)
+# 3. Local models, about 2 GB (Whisper, voices, speech detection, wake word)
 uv run python scripts\download_models.py
 
-# 4. Les clés : remplir au moins LLM_API_KEY
+# 4. Keys: fill in at least LLM_API_KEY
 Copy-Item .env.example .env
 notepad .env
 ```
 
-Puis choisis ton micro et ton casque, et vérifie la configuration :
+Then pick your microphone and headset, and check the configuration:
 
 ```powershell
-uv run python scripts\list_audio_devices.py   # noms à mettre dans audio.input_device / output_device
-uv run python -m mikata --check-config        # « Configuration valide » attendu
+uv run python scripts\list_audio_devices.py   # names to put in audio.input_device / output_device
+uv run python -m mikata --check-config        # expect "Configuration valide"
 ```
 
-Tous les réglages sont dans [`config.yaml`](config.yaml), commentés ; les principaux se
-changent aussi depuis la fenêtre de réglages.
+All settings live in [`config.yaml`](config.yaml), with comments; the main ones can also be
+changed from the settings window.
 
-## Utilisation
+## Usage
 
 ```powershell
 uv run python -m mikata
 ```
 
-L'icône apparaît dans la zone de notification, avec la mascotte. Dis **« Hey Jarvis »** (ou
-appuie sur Ctrl+Alt+M), puis ta demande :
+The icon shows up in the notification area, along with the mascot. Say **"Hey Jarvis"** (or
+press Ctrl+Alt+M), then your request, in French:
 
-- « quelle heure est-il à Tokyo ? »
-- « ouvre Spotify », « mets le volume à 30 », « pause »
-- « lance le dernier opening de One Piece »
-- « mets un minuteur de 10 minutes »
+- "quelle heure est-il à Tokyo ?" (what time is it in Tokyo?)
+- "ouvre Spotify", "mets le volume à 30", "pause" (open Spotify, set the volume to 30, pause)
+- "lance le dernier opening de One Piece" (play the latest One Piece opening)
+- "mets un minuteur de 10 minutes" (set a 10-minute timer)
 
-Tant que tu n'as pas entraîné le mot « MIKATA » sur ta voix, c'est « Hey Jarvis » qui sert
-de mot d'activation. Pour l'entraîner (environ une demi-journée, surtout passive) : voir
-[`docs/MOT_ACTIVATION.md`](docs/MOT_ACTIVATION.md). S'il se déclenche sans raison, monte
-`wake.threshold` dans `config.yaml`.
+Until you train the "MIKATA" wake word on your own voice, "Hey Jarvis" is the wake word. To
+train it (about half a day, mostly passive): see [`docs/WAKE_WORD.md`](docs/WAKE_WORD.md). If
+it triggers on its own, raise `wake.threshold` in `config.yaml`.
 
-Autres options utiles :
+Other useful commands:
 
 ```powershell
-uv run python -m mikata --ask "quel temps fait-il à Paris ?"   # une question, sans micro
-uv run python -m mikata --help                                 # toutes les options
+uv run python -m mikata --ask "quel temps fait-il à Paris ?"   # one question, no microphone
+uv run python -m mikata --help                                 # all options
 
-powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1 -StartNow   # démarrage avec Windows
-powershell -ExecutionPolicy Bypass -File scripts\install_desktop_shortcut.ps1      # raccourci sur le Bureau
+powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1 -StartNow   # start with Windows
+powershell -ExecutionPolicy Bypass -File scripts\install_desktop_shortcut.ps1      # desktop shortcut
 ```
 
-Facultatif : `scripts\install_usn_helper.ps1`, lancé une fois en administrateur, garde à jour
-l'index des fichiers pour des recherches instantanées (« où est mon CV ? »).
+Optional: `scripts\install_usn_helper.ps1`, run once as administrator, keeps the file index up
+to date for instant file searches ("où est mon CV ?", where is my resume?).
 
-## Comment ça marche
+## How it works
 
 ```text
-micro ─► mot d'activation ─► fin de phrase ─► transcription ─► LLM + outils ─► voix en flux ─► casque
-         openWakeWord (CPU)   Silero VAD       Whisper (GPU)     cloud            Kokoro / Piper
+mic → wake word       openWakeWord on the CPU, + voice verifier
+    → end of speech   Silero VAD
+    → transcription   Whisper on the GPU
+    → LLM + tools     cloud model; the tools run on the PC
+    → spoken answer   Kokoro / Piper locally (or ElevenLabs), streamed to the headset
 ```
 
-Un seul processus Python, organisé autour d'une boucle `asyncio` ; les calculs lourds tournent
-dans des threads dédiés, et l'interface (PySide6) dans un processus à part.
+A single Python process built around an `asyncio` loop; heavy work runs in dedicated threads,
+and the interface (PySide6) runs in a separate process.
 
-| Dossier | Rôle |
+| Folder | Role |
 | --- | --- |
-| `mikata/audio`, `wake`, `vad`, `stt` | capture du micro, mot d'activation, fin de parole, transcription |
-| `mikata/llm`, `agent`, `action` | client du LLM, boucle de l'agent et garde-fou, exécution des programmes et politiques d'action |
-| `mikata/tools`, `mcp` | les outils (un outil = une classe enregistrée avec `@register_tool`), et des outils externes par MCP |
-| `mikata/uia`, `browser`, `files` | accessibilité de Windows, navigateur piloté, index des fichiers |
-| `mikata/learn` | compétences apprises et leçons tirées des tours précédents |
-| `mikata/tts`, `ui` | synthèse vocale ; mascotte, réglages et icône |
-| `scripts/`, `mikata/eval` | téléchargement des modèles, réglage audio, entraînement du mot, bancs d'essai |
+| `mikata/audio`, `wake`, `vad`, `stt` | microphone capture, wake word, end of speech, transcription |
+| `mikata/llm`, `agent`, `action` | LLM client, agent loop and safety guard, program execution and action policies |
+| `mikata/tools`, `mcp` | tools (one tool = one class registered with `@register_tool`), plus external tools over MCP |
+| `mikata/uia`, `browser`, `files` | Windows accessibility, browser automation, file index |
+| `mikata/learn` | learned skills and lessons drawn from previous turns |
+| `mikata/tts`, `ui` | speech synthesis; mascot, settings and tray icon |
+| `scripts/`, `mikata/eval` | model download, audio setup, wake word training, benchmarks |
 
-Pour aller plus loin :
+Going further:
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) : choix techniques et budget de latence ;
-- [`docs/AGENT_CORE.md`](docs/AGENT_CORE.md) : conception du cœur de l'agent (programmes,
-  politiques d'action, apprentissage), avec ses sources ;
-- [`docs/MASCOT_SKIN_GUIDE.md`](docs/MASCOT_SKIN_GUIDE.md) : créer un skin pour la mascotte.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): technical choices and latency budget;
+- [`docs/AGENT_CORE.md`](docs/AGENT_CORE.md): design of the agent core (programs, action
+  policies, learning), with its sources;
+- [`docs/MASCOT_SKIN_GUIDE.md`](docs/MASCOT_SKIN_GUIDE.md): create a skin for the mascot.
 
-## Développement
+Code comments, logs and the interface are in French.
+
+## Development
 
 ```powershell
 uv run ruff check .
 uv run ruff format --check .
-uv run pytest                              # audio, GPU et API Windows simulés : passe aussi sous Linux
-uv run python scripts\eval_bench.py        # banc d'essai : 50 tâches sur un PC simulé, avec le vrai LLM
+uv run pytest                              # audio, GPU and Windows APIs are mocked: also runs on Linux
+uv run python scripts\eval_bench.py        # benchmark: 50 tasks on a simulated PC, with the real LLM
 ```
 
-## Licence
+## License
 
-Projet de [samysheesh](https://github.com/samysheesh), avec le port macOS de
-[DevYatsu](https://github.com/DevYatsu). Code sous licence [Apache-2.0](LICENSE) (voir aussi
+A project by [samysheesh](https://github.com/samysheesh), with the macOS port by
+[DevYatsu](https://github.com/DevYatsu). Code under the [Apache-2.0](LICENSE) license (see also
 [`NOTICE`](NOTICE)).
 
-Les skins « gars » et « femme » ne sont pas sous licence libre (tous droits réservés). Les
-modèles téléchargés gardent leur propre licence, dont le modèle « hey_jarvis », non
-commercial : voir [`THIRD_PARTY.md`](THIRD_PARTY.md).
+The "gars" and "femme" skins are not under an open license (all rights reserved). Downloaded
+models keep their own licenses, including the non-commercial "hey_jarvis" model: see
+[`THIRD_PARTY.md`](THIRD_PARTY.md).

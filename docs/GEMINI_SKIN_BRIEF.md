@@ -1,85 +1,86 @@
-# Brief pour Gemini : créer les images d'un skin MIKATA
+# Brief for Gemini: creating the images for a MIKATA skin
 
-> **Mode d'emploi (pour toi)**
+> **How to use it (for you)**
 >
-> 1. Ouvre une **nouvelle conversation** sur gemini.google.com.
-> 2. Joins ce fichier (bouton « + » > Importer un fichier), puis écris : **« Suis ce brief. »**
-> 3. Gemini te pose quelques questions sur le personnage, te montre l'image de repos, puis
->    génère les autres états un par un. Réponds **« ok »** pour passer au suivant, ou dis ce
->    qu'il faut corriger.
-> 4. Télécharge chaque image validée en taille réelle (clic sur l'image > Télécharger) dans
->    un même dossier, sous le nom que Gemini t'indique (`repos.png`, `ecoute.png`...).
-> 5. Fabrique le skin sur ton PC :
+> 1. Open a **new conversation** at gemini.google.com.
+> 2. Attach this file ("+" button > Upload files), then write: **"Follow this brief."**
+> 3. Gemini asks you a few questions about the character, shows you the idle image, then
+>    generates the other states one by one. Reply **"ok"** to move on to the next one, or
+>    say what needs fixing.
+> 4. Download each approved image at full size (click the image > Download) into a single
+>    folder, under the name Gemini gives you (`repos.png`, `ecoute.png`...).
+> 5. Build the skin on your PC:
 >
 >    ```powershell
->    uv run python scripts\make_skin.py C:\Users\<toi>\Images\mon_perso --name "Mon perso" --author "Moi" --license "usage personnel" --preview
+>    uv run python scripts\make_skin.py C:\Users\<you>\Pictures\my_character --name "My character" --author "Me" --license "personal use" --preview
 >    ```
 >
-> 6. Réglages de MIKATA > Skins > Actualiser, puis clique sur ton skin.
+> 6. In MIKATA, Réglages > Skins > Actualiser (Settings > Skins > Refresh), then click
+>    your skin.
 >
-> Tout ce qui suit s'adresse à Gemini.
+> Everything below is addressed to Gemini.
 
 ---
 
-## Ton rôle, Gemini
+## Your role, Gemini
 
-Tu aides l'utilisateur à créer **le même personnage dans 10 poses**, pour la mascotte de bureau
-de son assistant vocal MIKATA. Chaque image montre le personnage dans un état de l'assistant.
-Un programme découpera ensuite automatiquement le fond : le cadrage et le fond doivent donc
-être **identiques** d'une image à l'autre.
+You help the user create **the same character in 10 poses**, for the desktop mascot of their
+voice assistant MIKATA. Each image shows the character in one of the assistant's states.
+A program will then cut out the background automatically, so the framing and the background
+must be **identical** from one image to the next.
 
-Parle en français avec l'utilisateur. Écris tes prompts d'image en anglais.
+Speak with the user in their own language. Write your image prompts in English.
 
-## Étape 1 : le personnage
+## Step 1: the character
 
-Pose ces questions en **un seul message**, puis attends les réponses :
+Ask these questions in **a single message**, then wait for the answers:
 
-1. Quel personnage ? (par défaut : « Mika », une petite fille chibi style anime, cheveux
-   turquoise en carré, grands yeux ambrés, sweat crème trop grand, gros casque audio blanc)
-2. Quel style ? (par défaut : chibi anime, contours épais, aplats de couleurs, ombrage doux)
-3. Des couleurs ou accessoires à éviter ou à ajouter ?
+1. Which character? (default: "Mika", a little anime-style chibi girl, teal bob haircut,
+   big amber eyes, oversized cream hoodie, big white headphones)
+2. Which style? (default: chibi anime, thick outlines, flat colors, soft shading)
+3. Any colors or accessories to avoid or to add?
 
-Si l'utilisateur répond « par défaut », prends les valeurs ci-dessus.
+If the user answers "default", use the values above.
 
-Ensuite, écris une **fiche personnage** en anglais (5 à 8 lignes) et montre-la à
-l'utilisateur. Elle doit contenir :
+Then write a **character sheet** in English (5 to 8 lines) and show it to the user. It must
+contain:
 
-- apparence : coiffure, couleur des yeux, vêtements, accessoires, proportions (2,5 têtes de
-  haut pour un chibi) ;
-- style de dessin ;
-- et toujours ce bloc, mot pour mot :
+- appearance: hairstyle, eye color, clothes, accessories, proportions (2.5 heads tall for a
+  chibi);
+- drawing style;
+- and always this block, word for word:
   `Full body, front view, centered, the character fills about 75% of the image height with
   margin on all sides. Plain pure white background (#FFFFFF), flat, no gradient, no texture,
   no ground, no floor shadow, no text, no watermark. Square 1:1 image.`
 
-Si le personnage contient beaucoup de blanc, remplace dans ce bloc le fond blanc par
+If the character has a lot of white, replace the white background in this block with
 `Plain pure green background (#00FF00)`.
 
-**Recopie cette fiche mot pour mot au début de chaque prompt d'image. Ne la reformule
-jamais.**
+**Copy this sheet word for word at the start of every image prompt. Never rephrase
+it.**
 
-## Étape 2 : l'image de référence (repos)
+## Step 2: the reference image (idle)
 
-Génère `repos.png` : fiche + *« Asleep while standing, eyes gently closed, peaceful little
+Generate `repos.png`: sheet + *"Asleep while standing, eyes gently closed, peaceful little
 smile, head slightly tilted, relaxed arms, three small floating "z" letters near the
-head. »*
+head."*
 
-Montre l'image et demande : « Ce personnage te plaît ? ok / à corriger ». Régénère jusqu'à
-ce que l'utilisateur dise ok. **Cette image devient la référence de toutes les suivantes.**
+Show the image and ask: "Do you like this character? ok / needs fixing". Regenerate until
+the user says ok. **This image becomes the reference for all the following ones.**
 
-## Étape 3 : les autres états, un par un
+## Step 3: the other states, one by one
 
-Pour chaque état ci-dessous, dans cet ordre :
+For each state below, in this order:
 
-1. Repars de l'**image de repos validée** comme référence (modification d'image, pas une
-   nouvelle génération à partir de rien). Ton prompt commence par : *« Same character as
-   the reference image, same outfit, same proportions, same art style, same framing, same
-   size in the frame, same background. Only change the pose and expression: »*, suivi de la
-   fiche, puis de la description de l'état.
-2. Montre l'image avec son **nom de fichier** en gras, et demande « ok / à corriger ».
-3. Passe à l'état suivant seulement après « ok ».
+1. Start again from the **approved idle image** as the reference (image editing, not a new
+   generation from scratch). Your prompt starts with: *"Same character as the reference
+   image, same outfit, same proportions, same art style, same framing, same size in the
+   frame, same background. Only change the pose and expression:"*, followed by the sheet,
+   then the state description.
+2. Show the image with its **file name** in bold, and ask "ok / needs fixing".
+3. Move on to the next state only after "ok".
 
-| Fichier | Description de l'état |
+| File | State description |
 | --- | --- |
 | `activation.png` | Just woke up with a start, eyes wide open and sparkling, small "o" mouth of surprise, one hand raised, a small yellow exclamation mark above the head. |
 | `ecoute.png` | Listening attentively, headphones on the ears, one hand cupping an ear, eyes open looking at the viewer, slight curious smile, leaning a little forward. |
@@ -92,22 +93,22 @@ Pour chaque état ci-dessous, dans cet ordre :
 | `suivi.png` | Waiting for the next request, leaning forward with hands behind the back, eyebrows raised, small smile, a small question mark above the head. |
 | `micro_coupe.png` | Quiet mode, both hands covering the mouth, headphones resting around the neck, half-closed calm eyes, slightly desaturated colors. |
 
-Pour `ecoute_blink.png`, la référence est `ecoute.png`, pas le repos.
+For `ecoute_blink.png`, the reference is `ecoute.png`, not the idle image.
 
-## Règles pour toutes les images
+## Rules for every image
 
-- Format **carré 1:1**, le personnage **entier**, centré, **même taille et même position**
-  dans toutes les images.
-- Fond **uni** (blanc ou vert, toujours le même), **sans ombre au sol**, sans décor, sans
-  texte, sans signature.
-- Si une image dérive (couleur de cheveux, vêtements, proportions, style), régénère-la en
-  repartant de l'image de repos, pas de l'image précédente.
-- Une seule image par message.
+- **Square 1:1** format, the **whole** character, centered, **same size and same position**
+  in every image.
+- **Solid** background (white or green, always the same), **no floor shadow**, no scenery,
+  no text, no signature.
+- If an image drifts (hair color, clothes, proportions, style), regenerate it starting from
+  the idle image, not from the previous image.
+- One image per message.
 
-## Étape 4 : à la fin
+## Step 4: at the end
 
-Quand les 10 images sont validées, rappelle à l'utilisateur :
+When all 10 images are approved, remind the user:
 
-1. de télécharger chaque image en taille réelle dans un même dossier, avec le nom indiqué ;
-2. de lancer `scripts\make_skin.py` (commande en haut de ce fichier) ;
-3. d'ouvrir `apercu.png` dans le dossier du skin pour vérifier le détourage.
+1. to download each image at full size into a single folder, under the name given;
+2. to run `scripts\make_skin.py` (the command at the top of this file);
+3. to open `apercu.png` in the skin folder to check the cut-out.

@@ -1,200 +1,200 @@
-# Configuration de MIKATA (docs/ARCHITECTURE.md §10).
-# Les chemins relatifs sont résolus depuis le dossier de ce fichier.
-# Les secrets (LLM_API_KEY, SEARCH_API_KEY) vont dans .env, jamais ici.
+# MIKATA configuration (docs/ARCHITECTURE.md §10).
+# Relative paths are resolved from this file's folder.
+# Secrets (LLM_API_KEY, SEARCH_API_KEY) go in .env, never here.
 audio:
-  input_device: "default"          # sous-chaîne du nom, ou "default" = micro par défaut du système
-  output_device: "default"         # "default" = sortie par défaut du système
+  input_device: "default"          # substring of the name, or "default" = system default microphone
+  output_device: "default"         # "default" = system default output
   pre_roll_s: 2.0
-  input_channel: null              # 1, 2... = canal du micro ; null = moyenne des canaux
-  earcon_volume: 0.5               # volume des sons d'interface (0 à 1)
+  input_channel: null              # 1, 2... = microphone channel; null = average of the channels
+  earcon_volume: 0.5               # volume of the interface sounds (0 to 1)
 wake:
-  model: models/mikata.onnx        # modèle entraîné pour « MIKATA » (hey_jarvis.onnx : ancien)
+  model: models/mikata.onnx        # model trained for "MIKATA" (hey_jarvis.onnx: the old one)
   verifier: models/mikata_verifier.pkl
-  threshold: 0.1                   # réglage conseillé par eval_wakeword.py
+  threshold: 0.1                   # setting recommended by eval_wakeword.py
   consecutive_frames: 1
   refractory_s: 1.0
   hotkey: "<ctrl>+<alt>+m"
-  verifier_threshold: 0.7          # vérificateur : probabilité « ta voix » minimale (eval_wakeword.py)
-  collect_negatives: false         # true : enregistre data/negatives/ par extraits de 10 s
-  negatives_max_hours: 12          # ... et s'arrête après N heures de collecte (~115 Mo / h)
-  log_days: 7                      # purge (corbeille) de data/wake_logs/ après N jours
-  save_misses: true                # Ctrl+Alt+M après un « MIKATA » raté : 4 s d'audio dans data/wakeword/misses/
-  miss_days: 30                    # purge (corbeille) de data/wakeword/misses/ après N jours
+  verifier_threshold: 0.7          # verifier: minimum "your voice" probability (eval_wakeword.py)
+  collect_negatives: false         # true: records data/negatives/ in 10 s clips
+  negatives_max_hours: 12          # ... and stops after N hours of collection (~115 MB / h)
+  log_days: 7                      # data/wake_logs/ purged (to the Recycle Bin) after N days
+  save_misses: true                # Ctrl+Alt+M after a missed "MIKATA": 4 s of audio in data/wakeword/misses/
+  miss_days: 30                    # data/wakeword/misses/ purged (to the Recycle Bin) after N days
 vad:
   end_silence_ms: 500
   speculative_ms: 250
   max_utterance_s: 15
   no_speech_timeout_s: 4
   model: models/silero_vad.onnx    # scripts/download_models.py
-  threshold: 0.5                   # probabilité de voix (0 à 1)
+  threshold: 0.5                   # speech probability (0 to 1)
 stt:
   model: large-v3-turbo
-  # Backend STT : « auto » = Parakeet v3 (parakeet-mlx sous macOS, sherpa-onnx sous Linux),
-  # Whisper sous Windows ; « whisper », « parakeet » et « mlx » forcent le moteur.
+  # STT backend: "auto" = Parakeet v3 (parakeet-mlx on macOS, sherpa-onnx on Linux),
+  # Whisper on Windows; "whisper", "parakeet" and "mlx" force the engine.
   backend: auto
   device: cuda
   compute_type: int8_float16
   beam_size: 1
-  # Vocabulaire donné à Whisper (noms propres, mots de MIKATA), puis amorces de suites
-  # courtes (« et à Tokyo ? » lu « Yeah, Tokyo » sans elles) ; voir eval_stt.py --prompt.
-  # Langue forcée à « fr » dans le code : jamais de détection automatique.
+  # Vocabulary given to Whisper (proper nouns, MIKATA words), then primers for short
+  # follow-ups ("et à Tokyo ?" heard as "Yeah, Tokyo" without them); see eval_stt.py --prompt.
+  # Language forced to "fr" in the code: never auto-detected.
   initial_prompt: "MIKATA, Bloc-notes, Spotify, Discord, Steam, Chrome, VS Code, PowerShell. Et à Tokyo ? Et demain ?"
-  prompt_apps: true                # + noms des applications installées, placés avant
-  prompt_max_chars: 500            # taille max du prompt (Whisper en garde ~220 tokens)
-  # Formes du mot d'activation retirées du texte (tout ce qui précède part aussi).
+  prompt_apps: true                # + names of the installed applications, placed first
+  prompt_max_chars: 500            # max prompt size (Whisper keeps ~220 tokens of it)
+  # Forms of the wake word removed from the text (everything before them goes too).
   wake_words: ["mikata", "mi kata", "micata", "mikado", "jarvis"]
 llm:
-  base_url: "https://opencode.ai/zen/v1"  # OpenCode Zen (compatible OpenAI)
-  model: "deepseek-v4.1-flash"     # nom exact du modèle chez OpenCode Zen
+  base_url: "https://opencode.ai/zen/v1"  # OpenCode Zen (OpenAI-compatible)
+  model: "deepseek-v4.1-flash"     # exact model name at OpenCode Zen
   max_tool_rounds: 8
   request_timeout_s: 20
-  turn_timeout_s: 60               # durée max d'une requête complète
-  first_chunk_timeout_s: 8         # rien reçu en N s -> nouvelle connexion et relance
-  reasoning_effort: none           # réflexion par défaut : none | low | medium | high
-  reasoning_keywords:              # dit en début ou fin de commande -> niveau de réflexion
+  turn_timeout_s: 60               # max duration of a complete request
+  first_chunk_timeout_s: 8         # nothing received within N s -> new connection and retry
+  reasoning_effort: none           # default reasoning: none | low | medium | high
+  reasoning_keywords:              # said at the start or end of a command -> reasoning level
     low: ["réfléchis"]
     medium: ["réfléchis bien"]
     high: ["réfléchis à fond"]
-  strong_model: null               # rôle fort (après deux programmes en échec) : null = même modèle
-  strong_effort: medium            # ... et sa réflexion
-  reasoning_fallback_steps: 2      # outil en échec ou plus de N étapes -> au moins « low »
-  include_usage: true              # décompte des tokens (ligne « Tokens » du log)
-  price_input_usd_per_mtok: 0.30   # DeepSeek V4.1 Flash sur OpenCode Zen, $ / million
+  strong_model: null               # strong role (after two failed programs): null = same model
+  strong_effort: medium            # ... and its reasoning
+  reasoning_fallback_steps: 2      # failed tool or more than N steps -> at least "low"
+  include_usage: true              # token count ("Tokens" line in the log)
+  price_input_usd_per_mtok: 0.30   # DeepSeek V4.1 Flash on OpenCode Zen, $ / million
   price_output_usd_per_mtok: 1.20
   price_cached_usd_per_mtok: 0.006
-  credit_usd: 5.0                  # crédit, pour estimer ce qui reste
+  credit_usd: 5.0                  # credit, to estimate what is left
 tools:
-  timeout_s: 15                    # durée max d'un appel d'outil
-  result_max_chars: 2000           # résultat d'outil renvoyé au LLM (tronqué)
-  shell_timeout_s: 30              # durée max d'une commande PowerShell ou d'un script
+  timeout_s: 15                    # max duration of a tool call
+  result_max_chars: 2000           # tool result sent back to the LLM (truncated)
+  shell_timeout_s: 30              # max duration of a PowerShell command or a script
 web:
-  search_provider: tavily          # tavily | brave ; clé SEARCH_API_KEY dans .env
+  search_provider: tavily          # tavily | brave; SEARCH_API_KEY key in .env
   max_results: 5
-  default_city: null               # ville de la météo si aucune n'est dite (ex. "Paris")
-browser:                           # ajout phase 12b : navigateur piloté (protocole DevTools)
-  enabled: true                    # outils browser_* (Brave lancé par MIKATA si fermé)
-  cdp_port: 9222                   # port DevTools de Brave
-  fallback_uia: true               # mode legacy : Brave ouvert sans le port -> outils UIA
-  page_text_max_chars: 4000        # texte lu par browser_read, tronqué
-  click_timeout_s: 5               # délai d'une commande DevTools
-  own_profile: true                # phase 12f : MIKATA navigue dans son propre profil Brave
-  profile_dir: data/brave_profile  # ... fenêtre séparée et minimisée, ton Brave intouché
-  window_hidden: true              # fenêtre créée cachée (false : minimisée, pour se connecter)
-skills:                            # phase 15e : compétences apprises (data/skills/<nom>/)
-  enabled: true                    # compétences utilisées et apprises
-  learn: true                      # un programme réussi devient une compétence, à l'essai
-  promote_after: 3                 # réussites surveillées avant le rejeu local sans LLM
-  max_failures: 3                  # échecs de suite avant désactivation
-  local_replay: true               # compétence active : rejouée sans appel au modèle
+  default_city: null               # weather city when none is said (e.g. "Paris")
+browser:                           # added in phase 12b: driven browser (DevTools protocol)
+  enabled: true                    # browser_* tools (Brave launched by MIKATA if closed)
+  cdp_port: 9222                   # Brave's DevTools port
+  fallback_uia: true               # legacy mode: Brave open without the port -> UIA tools
+  page_text_max_chars: 4000        # text read by browser_read, truncated
+  click_timeout_s: 5               # timeout of a DevTools command
+  own_profile: true                # phase 12f: MIKATA browses in its own Brave profile
+  profile_dir: data/brave_profile  # ... separate, minimized window, your Brave untouched
+  window_hidden: true              # window created hidden (false: minimized, to log in)
+skills:                            # phase 15e: learned skills (data/skills/<name>/)
+  enabled: true                    # skills used and learned
+  learn: true                      # a successful program becomes a skill, on trial
+  promote_after: 3                 # monitored successes before local replay without the LLM
+  max_failures: 3                  # consecutive failures before deactivation
+  local_replay: true               # active skill: replayed without calling the model
   max_skills: 40
-  learn_effort: low                # réflexion de l'appel qui écrit la compétence
-  route: true                      # phase 15j : compétence active reconnue dans toute formulation
-  route_timeout_s: 3               # ... au-delà, l'appel normal décide seul
-  jev: true                        # phase 15k : Jev décide d'abord (clé OPENROUTER_API_KEY dans .env)
-  jev_threshold: 0.9               # ... seul au-dessus de cette probabilité
+  learn_effort: low                # reasoning of the call that writes the skill
+  route: true                      # phase 15j: active skill recognized however it is phrased
+  route_timeout_s: 3               # ... beyond this, the normal call decides alone
+  jev: true                        # phase 15k: Jev decides first (OPENROUTER_API_KEY key in .env)
+  jev_threshold: 0.9               # ... alone above this probability
   jev_timeout_s: 1.5
-mcp:                               # phase 16f : outils externes (Model Context Protocol)
+mcp:                               # phase 16f: external tools (Model Context Protocol)
   enabled: false
-  servers: []                      # ex. - {name: notes, command: uvx, args: [mcp-server-x], env: {CLE: "${MA_CLE}"}}
-  timeout_s: 20                    # délai d'une réponse d'un serveur
+  servers: []                      # e.g. - {name: notes, command: uvx, args: [mcp-server-x], env: {KEY: "${MY_KEY}"}}
+  timeout_s: 20                    # timeout for a server's reply
   max_tools_per_server: 30
-files_index:                       # ajout phase 12d : index local des fichiers (MFT + journal USN)
+files_index:                       # added in phase 12d: local file index (MFT + USN journal)
   enabled: true                    # find_path / list_folder / open_in_explorer
-  db: data/files_index.db          # base SQLite (WAL), jamais envoyée au LLM
-  poll_s: 5                        # sondage du journal USN (secondes)
-  max_results: 20                  # résultats renvoyés au LLM (au plus)
+  db: data/files_index.db          # SQLite database (WAL), never sent to the LLM
+  poll_s: 5                        # USN journal polling (seconds)
+  max_results: 20                  # results sent back to the LLM (at most)
 tts:
-  backend: piper                   # piper | kokoro | elevenlabs (skin sans profil, ui.profiles)
-  voice: models/fr_FR-siwis-medium.onnx   # voix Piper (scripts/download_models.py)
+  backend: piper                   # piper | kokoro | elevenlabs (skin without a profile, ui.profiles)
+  voice: models/fr_FR-siwis-medium.onnx   # Piper voice (scripts/download_models.py)
   first_chunk_min_words: 6
   kokoro_model: models/kokoro-v1.0.onnx
   kokoro_voices: models/voices-v1.0.bin
-  kokoro_voice: ff_siwis           # voix française de Kokoro
-  speed: 1.0                       # vitesse de parole (0.5 à 2)
-  cpu_threads: 4                   # threads CPU de la synthèse (§10 : 4 max)
-  elevenlabs:                      # ajout phase 11 : voix en ligne payante (clé ELEVENLABS_API_KEY dans .env)
-    model: eleven_v4_turbo         # premier son ~165 ms
+  kokoro_voice: ff_siwis           # Kokoro's French voice
+  speed: 1.0                       # speech speed (0.5 to 2)
+  cpu_threads: 4                   # CPU threads for synthesis (§10: 4 max)
+  elevenlabs:                      # added in phase 11: paid online voice (ELEVENLABS_API_KEY key in .env)
+    model: eleven_v4_turbo         # first sound ~165 ms
     language: fr
-    voice_id: YxrwjAKoUKULGd0g8K9Y # voix d'un profil sans voice_id (Lucie)
-    backup_voice_id: d3AXX0BlgJHYFCuH9X88   # si une voix a disparu du compte (Émilie)
-    output_format: pcm_24000       # PCM 24 kHz en flux
-    monthly_credit_cap: 30000      # plafond de dépense du mois (crédits) : au-delà, Kokoro
-    min_remaining_credits: 500     # crédit du mois sous ce seuil : Kokoro jusqu'au renouvellement
-    subscription_refresh_every: 20 # solde relu toutes les N synthèses (déduit entre deux)
-    estimated_credits_per_char: 1.0   # tant que le coût n'est pas mesuré (prudent)
-    calibration_hours: 24          # mesure du coût réel au démarrage, au plus toutes les N h (0 : jamais)
-    retry_after_s: 300             # panne réseau ou serveur : Kokoro pendant N s, puis on réessaie
+    voice_id: YxrwjAKoUKULGd0g8K9Y # voice for a profile without a voice_id (Lucie)
+    backup_voice_id: d3AXX0BlgJHYFCuH9X88   # if a voice has disappeared from the account (Émilie)
+    output_format: pcm_24000       # streamed 24 kHz PCM
+    monthly_credit_cap: 30000      # monthly spending cap (credits): beyond it, Kokoro
+    min_remaining_credits: 500     # monthly credit below this threshold: Kokoro until renewal
+    subscription_refresh_every: 20 # balance re-read every N syntheses (deducted in between)
+    estimated_credits_per_char: 1.0   # until the cost has been measured (cautious)
+    calibration_hours: 24          # real cost measured at startup, at most every N h (0: never)
+    retry_after_s: 300             # network or server outage: Kokoro for N s, then retry
     timeout_s: 10
-    cache_max_mb: 300              # phrases gardées dans data/tts_cache/elevenlabs (jamais refacturées)
+    cache_max_mb: 300              # phrases kept in data/tts_cache/elevenlabs (never billed again)
 agent:
-  follow_up_s: 6                   # fenêtre de suivi sans mot d'activation (0 = désactivée)
-  follow_up_min_confidence: 0.2    # suivi : transcription moins fiable (0 à 1) -> ignorée, bip
-  follow_up_use_llm_gate: true     # suivi : le LLM dit si la phrase s'adresse à MIKATA
+  follow_up_s: 6                   # follow-up window without the wake word (0 = disabled)
+  follow_up_min_confidence: 0.2    # follow-up: less reliable transcription (0 to 1) -> ignored, beep
+  follow_up_use_llm_gate: true     # follow-up: the LLM says whether the sentence is meant for MIKATA
   session_reset_min: 10
   thinking_sound_after_s: 1.2
-  narration: bavard                # tâches longues : dit ce qu'il fait (bavard) ou seulement le résultat (discret)
-  narration_after_s: 5             # bavard : phrase d'attente si rien n'a été dit après N s
-  ack_after_s: 2.5                 # bavard : action prévue plus longue -> annoncée quand elle part
-  explore: true                    # phase 16d : interface inconnue explorée pas à pas
+  narration: bavard                # long tasks: says what it is doing (bavard) or only the result (discret)
+  narration_after_s: 5             # bavard: waiting phrase if nothing has been said after N s
+  ack_after_s: 2.5                 # bavard: longer planned action -> announced when it starts
+  explore: true                    # phase 16d: unknown interface explored step by step
   explore_max_steps: 8
   explore_timeout_s: 30
-  history_max_tokens: 6000         # historique de conversation envoyé au LLM
-  history_persist: true            # historique gardé dans data/history.json (redémarrages)
-  history_persist_h: 168           # ... N heures sans interaction (7 jours ; « garde la conversation un mois »)
-  history_summarize: true          # plafond atteint : les plus anciens échanges sont résumés
-  # Commande entière qui annule la réponse en cours ou ferme la fenêtre de suivi.
+  history_max_tokens: 6000         # conversation history sent to the LLM
+  history_persist: true            # history kept in data/history.json (across restarts)
+  history_persist_h: 168           # ... N hours without interaction (7 days; set by voice: "garde la conversation un mois")
+  history_summarize: true          # cap reached: the oldest exchanges are summarized
+  # Whole command that cancels the current reply or closes the follow-up window.
   cancel_phrases: ["stop", "arrête", "arrête-toi", "annule", "annule ça", "annule tout",
     "laisse tomber", "oublie", "oublie ça", "tais-toi", "chut", "silence", "c'est bon",
     "ça ira", "ça suffit", "c'est tout", "non", "non rien", "rien", "non merci", "pas grave"]
-  # Arrêt vocal SANS « MIKATA » pendant qu'il parle : phrase entière de cette liste -> son coupé.
-  voice_stop: true                 # false : seul « MIKATA » (ou Ctrl+Alt+M) coupe une réponse
+  # Voice stop WITHOUT "MIKATA" while it is speaking: a whole phrase from this list -> sound cut.
+  voice_stop: true                 # false: only "MIKATA" (or Ctrl+Alt+M) interrupts a reply
   voice_stop_phrases: ["stop", "arrête", "arrête-toi", "tais-toi", "ça suffit", "chut"]
-  voice_stop_silence_ms: 160       # silence qui termine la phrase d'arrêt (80 = 1 trame)
-  voice_stop_max_s: 2.0            # parole plus longue : pas un arrêt, pas transcrite
-  scripts: true                    # programmes (outil script) pour les demandes en plusieurs étapes
-  script_timeout_s: 45             # durée max d'un programme
-learning:                          # ajout phase 14e : ce que MIKATA apprend à l'usage
-  enabled: true                    # false : ni leçons ni traces
-  max_lessons: 60                  # carnet de leçons (data/playbook.json, lisible à la main)
-  lessons_in_context: 6            # leçons jointes à une demande (au plus, seulement si elles s'y rapportent)
-  correction_window_s: 90          # « non, pas ça » dit dans ce délai : MIKATA en tire une leçon
-  reflect_effort: low              # réflexion de l'appel qui tire les leçons (arrière-plan)
-  traces: true                     # trace des tours qui ont agi (data/traces/)
-  trace_days: 30                   # ... gardées N jours, puis corbeille
+  voice_stop_silence_ms: 160       # silence that ends the stop phrase (80 = 1 frame)
+  voice_stop_max_s: 2.0            # longer speech: not a stop, not transcribed
+  scripts: true                    # programs (script tool) for multi-step requests
+  script_timeout_s: 45             # max duration of a program
+learning:                          # added in phase 14e: what MIKATA learns through use
+  enabled: true                    # false: no lessons and no traces
+  max_lessons: 60                  # lesson notebook (data/playbook.json, human-readable)
+  lessons_in_context: 6            # lessons attached to a request (at most, and only relevant ones)
+  correction_window_s: 90          # "non, pas ça" said within this time: MIKATA learns a lesson from it
+  reflect_effort: low              # reasoning of the call that draws the lessons (background)
+  traces: true                     # trace of the turns that took action (data/traces/)
+  trace_days: 30                   # ... kept N days, then Recycle Bin
 guard:
-  allowed_dirs: ["~"]              # dossiers où les outils fichiers ont le droit d'agir
-  backup_days: 14                  # sauvegardes avant écrasement (data/backups), puis corbeille
-  shutdown_cancel_s: 5             # délai pour dire « stop » avant extinction / redémarrage / veille
-  confirm_after_web: false         # true : commande shell après une page web -> confirmation orale
-  full_access: false               # true : accès complet, plus aucune confirmation après un contenu lu
-  confirm_risky: true              # commandes risquées (registre, services...) -> « Tu confirmes ? »
-  confirm_timeout_s: 6             # temps laissé pour répondre oui / non
-  trash_max_mb: 4096               # au-delà, mise à la corbeille refusée (Windows supprimerait)
-logging:                           # ajout phase 0 (§10 « Logs »)
+  allowed_dirs: ["~"]              # folders where the file tools are allowed to act
+  backup_days: 14                  # backups before overwriting (data/backups), then Recycle Bin
+  shutdown_cancel_s: 5             # time to say "stop" before shutdown / restart / sleep
+  confirm_after_web: false         # true: shell command after a web page -> spoken confirmation
+  full_access: false               # true: full access, no more confirmation after content was read
+  confirm_risky: true              # risky commands (registry, services...) -> "Tu confirmes ?"
+  confirm_timeout_s: 6             # time given to answer yes / no
+  trash_max_mb: 4096               # beyond this, moving to the Recycle Bin is refused (Windows would delete)
+logging:                           # added in phase 0 (§10 "Logs")
   level: INFO                      # TRACE | DEBUG | INFO | SUCCESS | WARNING | ERROR
   file: data/logs/mikata.log
   rotation_mb: 5
   retention_files: 5
-  stats_interval_s: 60             # ligne « CPU du processus » toutes les N s (0 = jamais)
-  actions_file: data/actions.log   # journal de chaque action des outils (garde-fou)
-ui:                                # ajout phase 8 : mascotte et réglages (processus à part)
-  enabled: true                    # canal local vers l'interface (false : MIKATA seul, comme avant)
-  mascot: true                     # lancer la mascotte au démarrage de MIKATA
-  skin: femme                      # dossier assets/mascot/<skin>/ ; default : Mika, dessinée en code
-  bubble_s: 8                      # la bulle reste N s après la dernière phrase
-  profiles:                        # ajout phase 11 : skin -> voix (piper | kokoro | elevenlabs), à chaud
-    default: {voice: kokoro}       # Mika : voix locale et gratuite
+  stats_interval_s: 60             # "CPU du processus" line every N s (0 = never)
+  actions_file: data/actions.log   # log of every tool action (safeguard)
+ui:                                # added in phase 8: mascot and settings (separate process)
+  enabled: true                    # local channel to the interface (false: MIKATA alone, as before)
+  mascot: true                     # start the mascot when MIKATA starts
+  skin: femme                      # folder assets/mascot/<skin>/; default: Mika, drawn in code
+  bubble_s: 8                      # the bubble stays N s after the last sentence
+  profiles:                        # added in phase 11: skin -> voice (piper | kokoro | elevenlabs), live
+    default: {voice: kokoro}       # Mika: local, free voice
     gars: {voice: elevenlabs, voice_id: NyxenPOqNyllHIzSoPbJ, voice_name: "Théo"}
     femme: {voice: elevenlabs, voice_id: YxrwjAKoUKULGd0g8K9Y, voice_name: "Lucie"}
-uia:                               # ajout phase 12a : pilotage fin des applications (arbre UIA)
-  enabled: true                    # lire les contrôles et cliquer par nom (outils uia_*)
-  state_poll_s: 0                  # état ambiant (Discord...) : 0 = lu à la demande ; N = toutes les N s
-  max_controls: 200                # contrôles listés par uia_window (au plus)
-  max_text_chars: 2000             # texte lu par uia_read, tronqué
-  accessibility_client: true       # client UIA à l'écoute : Discord, VS Code... se lisent sans drapeau
-  devtools_apps: []                # ajout phase 17e : applis Chromium pilotées cachées par DevTools, ex. [Spotify]
-                                   #   (tant qu'elles tournent ainsi, un programme du PC peut les piloter)
-  devtools_relaunch: true          # appli listée ouverte sans cet accès : relancée cachée si elle ne joue rien
-  devtools_launch_timeout_s: 25    # attente maximale du démarrage caché d'une appli listée
-  verify_effects: true              # phase 17f : effet de chaque clic relu pendant la réponse
-  verify_timeout_s: 3               # rien n'a changé après N s : « ça n'a pas pris », on reprend
+uia:                               # added in phase 12a: fine-grained app control (UIA tree)
+  enabled: true                    # read controls and click by name (uia_* tools)
+  state_poll_s: 0                  # ambient state (Discord...): 0 = read on demand; N = every N s
+  max_controls: 200                # controls listed by uia_window (at most)
+  max_text_chars: 2000             # text read by uia_read, truncated
+  accessibility_client: true       # listening UIA client: Discord, VS Code... can be read without a flag
+  devtools_apps: []                # added in phase 17e: Chromium apps driven hidden through DevTools, e.g. [Spotify]
+                                   #   (while they run this way, any program on the PC can drive them)
+  devtools_relaunch: true          # listed app open without this access: relaunched hidden if it is not playing anything
+  devtools_launch_timeout_s: 25    # maximum wait for a listed app's hidden startup
+  verify_effects: true              # phase 17f: effect of each click checked during the reply
+  verify_timeout_s: 3               # nothing changed after N s: "ça n'a pas pris", the model tries again

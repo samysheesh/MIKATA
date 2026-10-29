@@ -1,98 +1,99 @@
-# Créer un skin pour la mascotte
+# Creating a mascot skin
 
-Un **skin** change l'apparence de la mascotte. Il ne touche à rien d'autre : la mascotte
-passe par les mêmes états, au même moment. Ce guide explique comment créer le tien avec un
-générateur d'images (Nano Banana ou un autre), en partant d'images brutes. Il couvre ensuite
-l'import, le partage et le format du manifeste.
+A **skin** changes how the mascot looks. It changes nothing else: the mascot goes through the
+same states, at the same moments. This guide explains how to create your own with an image
+generator (Nano Banana or another), starting from raw images. It then covers importing,
+sharing and the manifest format.
 
-En bref :
+In short:
 
-1. Génère **une image par état** (10 au plus ; seul le repos est obligatoire).
-2. Range-les dans un dossier, nommées d'après l'état (`repos.png`, `ecoute.png`...).
-3. Lance `scripts/make_skin.py`. Il retire le fond (uni ou damier), recadre, redimensionne,
-   adoucit les bords et écrit le manifeste.
-4. Choisis ton skin dans **Réglages > Skins** : le changement est immédiat.
+1. Generate **one image per state** (10 at most; only idle is required).
+2. Put them in one folder, named after the state (`repos.png`, `ecoute.png`...).
+3. Run `scripts/make_skin.py`. It removes the background (solid or checkerboard), crops,
+   resizes, softens the edges and writes the manifest.
+4. Pick your skin in **Réglages > Skins** (Settings > Skins): the change is immediate.
 
-## 1. Les dix états
+## 1. The ten states
 
-| État | Fichier (au choix) | Quand | Ce que le personnage exprime | Animation par défaut d'une image fixe |
+| State | File (either name) | When | What the character expresses | Default animation for a still image |
 | --- | --- | --- | --- | --- |
-| `idle` | `repos`, `idle` | MIKATA attend « MIKATA » | **il dort** : yeux fermés, paisible | respiration lente |
-| `wake` | `activation`, `wake` | « MIKATA » vient d'être entendu (0,9 s) | réveil en sursaut, surprise | petit rebond + lueur jaune |
-| `listening` | `ecoute`, `listening` | il t'écoute | attentif, tourné vers toi | respiration, clignement, lueur bleue |
-| `thinking` | `reflexion`, `thinking` | transcription, réflexion du LLM | il réfléchit | balancement, clignement |
-| `acting` | `action`, `acting` | un outil travaille (ouvre une appli, cherche...) | affairé, concentré | rebond + balancement |
-| `speaking` | `parole`, `speaking` | il répond à voix haute | il parle | petits rebonds + lueur verte |
-| `success` | `fait`, `success` | « C'est fait » (1,6 s) | content, réussite | rebond + lueur verte |
-| `error` | `erreur`, `error` | une erreur (2,4 s) | oups, désolé | balancement rapide + lueur rouge |
-| `follow_up` | `suivi`, `follow_up` | 6 s pour enchaîner sans redire « MIKATA » | en attente de la suite | respiration + lueur turquoise |
-| `mic_off` | `micro_coupe`, `mic_off` | micro en pause ou occupé, MIKATA pas lancé | muet, en retrait | respiration très lente |
+| `idle` | `repos`, `idle` | MIKATA is waiting for "MIKATA" | **asleep**: eyes closed, peaceful | slow breathing |
+| `wake` | `activation`, `wake` | "MIKATA" was just heard (0.9 s) | startled awake, surprised | small bounce + yellow glow |
+| `listening` | `ecoute`, `listening` | it's listening to you | attentive, facing you | breathing, blinking, blue glow |
+| `thinking` | `reflexion`, `thinking` | transcription, LLM thinking | thinking | swaying, blinking |
+| `acting` | `action`, `acting` | a tool is working (opening an app, searching...) | busy, focused | bounce + sway |
+| `speaking` | `parole`, `speaking` | it's answering out loud | talking | small bounces + green glow |
+| `success` | `fait`, `success` | "C'est fait" ("Done", 1.6 s) | happy, success | bounce + green glow |
+| `error` | `erreur`, `error` | an error (2.4 s) | oops, sorry | quick sway + red glow |
+| `follow_up` | `suivi`, `follow_up` | 6 s to carry on without saying "MIKATA" again | waiting for what comes next | breathing + turquoise glow |
+| `mic_off` | `micro_coupe`, `mic_off` | mic paused or busy, MIKATA not running | muted, withdrawn | very slow breathing |
 
-Les noms de fichiers sont acceptés avec ou sans accents, en minuscules ou en majuscules, et
-avec `_` ou `-` (« Réflexion.png » convient).
+File names are accepted with or without accents, in lower or upper case, and with `_` or
+`-` ("Réflexion.png" works).
 
-**Un état absent** reprend l'image de repos. Un avertissement est écrit dans
-`data\logs\ui.log`, sans plantage. Tu peux donc commencer avec 2 ou 3 images et compléter
-plus tard.
+**A missing state** falls back to the idle image. A warning is written to
+`data\logs\ui.log`; nothing crashes. So you can start with 2 or 3 images and add the rest
+later.
 
-**Images en plus, facultatives** :
+**Optional extra images**:
 
-- `ecoute_blink.png`, `repos_blink.png`... : la même image, **yeux fermés**. Elle est montrée
-  un instant pour un vrai clignement des yeux. Sans elle, le clignement est un léger
-  écrasement vertical de l'image.
-- `parole_01.png`, `parole_02.png`... : plusieurs images numérotées pour un même état. Elles
-  sont jouées image par image (8 images/s, réglable avec `--fps`). Un GIF ou un APNG animé
-  convient aussi.
+- `ecoute_blink.png`, `repos_blink.png`...: the same image with **eyes closed**. It is shown
+  for an instant to make a real blink. Without it, the blink is a slight vertical squash of
+  the image.
+- `parole_01.png`, `parole_02.png`...: several numbered images for one state. They are
+  played frame by frame (8 frames/s, adjustable with `--fps`). An animated GIF or APNG
+  works too.
 
-## 2. Taille et cadrage
+## 2. Size and framing
 
-- **Format** : carré (1:1). Nano Banana sort du 1024 × 1024, c'est parfait. Plus petit que
-  512 px, le résultat sera flou.
-- **Personnage** : en pied, de face, **centré**, environ 75 % de la hauteur. Laisse de la
-  marge tout autour : un bras qui sort du cadre est coupé.
-- **Même cadrage pour tous les états** : même taille de personnage, même position, même
-  angle. `make_skin.py` applique la même échelle à tous les états, pour que le personnage ne
-  grandisse pas d'un état à l'autre. Il les pose au même niveau, en bas du cadre.
-- **Fond** :
-  - idéalement **uni et sans dégradé**, d'une couleur absente du personnage (blanc pur, ou
-    vert vif #00FF00 si le personnage a beaucoup de blanc) ;
-  - le **faux damier** de transparence est aussi reconnu ;
-  - **pas d'ombre au sol** si possible. Sinon, `make_skin.py` la transforme en ombre noire
-    translucide (`--shadow clean`), ou la retire (`--shadow remove`).
-- **Résultat** : images de 384 px (`--size`). La mascotte s'affiche en 96, 128 ou 192 px,
-  et 384 reste net même avec la mise à l'échelle de Windows à 150 ou 200 %.
+- **Format**: square (1:1). Nano Banana outputs 1024 × 1024, which is perfect. Below
+  512 px, the result will be blurry.
+- **Character**: full body, front view, **centered**, about 75% of the height. Leave a
+  margin all around: an arm that sticks out of the frame gets cut off.
+- **Same framing for every state**: same character size, same position, same angle.
+  `make_skin.py` applies the same scale to every state, so the character doesn't grow from
+  one state to the next. It places them all at the same level, at the bottom of the frame.
+- **Background**:
+  - ideally **solid, with no gradient**, in a color the character doesn't use (pure white,
+    or bright green #00FF00 if the character has a lot of white);
+  - the **fake transparency checkerboard** is recognized too;
+  - **no floor shadow** if possible. Otherwise, `make_skin.py` turns it into a translucent
+    black shadow (`--shadow clean`), or removes it (`--shadow remove`).
+- **Output**: 384 px images (`--size`). The mascot is displayed at 96, 128 or 192 px, and
+  384 stays sharp even with Windows scaling at 150 or 200%.
 
-## 3. Garder le même personnage d'un état à l'autre
+## 3. Keeping the same character across states
 
-C'est le point difficile avec un générateur d'images. Ce qui marche :
+This is the hard part with an image generator. What works:
 
-1. **Une fiche personnage fixe** : un paragraphe qui décrit le personnage, recopié **mot pour
-   mot** au début de chaque prompt (voir l'exemple plus bas). Ne la reformule jamais :
-   chaque mot changé peut changer un détail du personnage.
-2. **Une image de référence** : génère d'abord le **repos**, ou une pose neutre si le repos
-   (yeux fermés) cache trop le visage. Pour chaque autre état :
-   - donne cette image à Nano Banana avec le prompt : « même personnage, mêmes vêtements,
-     mêmes proportions, même style ; change seulement l'expression et la pose » ;
-   - Nano Banana sait **modifier** une image : c'est bien plus fidèle qu'une nouvelle
-     génération à partir de rien.
-3. **Une seule conversation** pour tout le skin : le générateur garde le contexte. Si un
-   état dérive (coiffure, couleurs), reprends l'image de référence plutôt que l'image
-   précédente.
-4. **Même fond, même cadrage, même lumière** dans chaque prompt (c'est déjà dans la fiche).
-5. **Vérifie côte à côte** : `make_skin.py` écrit `apercu.png`, une planche de tous les
-   états. Régénère celui qui détonne.
+1. **A fixed character sheet**: a paragraph describing the character, copied **word for
+   word** at the start of every prompt (see the example below). Never rephrase it: every
+   changed word can change a detail of the character.
+2. **A reference image**: generate the **idle** image first, or a neutral pose if idle (eyes
+   closed) hides too much of the face. For every other state:
+   - give that image to Nano Banana with the prompt: "same character, same clothes, same
+     proportions, same style; only change the expression and the pose";
+   - Nano Banana can **edit** an image: that's far more faithful than a new generation from
+     scratch.
+3. **A single conversation** for the whole skin: the generator keeps the context. If a
+   state drifts (hairstyle, colors), go back to the reference image rather than the
+   previous image.
+4. **Same background, same framing, same lighting** in every prompt (it's already in the
+   sheet).
+5. **Check them side by side**: `make_skin.py` writes `apercu.png`, a contact sheet of all
+   the states. Regenerate the one that stands out.
 
-## 4. Exemple : un personnage chibi de style anime
+## 4. Example: an anime-style chibi character
 
-**Le plus simple avec Gemini** : joins [`GEMINI_SKIN_BRIEF.md`](GEMINI_SKIN_BRIEF.md) dans une
-nouvelle conversation et écris « Suis ce brief. ». Gemini pose ses questions, puis génère
-les états un par un, avec le bon nom de fichier pour chacun.
+**Easiest with Gemini**: attach [`GEMINI_SKIN_BRIEF.md`](GEMINI_SKIN_BRIEF.md) in a new
+conversation and write "Follow this brief." Gemini asks its questions, then generates the
+states one by one, with the right file name for each.
 
-### La fiche personnage
+### The character sheet
 
-À recopier telle quelle au début de **chaque** prompt. Les prompts sont en anglais : les
-générateurs d'images les suivent en général plus fidèlement. Tu peux les traduire en
-français ; reste alors cohérent d'un prompt à l'autre.
+Copy it as is at the start of **every** prompt. The prompts are in English: image
+generators usually follow them more faithfully. You can translate them into another
+language; if you do, stay consistent from one prompt to the next.
 
 ```text
 Chibi anime character sheet style, single character: Mika, a cheerful little girl with
@@ -105,14 +106,14 @@ Plain pure white background (#FFFFFF), no ground, no floor shadow, no text, no w
 square 1:1 image.
 ```
 
-### Un prompt par état
+### One prompt per state
 
-Le premier sert de référence. Pour les suivants, joins l'image du repos (ou de l'écoute) et
-commence par : *« Same character as the reference image, same outfit, same proportions,
-same art style, same framing and background. Only change the pose and expression: »*,
-suivi de la fiche, puis de la ligne de l'état.
+The first one serves as the reference. For the next ones, attach the idle image (or the
+listening one) and start with: *"Same character as the reference image, same outfit, same
+proportions, same art style, same framing and background. Only change the pose and
+expression:"*, followed by the sheet, then the state's line.
 
-| Fichier | Prompt de l'état (après la fiche) |
+| File | State prompt (after the sheet) |
 | --- | --- |
 | `repos.png` | Asleep while standing, eyes gently closed, peaceful little smile, head slightly tilted, headphones resting around her neck, hands relaxed, three small floating "z" letters near her head. |
 | `activation.png` | Just woke up with a start, eyes wide open and sparkling, mouth in a small "o" of surprise, one hand raised, hair ahoge standing straight up, a small yellow exclamation mark above her head. |
@@ -126,58 +127,58 @@ suivi de la fiche, puis de la ligne de l'état.
 | `suivi.png` | Waiting expectantly for the next request, leaning forward with hands clasped behind her back, eyebrows raised, small smile, a small question mark above her head. |
 | `micro_coupe.png` | Quiet mode, both hands covering her mouth, headphones off and resting around her neck, half-closed calm eyes, slightly desaturated colors. |
 
-Astuces :
+Tips:
 
-- Si le fond n'est pas parfaitement uni, ajoute « plain flat background, no gradient,
-  no texture ».
-- Si le personnage a beaucoup de blanc, demande un fond « pure green (#00FF00) » au lieu du
-  blanc.
-- Si Nano Banana rend un damier gris et blanc au lieu d'un fond : ce n'est pas grave,
-  `make_skin.py` le reconnaît.
+- If the background isn't perfectly solid, add "plain flat background, no gradient,
+  no texture".
+- If the character has a lot of white, ask for a "pure green (#00FF00)" background instead
+  of white.
+- If Nano Banana renders a gray and white checkerboard instead of a background, that's
+  fine: `make_skin.py` recognizes it.
 
-## 5. Fabriquer le skin
+## 5. Building the skin
 
 ```powershell
-uv run python scripts\make_skin.py C:\Users\moi\Images\mika_chibi --name "Mika chibi" --author "Moi" --license "usage personnel" --preview
+uv run python scripts\make_skin.py C:\Users\me\Pictures\mika_chibi --name "Mika chibi" --author "Me" --license "personal use" --preview
 ```
 
-- Le skin est écrit dans `assets\mascot\mika-chibi\`. Il contient :
-  - les images détourées ;
-  - `skin.json`, avec les effets par défaut ;
-  - `apercu.png` : tous les états sur un damier. **Regarde-le** pour vérifier le détourage.
-- `--preview` ouvre directement la mascotte avec ce skin, et une petite fenêtre pour passer
-  d'un état à l'autre, ou les faire défiler. Rien n'est enregistré dans `config.yaml`.
-  Depuis un skin déjà installé : `uv run python -m mikata.ui --preview mika-chibi`.
-- Pour l'utiliser ensuite : **Réglages > Skins**, clic sur le skin, et c'est immédiat. Le
-  choix est gardé dans `config.yaml` (`ui.skin`).
+- The skin is written to `assets\mascot\mika-chibi\`. It contains:
+  - the cut-out images;
+  - `skin.json`, with the default effects;
+  - `apercu.png`: every state on a checkerboard. **Look at it** to check the cut-out.
+- `--preview` opens the mascot straight away with this skin, plus a small window to switch
+  from one state to another, or cycle through them. Nothing is saved to `config.yaml`.
+  For a skin that's already installed: `uv run python -m mikata.ui --preview mika-chibi`.
+- To use it afterwards: **Réglages > Skins** (Settings > Skins), click the skin, and it
+  applies immediately. The choice is kept in `config.yaml` (`ui.skin`).
 
-Réglages utiles :
+Useful options:
 
-| Option | Effet | Quand l'utiliser |
+| Option | Effect | When to use it |
 | --- | --- | --- |
-| `--tolerance 38` | écart de couleur toléré pour le fond | liseré de fond resté autour → plus haut (50) ; morceaux du personnage retirés → plus bas (25) |
-| `--holes auto\|on\|off` | trous fermés (entre un bras et le corps) | fond uni visible entre les bras → `on` ; le blanc des yeux disparaît → `off` |
-| `--shadow clean\|remove\|keep` | ombre au sol | `clean` : ombre noire translucide ; `remove` : retirée |
-| `--size 384` | côté des images produites | 512 pour un écran 4K |
-| `--margin 0.06` | marge autour du personnage | |
-| `--align bottom\|center` | posé en bas (par défaut) ou centré | `center` pour un personnage qui flotte |
-| `--fps 8` | vitesse des images numérotées | |
-| `--replace` | remplace un skin du même nom (l'ancien part à la corbeille) | après avoir régénéré des images |
+| `--tolerance 38` | color difference tolerated for the background | background fringe left around → higher (50); parts of the character removed → lower (25) |
+| `--holes auto\|on\|off` | enclosed holes (between an arm and the body) | solid background visible between the arms → `on`; the whites of the eyes disappear → `off` |
+| `--shadow clean\|remove\|keep` | floor shadow | `clean`: translucent black shadow; `remove`: removed |
+| `--size 384` | side length of the output images | 512 for a 4K screen |
+| `--margin 0.06` | margin around the character | |
+| `--align bottom\|center` | sitting at the bottom (default) or centered | `center` for a floating character |
+| `--fps 8` | speed of the numbered images | |
+| `--replace` | replaces a skin with the same name (the old one goes to the Recycle Bin) | after regenerating images |
 
-Une image **déjà transparente** (PNG avec canal alpha) est gardée telle quelle, sans
-détourage.
+An image that is **already transparent** (PNG with an alpha channel) is kept as is, without
+any cut-out.
 
-## 6. Retoucher l'animation : `skin.json`
+## 6. Tweaking the animation: `skin.json`
 
-`make_skin.py` écrit un manifeste complet, que tu peux modifier avec n'importe quel éditeur
-de texte. Après une modification, reclique sur le skin dans **Réglages > Skins** (ou
-**Actualiser**). Exemple :
+`make_skin.py` writes a complete manifest that you can edit with any text editor. After a
+change, click the skin again in **Réglages > Skins** (Settings > Skins), or click
+**Actualiser** (Refresh). Example:
 
 ```json
 {
   "name": "Mika chibi",
-  "author": "Moi",
-  "license": "usage personnel",
+  "author": "Me",
+  "license": "personal use",
   "size": 384,
   "states": {
     "idle":      { "file": "idle.png", "effects": { "breathe": { "amplitude": 0.025, "speed": 0.22 } } },
@@ -191,60 +192,61 @@ de texte. Après une modification, reclique sur le skin dans **Réglages > Skins
 }
 ```
 
-- `name`, `author`, `license` : affichés dans **Réglages > Skins**. Mets-y ce que tu veux ;
-  rien d'autre n'en dépend.
-- Par état :
-  - `file` : l'image, dans le dossier du skin (sous-dossiers permis). Formats : PNG, JPEG,
+- `name`, `author`, `license`: shown in **Réglages > Skins** (Settings > Skins). Put
+  whatever you like; nothing else depends on them.
+- Per state:
+  - `file`: the image, in the skin folder (subfolders allowed). Formats: PNG, JPEG,
     WebP, GIF, APNG.
-  - `frames` et `columns` : bande d'images (spritesheet) découpée en grille.
-  - `fps`, ou les durées propres à un GIF/APNG : vitesse de l'animation image par image.
-  - `loop` : `false` joue l'animation une fois et garde la dernière image. C'est le défaut
-    pour `wake`, `success` et `error`.
-  - `blink_file` : image yeux fermés, utilisée par l'effet `blink`.
-  - `effects` : voir le tableau ci-dessous. `{}` = aucun effet. Si `effects` est absent :
-    - une image fixe reçoit les effets par défaut de son état (tableau de la section 1) ;
-    - une animation image par image n'en reçoit aucun.
+  - `frames` and `columns`: an image strip (spritesheet) cut into a grid.
+  - `fps`, or a GIF/APNG's own frame durations: speed of the frame-by-frame animation.
+  - `loop`: `false` plays the animation once and keeps the last frame. That's the default
+    for `wake`, `success` and `error`.
+  - `blink_file`: eyes-closed image, used by the `blink` effect.
+  - `effects`: see the table below. `{}` = no effect. If `effects` is missing:
+    - a still image gets its state's default effects (table in section 1);
+    - a frame-by-frame animation gets none.
 
-| Effet | Ce qu'il fait | `amplitude` | `speed` |
+| Effect | What it does | `amplitude` | `speed` |
 | --- | --- | --- | --- |
-| `breathe` | respiration : l'image s'étire un peu en hauteur et se tasse | fraction de la taille, 0 à 0,2 (0,02 = 2 %) | cycles par seconde, 0 à 10 |
-| `bounce` | petit rebond | hauteur du saut, 0 à 0,3 de la taille | rebonds par seconde |
-| `blink` | clignement : `blink_file` montré un instant, sinon écrasement vertical | écrasement, 0 à 0,5 (0 avec `blink_file`) | clignements par seconde (0,25 = toutes les 4 s) |
-| `glow` | lueur colorée derrière le personnage, qui pulse | intensité, 0 à 1 | pulsations par seconde ; `color` : « #rrggbb », par défaut la couleur de l'état |
-| `sway` | balancement autour des pieds | angle en degrés, 0 à 30 | allers-retours par seconde |
+| `breathe` | breathing: the image stretches up a little and settles back | fraction of the size, 0 to 0.2 (0.02 = 2%) | cycles per second, 0 to 10 |
+| `bounce` | small bounce | jump height, 0 to 0.3 of the size | bounces per second |
+| `blink` | blink: `blink_file` shown for an instant, otherwise a vertical squash | squash, 0 to 0.5 (0 with `blink_file`) | blinks per second (0.25 = every 4 s) |
+| `glow` | colored glow behind the character, pulsing | intensity, 0 to 1 | pulses per second; `color`: "#rrggbb", defaults to the state's color |
+| `sway` | swaying around the feet | angle in degrees, 0 to 30 | back-and-forth swings per second |
 
-Une valeur hors limites est ramenée dans les limites, et un effet inconnu est ignoré. Dans
-les deux cas, un avertissement est écrit dans `data\logs\ui.log`.
+An out-of-range value is clamped to the limits, and an unknown effect is ignored. In both
+cases, a warning is written to `data\logs\ui.log`.
 
-## 7. Importer, partager, supprimer
+## 7. Importing, sharing, deleting
 
-- **Partager un skin** : compresse son dossier en .zip. Clic droit sur le dossier >
-  **Compresser dans un fichier ZIP** (Windows 11).
-- **Importer** : **Réglages > Skins > Importer un .zip…**. Le skin est vérifié **avant**
-  d'écrire quoi que ce soit. Il est refusé, avec la raison affichée, dans ces cas :
-  - aucun ou plusieurs `skin.json`, ou un `skin.json` trop profond (il doit être à la racine
-    ou dans un seul dossier) ;
-  - un chemin qui sort du dossier (`..`) ;
-  - un fichier autre qu'une image ou du texte (`.json`, `.txt`, `.md`) : un `.exe` ou un
-    script est refusé ;
-  - plus de 300 fichiers, plus de 64 Mo au total ou plus de 16 Mo pour un seul fichier ;
-  - une image de repos absente ou illisible ;
-  - un skin du même nom déjà installé.
+- **Sharing a skin**: compress its folder into a .zip. Right-click the folder >
+  **Compress to ZIP file** (Windows 11).
+- **Importing**: **Réglages > Skins > Importer un .zip…** (Settings > Skins > Import a
+  .zip…). The skin is checked **before** anything is written. It is rejected, with the
+  reason shown, in these cases:
+  - no `skin.json` or several, or a `skin.json` nested too deep (it must be at the root
+    or inside a single folder);
+  - a path that leaves the folder (`..`);
+  - a file other than an image or text (`.json`, `.txt`, `.md`): an `.exe` or a
+    script is rejected;
+  - more than 300 files, more than 64 MB in total or more than 16 MB for a single file;
+  - a missing or unreadable idle image;
+  - a skin with the same name already installed.
 
-  Une fois importé, le skin est appliqué tout de suite.
-- **Supprimer** : **Réglages > Skins**, choisis le skin, puis **Supprimer**. Il part à la
-  **corbeille** (récupérable). Mika, le skin par défaut, ne peut pas être supprimée. Si
-  c'était le skin en cours, Mika revient.
-- Tes skins ne sont pas suivis par git (`.gitignore`) : ils restent sur ton PC.
+  Once imported, the skin is applied right away.
+- **Deleting**: **Réglages > Skins** (Settings > Skins), select the skin, then
+  **Supprimer** (Delete). It goes to the **Recycle Bin** (recoverable). Mika, the default
+  skin, can't be deleted. If it was the current skin, Mika comes back.
+- Your skins aren't tracked by git (`.gitignore`): they stay on your PC.
 
-## 8. En cas de souci
+## 8. Troubleshooting
 
-| Problème | Solution |
+| Problem | Solution |
 | --- | --- |
-| Liseré blanc ou gris autour du personnage | `--tolerance 50`, ou régénère sur un fond plus contrasté |
-| Le blanc des yeux ou un vêtement clair est devenu transparent | `--holes off`, ou un fond vert (#00FF00) au lieu du blanc |
-| Fond resté visible entre les bras | `--holes on` |
-| Damier resté sous les pieds | `--shadow remove` |
-| Le personnage change de taille d'un état à l'autre | cadrage différent à la génération : régénère l'état en rappelant « same framing » |
-| Un état affiche l'image de repos | fichier absent ou mal nommé : voir les « Ignoré » et « absent » affichés par `make_skin.py`, et `data\logs\ui.log` |
-| Skin en rouge dans la liste | inutilisable (raison dans l'infobulle et dans `data\logs\ui.log`) |
+| White or gray fringe around the character | `--tolerance 50`, or regenerate on a more contrasting background |
+| The whites of the eyes or a light piece of clothing turned transparent | `--holes off`, or a green background (#00FF00) instead of white |
+| Background still visible between the arms | `--holes on` |
+| Checkerboard left under the feet | `--shadow remove` |
+| The character changes size from one state to another | the framing differed at generation: regenerate the state, reminding it "same framing" |
+| A state shows the idle image | file missing or misnamed: see the "Ignoré" (ignored) and "absent" (missing) lines printed by `make_skin.py`, and `data\logs\ui.log` |
+| Skin shown in red in the list | unusable (reason in the tooltip and in `data\logs\ui.log`) |

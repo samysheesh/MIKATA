@@ -1,20 +1,20 @@
-# Skins de la mascotte
+# Mascot skins
 
-Chaque dossier de `assets/mascot/` est un **skin** : un manifeste `skin.json` (nom, auteur,
-licence, image de chaque état) et ses images.
+Each folder in `assets/mascot/` is a **skin**: a `skin.json` manifest (name, author,
+license, image for each state) and its images.
 
-- `default/` : **Mika**, dessinée en code (`mikata/ui/qt/painter.py`). Elle ne contient
-  aucune image et n'est soumise à aucun droit de tiers. Elle est toujours disponible et ne
-  peut pas être supprimée.
-- Les autres dossiers sont **tes** skins, ignorés par git. Tu les crées avec
-  `scripts/make_skin.py` ou tu les importes depuis un .zip.
+- `default/`: **Mika**, drawn in code (`mikata/ui/qt/painter.py`). It contains no images
+  and is subject to no third-party rights. It is always available and can't be
+  deleted.
+- The other folders are **your** skins, ignored by git. You create them with
+  `scripts/make_skin.py` or import them from a .zip.
 
-Pour changer de skin : **Réglages > Skins**, puis un clic sur le skin. Le changement est
-immédiat et le choix est gardé dans `config.yaml` (`ui.skin`).
+To switch skins: **Réglages > Skins** (Settings > Skins), then click the skin. The change
+is immediate and the choice is kept in `config.yaml` (`ui.skin`).
 
-Pour créer un skin (images d'un générateur, détourage automatique, prompts d'exemple,
-format du manifeste, effets d'animation, import et suppression) : voir
+To create a skin (images from a generator, automatic cut-out, example prompts, manifest
+format, animation effects, importing and deleting): see
 [`docs/MASCOT_SKIN_GUIDE.md`](../../docs/MASCOT_SKIN_GUIDE.md).
 
-Mika en images, comme exemple du format « image par image » :
+Mika as images, as an example of the frame-by-frame format:
 `uv run python scripts/export_mascot_skin.py mika-images`.

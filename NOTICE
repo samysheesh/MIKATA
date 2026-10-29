@@ -1,11 +1,11 @@
-MIKATA — assistant vocal local pour PC Windows
+MIKATA — voice assistant for Windows PCs
 Copyright 2026 Samyyyy
 
-Ce produit est distribué sous la licence Apache, version 2.0 (fichier LICENSE).
+This product is distributed under the Apache License, Version 2.0 (LICENSE file).
 
-Il s'appuie sur des composants tiers, chacun sous sa propre licence, et télécharge des
-modèles qui ne sont pas inclus dans le dépôt : voir THIRD_PARTY.md. En particulier, le
-modèle « hey_jarvis » d'openWakeWord est sous licence non commerciale (CC BY-NC-SA 4.0).
+It relies on third-party components, each under its own license, and downloads models that
+are not included in the repository: see THIRD_PARTY.md. In particular, openWakeWord's
+"hey_jarvis" model is under a non-commercial license (CC BY-NC-SA 4.0).
 
-Les skins « gars » et « femme » (assets/mascot/gars, assets/mascot/femme) ne sont pas sous
-licence Apache-2.0 : tous droits réservés, samysheesh.
+The "gars" and "femme" skins (assets/mascot/gars, assets/mascot/femme) are not under the
+Apache-2.0 license: all rights reserved, samysheesh.
